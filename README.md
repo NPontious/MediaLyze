@@ -84,7 +84,7 @@ services:
     image: ghcr.io/frederikemmer/medialyze:latest
     container_name: medialyze
     ports:
-      - 8080:8080
+      - "${HOST_PORT:-8080}:8080"
     environment:
       # change to your timezone, e.g. "Europe/Berlin" or "America/New_York"
       TZ: UTC

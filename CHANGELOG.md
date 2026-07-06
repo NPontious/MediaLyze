@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - clarify Docker host-port configuration, make the standard Compose file honor `HOST_PORT`, and keep the internal app port out of normal Docker setup docs
 
+### 🔒 Security
+
+- update ECharts and pydantic-settings to resolve Dependabot security alerts
+
 ## v0.16.0
 
 >2026-06-23
