@@ -99,6 +99,7 @@ class ScanRuntimeManager:
         self.history_compaction_pending = False
         self.history_storage_refresh_submitted = False
         self.history_reconstruction_status = HistoryReconstructionStatusRead()
+        self.stats_warmup_timer: Timer | None = None
         self.started = False
 
     def start(self) -> None:
