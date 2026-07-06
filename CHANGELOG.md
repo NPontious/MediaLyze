@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Bug fixes
+
+- clarify Docker host-port configuration, make the standard Compose file honor `HOST_PORT`, and keep the internal app port out of normal Docker setup docs
+
 ## v0.16.0
 
 >2026-06-23
