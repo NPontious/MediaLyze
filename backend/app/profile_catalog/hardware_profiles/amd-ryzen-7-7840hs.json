@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "amd-ryzen-7-7840hs",
+  "name": "AMD Ryzen 7 7840HS (Radeon 780M)",
+  "category": "pc",
+  "manufacturer": "AMD",
+  "year": 2023,
+  "status": "official",
+  "verified_by": "manufacturer documentation",
+  "added": "2026-07-06",
+  "last_modified": "2026-07-06",
+  "video": {
+    "h264": {
+      "hardware_decode": true,
+      "max_resolution": "8K",
+      "max_fps": 120,
+      "bit_depth": [
+        8
+      ]
+    },
+    "hevc": {
+      "hardware_decode": true,
+      "max_resolution": "8K",
+      "max_fps": 120,
+      "bit_depth": [
+        8,
+        10
+      ],
+      "hdr": [
+        "HDR10",
+        "HDR10+",
+        "HLG",
+        "Dolby Vision"
+      ]
+    },
+    "av1": {
+      "hardware_decode": true,
+      "max_resolution": "8K",
+      "max_fps": 120,
+      "bit_depth": [
+        8,
+        10
+      ],
+      "hdr": [
+        "HDR10",
+        "HDR10+",
+        "HLG",
+        "Dolby Vision"
+      ]
+    },
+    "vp9": {
+      "hardware_decode": true,
+      "max_resolution": "8K",
+      "max_fps": 120,
+      "bit_depth": [
+        8,
+        10
+      ],
+      "hdr": [
+        "HDR10",
+        "HLG"
+      ]
+    }
+  },
+  "audio": {
+    "aac": true,
+    "mp3": true,
+    "flac": true,
+    "alac": true,
+    "opus": true,
+    "vorbis": true,
+    "wav": true,
+    "aiff": true,
+    "ac3": true,
+    "eac3": true,
+    "truehd": true,
+    "dts": true
+  },
+  "containers": [
+    "mkv",
+    "mp4",
+    "webm",
+    "mov",
+    "avi",
+    "ts",
+    "m2ts",
+    "mp3",
+    "flac",
+    "m4a",
+    "ogg",
+    "wav"
+  ],
+  "subtitles": {
+    "srt": true,
+    "subrip": true,
+    "webvtt": true,
+    "ass": true,
+    "ssa": true,
+    "pgs": true,
+    "hdmv_pgs_subtitle": true,
+    "dvd_subtitle": true,
+    "mov_text": true
+  },
+  "notes": "AMD Ryzen 7 7840HS with Radeon 780M (RDNA 3 / VCN 4.0) supports full hardware acceleration for AV1, HEVC, VP9, and H.264 up to 8K resolution.",
+  "sources": [
+    {
+      "label": "AMD Ryzen 7 7840HS Specifications",
+      "url": "https://www.amd.com/en/products/processors/laptop/ryzen/7000-series/amd-ryzen-7-7840hs.html"
+    }
+  ]
+}
