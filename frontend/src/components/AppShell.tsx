@@ -10,16 +10,13 @@ import { BanIcon } from "./BanIcon";
 import { FolderInputIcon } from "./FolderInputIcon";
 import { FolderOutputIcon } from "./FolderOutputIcon";
 import { GithubIcon } from "./GithubIcon";
-import { HandCoinsIcon } from "./HandCoinsIcon";
-import { TelemetryModeToggle } from "./TelemetryModeToggle";
-import { api, type ScanJob, type TelemetryMode, type UpdateStatus } from "../lib/api";
+import { api, type ScanJob, type UpdateStatus } from "../lib/api";
 import { APP_VERSION } from "../lib/app-version";
 import { useAppData } from "../lib/app-data";
 import {
   getAllReleaseNotes,
   getCurrentReleaseNotes,
   isDevelopmentVersion,
-  isFirstOpenAfterUpdate,
   markReleaseNotesSeen,
   mergeReleaseNotes,
   normalizeReleaseVersion,
@@ -29,9 +26,8 @@ import {
 import { getDesktopBridge, isDesktopApp } from "../lib/desktop";
 import { useScanJobs } from "../lib/scan-jobs";
 
-const GITHUB_REPOSITORY_URL = "https://github.com/frederikemmer/MediaLyze/";
-const GITHUB_ISSUE_URL = "https://github.com/frederikemmer/MediaLyze/issues/new/choose";
-const GITHUB_SPONSORS_URL = "https://github.com/sponsors/frederikemmer";
+const GITHUB_REPOSITORY_URL = "https://github.com/NPontious/MediaLyze/";
+const GITHUB_ISSUE_URL = "https://github.com/NPontious/MediaLyze/issues/new/choose";
 const UI_ELEMENTS_CLICK_WINDOW_MS = 1500;
 const UI_ELEMENTS_CLICK_COUNT = 3;
 const RELEASE_NOTE_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -228,15 +224,10 @@ export function AppShell() {
   const currentReleaseVersion = releaseNotes?.version ?? normalizeReleaseVersion(APP_VERSION);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [showReleaseNotes, setShowReleaseNotes] = useState(() => shouldShowReleaseNotes(APP_VERSION, releaseNotes));
-  const [showUpdateTelemetryAttention, setShowUpdateTelemetryAttention] = useState(
-    () => shouldShowReleaseNotes(APP_VERSION, releaseNotes) && isFirstOpenAfterUpdate(APP_VERSION, releaseNotes),
-  );
   const [expandedReleaseVersion, setExpandedReleaseVersion] = useState(currentReleaseVersion);
   const [stoppingScans, setStoppingScans] = useState(false);
   const [scanCancelError, setScanCancelError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [pendingTelemetryMode, setPendingTelemetryMode] = useState<TelemetryMode | null>(null);
-  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [releaseActionsMenuOpen, setReleaseActionsMenuOpen] = useState(false);
   const hadActiveJobsRef = useRef(hasActiveJobs);
@@ -253,39 +244,12 @@ export function AppShell() {
       : mergedReleaseNotes;
   }, [latestAvailableVersion, localReleaseNotes, updateAvailable, updateStatus?.release_notes]);
   const showFullWidthAppShell = appSettings.feature_flags.show_full_width_app_shell;
-  const telemetry = appSettings.telemetry ?? {
-    mode: "none" as TelemetryMode,
-    environment_disabled: false,
-    last_user_visible_payload: null,
-  };
-  const telemetryUndecided = telemetry.mode === "none" || telemetry.mode === "initialized";
-  const showTelemetryAttention =
-    showReleaseNotes &&
-    (showUpdateTelemetryAttention || (appSettingsLoaded && telemetryUndecided && !telemetry.environment_disabled));
   const showFirstLibraryAttention = librariesLoaded && libraries.length === 0;
 
   function dismissReleaseNotes() {
-    if (appSettingsLoaded && telemetryUndecided && !telemetry.environment_disabled) {
-      setTelemetryError(t("telemetry.releaseNotesChooseFirst"));
-      return;
-    }
     markReleaseNotesSeen(APP_VERSION, releaseNotes);
     setShowReleaseNotes(false);
     setReleaseActionsMenuOpen(false);
-    setShowUpdateTelemetryAttention(false);
-  }
-
-  async function saveTelemetryMode(mode: "off" | "minimal" | "enabled") {
-    setPendingTelemetryMode(mode);
-    setTelemetryError(null);
-    try {
-      const updated = await api.updateAppSettings({ telemetry: { mode } });
-      setAppSettings(updated);
-    } catch {
-      setTelemetryError(t("telemetry.saveFailed"));
-    } finally {
-      setPendingTelemetryMode(null);
-    }
   }
 
   async function downloadLatestInstaller() {
@@ -310,7 +274,6 @@ export function AppShell() {
       return;
     }
     setExpandedReleaseVersion(updateAvailable && latestAvailableVersion ? latestAvailableVersion : releaseNotes?.version ?? allReleaseNotes[0].version);
-    setShowUpdateTelemetryAttention(false);
     setReleaseActionsMenuOpen(false);
     setShowReleaseNotes(true);
   }
@@ -346,16 +309,6 @@ export function AppShell() {
   useEffect(() => {
     void api.updateStatus().then(setUpdateStatus).catch(() => undefined);
   }, []);
-
-  useEffect(() => {
-    if (!appSettingsLoaded || allReleaseNotes.length === 0) {
-      return;
-    }
-    if (telemetryUndecided && !telemetry.environment_disabled) {
-      setExpandedReleaseVersion(releaseNotes?.version ?? allReleaseNotes[0].version);
-      setShowReleaseNotes(true);
-    }
-  }, [allReleaseNotes, appSettingsLoaded, releaseNotes?.version, telemetry.environment_disabled, telemetryUndecided]);
 
   useEffect(() => {
     if (hadActiveJobsRef.current && !hasActiveJobs) {
@@ -558,15 +511,6 @@ export function AppShell() {
                       </span>
                     </button>
                   ) : null}
-                  <TelemetryModeToggle
-                    compact
-                    highlightEnabledOption={showTelemetryAttention}
-                    mode={telemetry.mode}
-                    pendingMode={pendingTelemetryMode}
-                    disabled={!appSettingsLoaded || Boolean(pendingTelemetryMode) || telemetry.environment_disabled}
-                    undecided={telemetryUndecided}
-                    onChange={(mode) => void saveTelemetryMode(mode)}
-                  />
                   <a
                     className="release-notes-icon-link"
                     href={GITHUB_ISSUE_URL}
@@ -576,16 +520,6 @@ export function AppShell() {
                     data-tooltip={t("releaseNotes.reportIssueAria")}
                   >
                     <Bug aria-hidden="true" className="nav-icon" />
-                  </a>
-                  <a
-                    className="release-notes-icon-link"
-                    href={GITHUB_SPONSORS_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={t("releaseNotes.donateAria")}
-                    data-tooltip={t("releaseNotes.donateAria")}
-                  >
-                    <HandCoinsIcon aria-hidden="true" className="release-notes-hand-coins-icon" size={18} />
                   </a>
                   <a
                     className="release-notes-icon-link"
@@ -609,7 +543,6 @@ export function AppShell() {
                 </button>
               </div>
             </div>
-            {telemetryError ? <div className="alert release-notes-alert">{telemetryError}</div> : null}
             <div className="release-notes-content">
               {allReleaseNotes.map((versionNotes) => {
                 const isExpanded = expandedReleaseVersion === versionNotes.version;

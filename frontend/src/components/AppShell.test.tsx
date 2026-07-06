@@ -47,14 +47,6 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
       ...overrideFeatureFlags,
-    },
-    telemetry: {
-      mode: "off",
-      environment_disabled: false,
-      installation_id_suffix: null,
-      last_sent_at: null,
-      last_user_visible_payload: null,
-    },
     ...restOverrides,
   };
 }
@@ -232,39 +224,6 @@ describe("AppShell", () => {
     );
   });
 
-  it("gently highlights enabled telemetry only on the first automatic open after an update", async () => {
-    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.2");
-
-    renderShell();
-
-    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Help the dev" })).toHaveClass("is-update-attention");
-
-    fireEvent.click(screen.getByRole("button", { name: "Close release notes" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show release notes for v0.8.3" }));
-
-    expect(screen.getByRole("button", { name: "Help the dev" })).not.toHaveClass("is-update-attention");
-  });
-
-  it("gently highlights enabled telemetry on the first launch while telemetry is undecided", async () => {
-    vi.mocked(api.appSettings).mockResolvedValue(
-      createAppSettings({
-        telemetry: {
-          mode: "none",
-          environment_disabled: false,
-          installation_id_suffix: null,
-          last_sent_at: null,
-          last_user_visible_payload: null,
-        },
-      }),
-    );
-
-    renderShell();
-
-    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Help the dev" })).toHaveClass("is-update-attention");
-  });
-
   it("does not show already dismissed release notes for the current version", async () => {
     window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
 
@@ -424,59 +383,6 @@ describe("AppShell", () => {
 
     await waitFor(() => expect(downloadLatestInstaller).toHaveBeenCalledWith("0.9.0"));
     expect(screen.getByRole("button", { name: "Downloaded" })).toBeInTheDocument();
-  });
-
-  it("updates telemetry mode from the release notes toggle", async () => {
-    vi.spyOn(api, "appSettings").mockResolvedValue(
-      createAppSettings({
-        telemetry: {
-          mode: "none",
-          environment_disabled: false,
-          installation_id_suffix: null,
-          last_sent_at: null,
-          last_user_visible_payload: null,
-        },
-      }),
-    );
-    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
-      createAppSettings({
-        telemetry: {
-          mode: "enabled",
-          environment_disabled: false,
-          installation_id_suffix: null,
-          last_sent_at: null,
-          last_user_visible_payload: null,
-        },
-      }),
-    );
-
-    renderShell();
-
-    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
-    const enabledButton = screen.getByRole("button", { name: "Help the dev" });
-    expect(enabledButton).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Telemetry off" })).toHaveAttribute(
-      "data-tooltip-body",
-      "No telemetry payloads are sent.",
-    );
-    expect(screen.getByRole("button", { name: "Minimal telemetry" })).toHaveAttribute(
-      "data-tooltip-body",
-      "Tell the Dev which runtime/system you are using, nothing else.",
-    );
-    expect(enabledButton).toHaveAttribute("data-tooltip-title", "Help the dev");
-    expect(enabledButton).toHaveAttribute(
-      "data-tooltip-body",
-      "Adds rounded usage counts and app settings to inform development. NO private data.",
-    );
-
-    fireEvent.click(enabledButton);
-
-    await waitFor(() =>
-      expect(updateSpy).toHaveBeenCalledWith({
-        telemetry: { mode: "enabled" },
-      }),
-    );
-    await waitFor(() => expect(enabledButton).toHaveAttribute("aria-pressed", "true"));
   });
 
   it("applies the full-width shell class when the feature flag is enabled", async () => {

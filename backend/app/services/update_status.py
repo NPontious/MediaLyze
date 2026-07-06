@@ -15,8 +15,8 @@ from backend.app.utils.time import utc_now
 
 UPDATE_STATUS_KEY = "update_status"
 UPDATE_STATUS_MAX_AGE = timedelta(hours=12)
-LATEST_RELEASE_URL = "https://api.github.com/repos/frederikemmer/MediaLyze/releases/latest"
-REMOTE_CHANGELOG_URL = "https://raw.githubusercontent.com/frederikemmer/MediaLyze/main/CHANGELOG.md"
+LATEST_RELEASE_URL = "https://api.github.com/repos/NPontious/MediaLyze/releases/latest"
+REMOTE_CHANGELOG_URL = "https://raw.githubusercontent.com/NPontious/MediaLyze/main/CHANGELOG.md"
 SEMVER_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING_PATTERN = re.compile(r"^##\s+v([0-9][^\s]*)\s*$", re.MULTILINE)
 

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>MediaLyze</Name>
-  <Repository>ghcr.io/frederikemmer/medialyze:latest</Repository>
+  <Repository>ghcr.io/npontious/medialyze:latest</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,9 +9,9 @@
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
 
-  <Support>https://github.com/frederikemmer/MediaLyze/issues</Support>
-  <Project>https://github.com/frederikemmer/MediaLyze</Project>
-  <ReadMe>https://github.com/frederikemmer/MediaLyze#readme</ReadMe>
+  <Support>https://github.com/NPontious/MediaLyze/issues</Support>
+  <Project>https://github.com/NPontious/MediaLyze</Project>
+  <ReadMe>https://github.com/NPontious/MediaLyze#readme</ReadMe>
 
   <Overview>Self-hosted technical media analysis for large video and audio collections.</Overview>
   <Description>
@@ -27,15 +27,13 @@
 
   <Category>MediaApp:Tools MediaServer:Management Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/frederikemmer/MediaLyze/main/templates/medialyze.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/frederikemmer/MediaLyze/main/frontend/public/favicon-512.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/NPontious/MediaLyze/main/templates/medialyze.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/NPontious/MediaLyze/main/frontend/public/favicon-512.png</Icon>
 
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
-  <DonateText>Support MediaLyze</DonateText>
-  <DonateLink>https://github.com/sponsors/frederikemmer</DonateLink>
   <Requires>Persistent storage for /config and read-only media mounts below /media.</Requires>
 
   <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Host port for the MediaLyze web interface. The container target port stays 8080." Type="Port" Display="always" Required="true" Mask="false">8080</Config>

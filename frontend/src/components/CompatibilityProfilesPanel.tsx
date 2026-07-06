@@ -226,7 +226,7 @@ const CAPABILITY_KEYS: Record<Exclude<CapabilitySection, "sources" | "rules">, s
 
 type HardwareSupport = boolean | "passthrough_only" | "limited";
 
-const GITHUB_ISSUE_URL = "https://github.com/frederikemmer/MediaLyze/issues/new";
+const GITHUB_ISSUE_URL = "https://github.com/NPontious/MediaLyze/issues/new";
 const SAFE_ISSUE_URL_LENGTH = 7000;
 
 function today(): string {

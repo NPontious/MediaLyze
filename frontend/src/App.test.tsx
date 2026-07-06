@@ -37,14 +37,6 @@ function createAppSettings(): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
-    },
-    telemetry: {
-      mode: "off",
-      environment_disabled: false,
-      installation_id_suffix: null,
-      last_sent_at: null,
-      last_user_visible_payload: null,
-    },
   };
 }
 
@@ -102,8 +94,7 @@ describe("App routing", () => {
     expect(screen.getByRole("heading", { name: "Settings variants" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tables" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime & scan logs" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Library & file detail" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Duplicates, paths & telemetry" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Duplicates, paths" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Dialogs, popovers & tooltips" })).toBeInTheDocument();
 
     expect(screen.getAllByText("Dashboard", { exact: false }).length).toBeGreaterThan(0);

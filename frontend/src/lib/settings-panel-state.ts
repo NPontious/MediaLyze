@@ -6,8 +6,7 @@ export type SettingsPanelId =
   | "resolutionCategories"
   | "patternRecognition"
   | "historyRetention"
-  | "recentScanLogs"
-  | "telemetry";
+  | "recentScanLogs";
 
 const ACTIVE_PANEL_STORAGE_KEY = "medialyze-settings-active-panel";
 const NAV_COLLAPSED_STORAGE_KEY = "medialyze-settings-sidebar-collapsed";
@@ -21,7 +20,6 @@ export const SETTINGS_PANEL_IDS: SettingsPanelId[] = [
   "patternRecognition",
   "historyRetention",
   "recentScanLogs",
-  "telemetry",
 ];
 
 export function isSettingsPanelId(value: unknown): value is SettingsPanelId {

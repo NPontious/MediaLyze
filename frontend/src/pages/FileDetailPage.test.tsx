@@ -891,7 +891,7 @@ describe("FileDetailPage", () => {
       ),
     ).toBeInTheDocument();
     const reportLink = screen.getByRole("link", { name: "Report file" });
-    expect(reportLink).toHaveAttribute("href", "https://www.medialyze.app/report?source=file_detail_page");
+    expect(reportLink).toHaveAttribute("href", "https://github.com/NPontious/MediaLyze/issues/new/choose");
     expect(reportLink).toHaveAttribute("target", "_blank");
     expect(reportLink).toHaveClass("file-detail-cover-button");
     expect(screen.queryByText("Playback is not optimized yet and may take a while to start or may not run smoothly.")).not.toBeInTheDocument();

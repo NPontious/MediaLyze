@@ -4,7 +4,7 @@
         {
             "label": "RUN",
             "type": "shell",
-            "command": "cd \"/Users/frederikemmer/CODE/MediaLyze/.\" && ./scripts/dev-local.sh",
+            "command": "cd \"${workspaceFolder}\" && ./scripts/dev-local.sh",
             "inAgents": true
         }
     ]

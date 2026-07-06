@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.medialyze.app/schemas/hardware-profile.schema.json",
+  "$id": "https://raw.githubusercontent.com/NPontious/MediaLyze/main/docs/schemas/hardware-profile.schema.json",
   "title": "MediaLyze hardware profile",
   "type": "object",
   "required": [

@@ -973,15 +973,6 @@ export type AppSettings = {
   ui_preferences?: {
     interface_language: "en" | "de" | "es" | "uk";
     color_theme: "system" | "light" | "dark";
-  };
-  telemetry?: {
-    mode: TelemetryMode;
-    environment_disabled: boolean;
-    installation_id?: string | null;
-    installation_id_suffix: string | null;
-    last_sent_at: string | null;
-    last_user_visible_payload: Record<string, unknown> | null;
-  };
   feature_flags: {
     show_analyzed_files_csv_export: boolean;
     show_full_width_app_shell: boolean;
@@ -992,14 +983,7 @@ export type AppSettings = {
   };
 };
 
-export type TelemetryPreviewMode = "none" | "minimal" | "enabled";
 export type TelemetryMode = "none" | "initialized" | "off" | "minimal" | "enabled";
-
-export type TelemetryPreview = {
-  payload: Record<string, unknown>;
-  redacted: boolean;
-  mode: TelemetryPreviewMode;
-};
 
 export type HistoryStorageCategory = {
   entry_count: number;
@@ -1639,12 +1623,6 @@ export const api = {
   fileHistory: (id: string | number, signal?: AbortSignal) =>
     request<MediaFileHistory>(`/files/${id}/history`, { signal }),
   browse: (path = ".") => request<BrowseResponse>(`/browse?path=${encodeURIComponent(path)}`),
-  telemetryPreview: (mode: TelemetryPreviewMode = "minimal") =>
-    request<TelemetryPreview>(`/telemetry/preview?mode=${encodeURIComponent(mode)}`),
-  telemetrySendNow: () =>
-    request<AppSettings>("/telemetry/send-now", {
-      method: "POST",
-    }),
   inspectPath: (path: string) =>
     request<PathInspection>("/paths/inspect", {
       method: "POST",
@@ -1693,9 +1671,6 @@ export const api = {
     ui_preferences?: {
       interface_language?: "en" | "de" | "es" | "uk";
       color_theme?: "system" | "light" | "dark";
-    };
-    telemetry?: {
-      mode?: "off" | "minimal" | "enabled";
     };
     feature_flags?: {
       show_analyzed_files_csv_export?: boolean;
