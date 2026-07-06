@@ -127,6 +127,7 @@ class ScanRuntimeManager:
         self.history_compaction_pending = False
         self.history_storage_refresh_submitted = False
         self.history_reconstruction_status = HistoryReconstructionStatusRead()
+        self.stats_warmup_timer: Timer | None = None
         self.jellyfin_match_recompute_submitted = False
         self.jellyfin_match_recompute_rerun = False
         self.jellyfin_match_recompute_status = "idle"
