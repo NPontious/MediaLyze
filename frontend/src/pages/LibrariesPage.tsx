@@ -14,6 +14,7 @@ import {
   History,
   Lock,
   Plus,
+  Proportions,
   Save,
   Settings,
   SlidersHorizontal,
@@ -31,6 +32,7 @@ import { DeleteIcon } from "../components/DeleteIcon";
 import { PanelLeftToggleIcon } from "../components/PanelLeftToggleIcon";
 import { PathBrowser } from "../components/PathBrowser";
 import { RemoveIcon } from "../components/RemoveIcon";
+import { SquarePenIcon } from "../components/SquarePenIcon";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { SUPPORTED_INTERFACE_LANGUAGES, type SupportedInterfaceLanguage } from "../i18n";
 import { useAppData } from "../lib/app-data";
@@ -175,6 +177,17 @@ type PatternSectionKey =
   | "series_folder_regexes"
   | "season_folder_regexes"
   | "bonus_folder_patterns";
+
+type PatternRecognitionSectionState = Record<PatternSectionKey, boolean>;
+
+const PATTERN_RECOGNITION_SECTION_STORAGE_KEY = "medialyze-pattern-recognition-sections";
+
+const DEFAULT_PATTERN_RECOGNITION_SECTION_STATE: PatternRecognitionSectionState = {
+  series_folder_regexes: false,
+  season_folder_regexes: false,
+  bonus_folder_patterns: false,
+};
+
 const PATTERN_DOCS_URL = "https://github.com/NPontious/MediaLyze/blob/dev/docs/patterns.md";
 
 function normalizePatternRecognitionInputs(settings?: PatternRecognitionSettings | null): PatternRecognitionSettings {
@@ -779,6 +792,7 @@ export function LibrariesPage() {
   const [isRenamingQualityProfile, setIsRenamingQualityProfile] = useState(false);
   const qualityProfileNameInputRef = useRef<HTMLInputElement | null>(null);
   const autoSaveTimers = useRef<Record<number, number>>({});
+  const libraryNameInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [libraryIdentityForms, setLibraryIdentityForms] = useState<Record<number, LibraryIdentityForm>>({});
   const [libraryIdentityPending, setLibraryIdentityPending] = useState<Record<number, boolean>>({});
@@ -2061,7 +2075,7 @@ export function LibrariesPage() {
   }
 
   function togglePatternRecognitionSection(section: PatternSectionKey) {
-    setPatternRecognitionSectionState((current) =>
+    setPatternRecognitionSectionState((current: PatternRecognitionSectionState) =>
       savePatternRecognitionSectionState({
         ...current,
         [section]: !current[section],
