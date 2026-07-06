@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### ✨ New
+
+- pass dynamic `SOURCE_REPO` build argument in Docker build workflows so GHCR packages on forks automatically link to the forked repository
+
 ### 🐛 Fixed
 
 - include the second-generation suffix in the "Fire TV Stick 4K Max (2. Gen)" hardware profile ID

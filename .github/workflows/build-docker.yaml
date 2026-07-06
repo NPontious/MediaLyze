@@ -191,6 +191,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             APP_VERSION=${{ needs.prepare.outputs.version }}
+            SOURCE_REPO=https://github.com/${{ github.repository }}
           outputs: type=image,name=${{ needs.prepare.outputs.image_name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ needs.prepare.outputs.image_name }}:buildcache-${{ needs.prepare.outputs.channel }}-${{ matrix.architecture }}
           cache-to: type=registry,ref=${{ needs.prepare.outputs.image_name }}:buildcache-${{ needs.prepare.outputs.channel }}-${{ matrix.architecture }},mode=max

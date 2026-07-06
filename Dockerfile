@@ -19,9 +19,10 @@ RUN pip wheel --no-cache-dir --no-deps --wheel-dir /wheels .
 
 FROM python:3.12-alpine AS runtime
 ARG APP_VERSION=0.17.0
+ARG SOURCE_REPO="https://github.com/frederikemmer/MediaLyze"
 
 LABEL name="MediaLyze"
-LABEL org.opencontainers.image.source="https://github.com/frederikemmer/MediaLyze"
+LABEL org.opencontainers.image.source="${SOURCE_REPO}"
 
 ENV APP_PORT=8080
 ENV CONFIG_PATH=/config
