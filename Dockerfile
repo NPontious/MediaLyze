@@ -11,9 +11,10 @@ RUN npm run build
 
 FROM python:3.12-alpine AS runtime
 ARG APP_VERSION=0.16.3
+ARG SOURCE_REPO="https://github.com/frederikemmer/MediaLyze"
 
 LABEL name="MediaLyze"
-LABEL org.opencontainers.image.source="https://github.com/frederikemmer/MediaLyze"
+LABEL org.opencontainers.image.source="${SOURCE_REPO}"
 LABEL org.opencontainers.image.version="${APP_VERSION}"
 
 ENV APP_VERSION=${APP_VERSION}

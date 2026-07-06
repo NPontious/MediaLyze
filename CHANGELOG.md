@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### ✨ New
+
+- pass dynamic `SOURCE_REPO` build argument in Docker build workflows so GHCR packages on forks automatically link to the forked repository
+
 ## v0.16.3
 
 >2026-07-11
