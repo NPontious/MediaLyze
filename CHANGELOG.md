@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ New
 
+- add official hardware profiles for Google Pixel 9 and AMD Ryzen 7 7840HS (Radeon 780M / Phoenix APU)
 - pass dynamic `SOURCE_REPO` build argument in Docker build workflows so GHCR packages on forks automatically link to the forked repository
 
 ### 🐛 Fixed
