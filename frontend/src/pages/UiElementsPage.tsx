@@ -991,6 +991,7 @@ function ReleaseDialogFixture() {
           <button type="button" className="release-notes-download release-notes-download-success">
             <Download className="nav-icon" aria-hidden="true" />
             <span>Downloaded</span>
+          </button>
           <a href="/releases" className="release-notes-icon-link" aria-label="Open GitHub repository" onClick={preventCatalogNavigation}>
             <GithubIcon className="release-notes-github-icon" size={18} aria-hidden="true" />
           </a>
