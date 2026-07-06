@@ -100,7 +100,7 @@ const FILE_DETAIL_NAV_COLLAPSED_STORAGE_KEY = "medialyze-file-detail-sidebar-col
 const FILE_DETAIL_AUDIO_STREAM_PRIMARY_STORAGE_KEY = "medialyze-file-detail-audio-stream-primary";
 const DEFAULT_FILE_DETAIL_PANEL_ID: FileDetailPanelId = "overview";
 const DEFAULT_AUDIO_STREAM_PRIMARY_MODE: AudioStreamPrimaryMode = "quality";
-const PREVIEW_REPORT_URL = "https://www.medialyze.app/report?source=file_detail_page";
+const PREVIEW_REPORT_URL = "https://github.com/NPontious/MediaLyze/issues/new/choose";
 
 const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "overview", labelKey: "fileDetail.navigation.overview", icon: Info },

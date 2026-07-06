@@ -24,10 +24,10 @@
 
 | Platform | Download |
 | --- | --- |
-| macOS Apple Silicon | [Download](https://github.com/frederikemmer/MediaLyze/releases/latest/download/MediaLyze-arm64.dmg) |
-| Linux | [Download](https://github.com/frederikemmer/MediaLyze/releases/latest/download/MediaLyze.AppImage) |
-| Windows | [Download](https://github.com/frederikemmer/MediaLyze/releases/latest/download/MediaLyze.Setup.exe) |
-| All release assets | [Open latest release](https://github.com/frederikemmer/MediaLyze/releases/latest) |
+| macOS Apple Silicon | [Download](https://github.com/NPontious/MediaLyze/releases/latest/download/MediaLyze-arm64.dmg) |
+| Linux | [Download](https://github.com/NPontious/MediaLyze/releases/latest/download/MediaLyze.AppImage) |
+| Windows | [Download](https://github.com/NPontious/MediaLyze/releases/latest/download/MediaLyze.Setup.exe) |
+| All release assets | [Open latest release](https://github.com/NPontious/MediaLyze/releases/latest) |
 
 ![MediaLyze dashboard](docs/images/Dashboard.png)
 
@@ -62,15 +62,6 @@ Bring your own auth (for now).
     <td><img alt="Library Tableview" src="docs/images/Library_Tableview.png"></td>
   </tr>
 </table>
-
-## Support MediaLyze
-
-If you find MediaLyze useful and would like to support ongoing development, you can do so here:
-
-[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?hosted_button_id=DEINE_PAYPAL_BUTTON_ID)
-[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-181717?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/frederikemmer)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=000000)](https://www.buymeacoffee.com/medialyze)
-
 ## Quick Start
 
 ### Docker Compose
@@ -81,7 +72,7 @@ use the production ready docker compose file:
 ```docker
 services:
   medialyze:
-    image: ghcr.io/frederikemmer/medialyze:latest
+    image: ghcr.io/npontious/medialyze:latest
     container_name: medialyze
     ports:
       - "${HOST_PORT:-8080}:8080"
@@ -220,8 +211,6 @@ Relevant environment variables:
 - `FRONTEND_DIST_PATH`: optional explicit frontend bundle path, mainly used by packaged desktop builds
 - `TZ`: process/container timezone, default `UTC`
 - `DISABLE_DEFAULT_IGNORE_PATTERNS`: optional; when set to `true`, built-in default ignore patterns are not preloaded
-- `MEDIALYZE_TELEMETRY_DISABLED`: optional; when set to `true`, telemetry is forced off and the UI toggle is locked
-- `MEDIALYZE_TELEMETRY_ENDPOINT`: optional; overrides the telemetry ingest endpoint, default `https://www.medialyze.app/api/telemetry/ingest`
 - `FFPROBE_PATH`: optional override for the `ffprobe` binary path
 - `JELLYFIN_API_KEY_FILE`: optional path to a Jellyfin API-key secret file; see [Jellyfin integration](docs/jellyfin.md)
 - `PUID` / `PGID`: optional runtime user/group ids for shared-folder permission setups; set both or leave both unset to keep the default root runtime user
@@ -238,8 +227,6 @@ MediaLyze exposes separate limits for per-scan analysis workers and parallel lib
 
 Ignore rules use glob patterns matched against the normalized relative path inside each library. MediaLyze ships editable built-in defaults for common system and temporary paths such as `*/.DS_Store`, `*/@eaDir/*`, `*/.deletedByTMM/*`, and `*.part`. Set `DISABLE_DEFAULT_IGNORE_PATTERNS=true` if you do not want those defaults preloaded on first start.
 See [docs/patterns.md](docs/patterns.md) for folder discovery, series recognition, bonus-content rules, and ignore-pattern examples.
-
-Telemetry payloads are documented in [docs/telemetry.md](docs/telemetry.md), including the `none`, `minimal`, and `enabled` payload contracts and the privacy-preserving rounding rules for coarse usage counts.
 
 Jellyfin permissions, Docker path mappings, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md).
 
@@ -265,7 +252,7 @@ MediaLyze is an open-source project under active development. The current focus 
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/image?repos=frederikemmer/medialyze&type=date&legend=top-left)](https://www.star-history.com/?repos=frederikemmer%2Fmedialyze&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/image?repos=NPontious/MediaLyze&type=date&legend=top-left)](https://www.star-history.com/?repos=NPontious%2FMediaLyze&type=date&legend=top-left)
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.medialyze.app/schemas/compatibility-profile.schema.json",
+  "$id": "https://raw.githubusercontent.com/NPontious/MediaLyze/main/docs/schemas/compatibility-profile.schema.json",
   "title": "MediaLyze compatibility profile",
   "type": "object",
   "required": [

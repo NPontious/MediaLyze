@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0",
   "description": "Desktop packaging for the MediaLyze local media analysis app.",
-  "author": "Frederik Emmer",
+  "author": "NPontious",
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
@@ -21,7 +21,7 @@
     "icon-gen": "^5.0.0"
   },
   "build": {
-    "appId": "io.github.frederikemmer.medialyze",
+    "appId": "io.github.npontious.medialyze",
     "productName": "MediaLyze",
     "directories": {
       "output": "../dist/desktop-app",

@@ -57,11 +57,6 @@ from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.path_access import is_watch_supported_for_library
 from backend.app.services.stats_cache import stats_cache
-from backend.app.services.telemetry import (
-    send_current_telemetry_snapshot,
-    send_initial_telemetry_snapshot,
-    send_update_telemetry_snapshot,
-)
 from backend.app.services.update_status import check_for_updates
 from backend.app.schemas.history import (
     HistoryReconstructionJobStatus,
@@ -131,8 +126,6 @@ class ScanRuntimeManager:
         self.cancel_requested_job_ids: set[int] = set()
         self.history_compaction_pending = False
         self.history_storage_refresh_submitted = False
-        self.stats_warmup_timer: Timer | None = None
-        self.telemetry_send_timer: Timer | None = None
         self.history_reconstruction_status = HistoryReconstructionStatusRead()
         self.jellyfin_match_recompute_submitted = False
         self.jellyfin_match_recompute_rerun = False
@@ -148,7 +141,6 @@ class ScanRuntimeManager:
             self.scheduler.start()
             self.started = True
         self._ensure_history_maintenance_job()
-        self._ensure_telemetry_job()
         self._ensure_update_check_jobs()
         self._recover_orphaned_jellyfin_sync_jobs()
         self.refresh_jellyfin_schedule()
@@ -156,9 +148,6 @@ class ScanRuntimeManager:
         self.request_update_check()
         self.sync_all_libraries()
         self.run_history_retention()
-        self.request_initial_telemetry_send()
-        self.request_telemetry_send()
-        self.request_update_telemetry_send()
         self.request_stats_warmup()
 
     def stop(self) -> None:
@@ -173,9 +162,6 @@ class ScanRuntimeManager:
         if self.stats_warmup_timer is not None:
             self.stats_warmup_timer.cancel()
             self.stats_warmup_timer = None
-        if self.telemetry_send_timer is not None:
-            self.telemetry_send_timer.cancel()
-            self.telemetry_send_timer = None
         self.watch_trigger_buffers.clear()
 
         for _library_id, (_paths, observer) in list(self.watch_observers.items()):
@@ -333,12 +319,6 @@ class ScanRuntimeManager:
         if should_submit:
             self.executor.submit(self._run_history_reconstruction)
         return self.get_history_reconstruction_status()
-
-    def request_telemetry_send(self, *, force: bool = False) -> None:
-        with self.lock:
-            if not self.started:
-                return
-        self.maintenance_executor.submit(self._run_telemetry_send, force)
 
     def request_update_check(self) -> None:
         if not self.started:
@@ -537,36 +517,6 @@ class ScanRuntimeManager:
                 logger.warning("Canceled %s orphaned Jellyfin sync job(s)", recovered)
         finally:
             db.close()
-
-    def request_initial_telemetry_send(self) -> None:
-        with self.lock:
-            if not self.started:
-                return
-        self.maintenance_executor.submit(self._run_initial_telemetry_send)
-
-    def request_update_telemetry_send(self) -> None:
-        with self.lock:
-            if not self.started:
-                return
-        self.maintenance_executor.submit(self._run_update_telemetry_send)
-
-    def schedule_telemetry_send_after_settings_change(self) -> None:
-        with self.lock:
-            if not self.started:
-                return
-            if self.telemetry_send_timer is not None:
-                self.telemetry_send_timer.cancel()
-            timer = Timer(60, self._run_delayed_telemetry_send)
-            timer.daemon = True
-            self.telemetry_send_timer = timer
-            timer.start()
-
-    def cancel_pending_telemetry_send(self) -> None:
-        with self.lock:
-            if self.telemetry_send_timer is not None:
-                self.telemetry_send_timer.cancel()
-                self.telemetry_send_timer = None
-
     def submit_scan_job(self, job_id: int) -> None:
         db = SessionLocal()
         try:
@@ -900,21 +850,6 @@ class ScanRuntimeManager:
             coalesce=True,
         )
 
-    def _ensure_telemetry_job(self) -> None:
-        self.scheduler.add_job(
-            self.request_telemetry_send,
-            trigger="cron",
-            hour=0,
-            minute=0,
-            jitter=600,
-            kwargs={"force": False},
-            id="telemetry-daily-snapshot",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=3600,
-        )
-
     def _ensure_update_check_jobs(self) -> None:
         for hour, job_id in ((0, "update-check-primary"), (12, "update-check-secondary")):
             self.scheduler.add_job(
@@ -976,38 +911,12 @@ class ScanRuntimeManager:
         finally:
             db.close()
 
-    def _run_telemetry_send(self, force: bool = False) -> None:
-        db = SessionLocal()
-        try:
-            send_current_telemetry_snapshot(db, self.settings, force=force)
-        finally:
-            db.close()
-
-    def _run_initial_telemetry_send(self) -> None:
-        db = SessionLocal()
-        try:
-            send_initial_telemetry_snapshot(db, self.settings)
-        finally:
-            db.close()
-
-    def _run_update_telemetry_send(self) -> None:
-        db = SessionLocal()
-        try:
-            send_update_telemetry_snapshot(db, self.settings)
-        finally:
-            db.close()
-
     def _run_update_check(self) -> None:
         db = SessionLocal()
         try:
             check_for_updates(db, self.settings)
         finally:
             db.close()
-
-    def _run_delayed_telemetry_send(self) -> None:
-        with self.lock:
-            self.telemetry_send_timer = None
-        self.request_telemetry_send(force=True)
 
     def _submit_next_active_job(self, library_id: int) -> None:
         db = SessionLocal()

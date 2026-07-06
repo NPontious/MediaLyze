@@ -1,6 +1,6 @@
 const path = require("node:path");
 
-const GITHUB_LATEST_DOWNLOAD_BASE = "https://github.com/frederikemmer/MediaLyze/releases/latest/download";
+const GITHUB_LATEST_DOWNLOAD_BASE = "https://github.com/NPontious/MediaLyze/releases/latest/download";
 const STABLE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 
 const PLATFORM_ASSETS = {
@@ -25,7 +25,7 @@ function isAllowedInstallerDownloadUrl(url) {
   }
   const assetNames = new Set(Object.values(PLATFORM_ASSETS));
   return (
-    parsed.pathname.startsWith("/frederikemmer/MediaLyze/releases/latest/download/") &&
+    parsed.pathname.startsWith("/NPontious/MediaLyze/releases/latest/download/") &&
     assetNames.has(path.posix.basename(parsed.pathname))
   );
 }

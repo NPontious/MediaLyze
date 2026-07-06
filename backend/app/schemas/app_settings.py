@@ -74,19 +74,6 @@ class UiPreferencesUpdate(BaseModel):
     color_theme: Literal["system", "light", "dark"] | None = None
 
 
-class TelemetrySettingsRead(BaseModel):
-    mode: Literal["none", "initialized", "off", "minimal", "enabled"] = "none"
-    environment_disabled: bool = False
-    installation_id: str | None = None
-    installation_id_suffix: str | None = None
-    last_sent_at: datetime | None = None
-    last_sent_app_version: str | None = None
-    last_user_visible_payload: dict | None = None
-
-
-class TelemetrySettingsUpdate(BaseModel):
-    mode: Literal["off", "minimal", "enabled"] | None = None
-
 
 class HistoryRetentionBucketRead(BaseModel):
     days: int = Field(default=0, ge=0)
@@ -170,7 +157,6 @@ class AppSettingsRead(BaseModel):
     feature_flags: FeatureFlagsRead = Field(default_factory=FeatureFlagsRead)
     scan_performance: ScanPerformanceRead = Field(default_factory=ScanPerformanceRead)
     ui_preferences: UiPreferencesRead = Field(default_factory=UiPreferencesRead)
-    telemetry: TelemetrySettingsRead = Field(default_factory=TelemetrySettingsRead)
     history_retention: HistoryRetentionRead = Field(default_factory=HistoryRetentionRead)
 
 
@@ -183,5 +169,4 @@ class AppSettingsUpdate(BaseModel):
     feature_flags: FeatureFlagsUpdate | None = None
     scan_performance: ScanPerformanceUpdate | None = None
     ui_preferences: UiPreferencesUpdate | None = None
-    telemetry: TelemetrySettingsUpdate | None = None
     history_retention: HistoryRetentionUpdate | None = None

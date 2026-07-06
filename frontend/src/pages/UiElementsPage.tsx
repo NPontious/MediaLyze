@@ -81,7 +81,6 @@ import { StatisticPanelLayoutControls } from "../components/StatisticPanelLayout
 import { StatisticPanelLayoutMigrationNotice } from "../components/StatisticPanelLayoutMigrationNotice";
 import { StreamDetailsList } from "../components/StreamDetailsList";
 import { TableViewSettingsEditor } from "../components/TableViewSettingsEditor";
-import { TelemetryModeToggle } from "../components/TelemetryModeToggle";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { api, type BrowseResponse, type ComparisonResponse, type MediaFileStreamDetails } from "../lib/api";
 import { buildDefaultLibraryStatisticsSettings } from "../lib/library-statistics-settings";
@@ -1035,8 +1034,6 @@ function ReleaseDialogFixture() {
           <button type="button" className="release-notes-download release-notes-download-success">
             <Download className="nav-icon" aria-hidden="true" />
             <span>Downloaded</span>
-          </button>
-          <TelemetryModeToggle compact mode="minimal" onChange={() => undefined} />
           <a href="/releases" className="release-notes-icon-link" aria-label="Open GitHub repository" onClick={preventCatalogNavigation}>
             <GithubIcon className="release-notes-github-icon" size={18} aria-hidden="true" />
           </a>
@@ -1061,7 +1058,7 @@ function ReleaseDialogFixture() {
               <h3>New</h3>
               <ul>
                 <li>
-                  Example release note with <a href="https://github.com/frederikemmer/MediaLyze/issues/153" onClick={preventCatalogNavigation}>#153</a>.
+                  Example release note with <a href="https://github.com/NPontious/MediaLyze/issues/153" onClick={preventCatalogNavigation}>#153</a>.
                 </li>
               </ul>
             </section>
@@ -2111,16 +2108,6 @@ export function UiElementsPage() {
               </VariantCard>
               <VariantCard title="Path browser missing folder recovery" source={`${settings} > Libraries > Change path`} classes={["path-browser", "alert", "path-browser-selected-item"]}>
                 <MissingPathBrowserFixture />
-              </VariantCard>
-              <VariantCard title="Telemetry controls" source={`${settings} > Telemetry / Release notes`} classes={["telemetry-mode-toggle", "telemetry-mode-card", "telemetry-preview-actions"]}>
-                <div className="stack">
-                  <TelemetryModeToggle mode="enabled" highlightEnabledOption onChange={() => undefined} />
-                  <div className="telemetry-mode-card-grid">
-                    <div className="telemetry-mode-card telemetry-mode-card-off"><strong>Off</strong><span>No payloads.</span></div>
-                    <div className="telemetry-mode-card telemetry-mode-card-minimal"><strong>Minimal</strong><span>Runtime/system only.</span></div>
-                    <div className="telemetry-mode-card telemetry-mode-card-enabled"><strong>Enabled</strong><span>Rounded usage counts.</span></div>
-                  </div>
-                </div>
               </VariantCard>
             </VariantGroup>
           </CatalogSection>

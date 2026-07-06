@@ -18,7 +18,6 @@ from backend.app.schemas.app_settings import (
     PatternRecognitionSettings,
     ResolutionCategory,
     ScanPerformanceRead,
-    TelemetrySettingsRead,
     UiPreferencesRead,
 )
 from backend.app.services.pattern_recognition import (
@@ -95,12 +94,6 @@ def _default_history_retention() -> HistoryRetentionRead:
 def _default_ui_preferences() -> UiPreferencesRead:
     return UiPreferencesRead()
 
-
-def _default_telemetry(settings: Settings) -> TelemetrySettingsRead:
-    return TelemetrySettingsRead(
-        mode="off" if settings.telemetry_disabled else "none",
-        environment_disabled=settings.telemetry_disabled,
-    )
 
 
 def _deserialize_pattern_recognition(payload: Any) -> PatternRecognitionSettings:
@@ -227,46 +220,6 @@ def _deserialize_ui_preferences(payload: Any) -> UiPreferencesRead:
     )
 
 
-def _deserialize_telemetry(payload: Any, settings: Settings) -> TelemetrySettingsRead:
-    candidate = payload if isinstance(payload, dict) else {}
-    mode = candidate.get("mode")
-    if mode not in ("none", "initialized", "off", "minimal", "enabled"):
-        mode = "none"
-    installation_id = candidate.get("installation_id")
-    installation_id_suffix = installation_id[-8:] if isinstance(installation_id, str) and installation_id else None
-    last_sent_at = candidate.get("last_sent_at")
-    if isinstance(last_sent_at, str):
-        try:
-            last_sent_at = datetime.fromisoformat(last_sent_at.replace("Z", "+00:00"))
-        except ValueError:
-            last_sent_at = None
-    elif not isinstance(last_sent_at, datetime):
-        last_sent_at = None
-    last_sent_app_version = candidate.get("last_sent_app_version")
-    if not isinstance(last_sent_app_version, str) or not last_sent_app_version:
-        last_sent_app_version = None
-    last_payload = candidate.get("last_user_visible_payload")
-    if not isinstance(last_payload, dict):
-        last_payload = None
-    if settings.telemetry_disabled:
-        return TelemetrySettingsRead(
-            mode="off",
-            environment_disabled=True,
-            installation_id=installation_id if isinstance(installation_id, str) and installation_id else None,
-            installation_id_suffix=installation_id_suffix,
-            last_sent_at=last_sent_at,
-            last_sent_app_version=last_sent_app_version,
-            last_user_visible_payload=last_payload,
-        )
-    return TelemetrySettingsRead(
-        mode=mode,
-        environment_disabled=False,
-        installation_id=installation_id if isinstance(installation_id, str) and installation_id else None,
-        installation_id_suffix=installation_id_suffix,
-        last_sent_at=last_sent_at,
-        last_sent_app_version=last_sent_app_version,
-        last_user_visible_payload=last_payload,
-    )
 
 
 def _deserialize_app_settings(value: Any, settings: Settings) -> AppSettingsRead:
@@ -289,7 +242,6 @@ def _deserialize_app_settings(value: Any, settings: Settings) -> AppSettingsRead
     feature_flags = _deserialize_feature_flags(payload.get("feature_flags"), settings)
     scan_performance = _deserialize_scan_performance(payload.get("scan_performance"), settings)
     ui_preferences = _deserialize_ui_preferences(payload.get("ui_preferences"))
-    telemetry = _deserialize_telemetry(payload.get("telemetry"), settings)
     history_retention = _deserialize_history_retention(payload.get("history_retention"))
     pattern_recognition = _deserialize_pattern_recognition(payload.get("pattern_recognition"))
     resolution_categories_payload = payload.get("resolution_categories")
@@ -306,7 +258,6 @@ def _deserialize_app_settings(value: Any, settings: Settings) -> AppSettingsRead
         feature_flags=feature_flags,
         scan_performance=scan_performance,
         ui_preferences=ui_preferences,
-        telemetry=telemetry,
         history_retention=history_retention,
     )
 
@@ -324,7 +275,6 @@ def get_app_settings(db: Session, settings: Settings | None = None) -> AppSettin
             feature_flags=_default_feature_flags(resolved_settings),
             scan_performance=_default_scan_performance(resolved_settings),
             ui_preferences=_default_ui_preferences(),
-            telemetry=_default_telemetry(resolved_settings),
             history_retention=_default_history_retention(),
         )
     return _deserialize_app_settings(setting.value, resolved_settings)
@@ -388,7 +338,6 @@ def update_app_settings(
     current = get_app_settings(db, settings)
     setting = db.get(AppSetting, APP_SETTINGS_KEY)
     existing_value = setting.value if setting is not None and isinstance(setting.value, dict) else {}
-    existing_telemetry = existing_value.get("telemetry") if isinstance(existing_value.get("telemetry"), dict) else {}
 
     update_user_patterns = payload.user_ignore_patterns is not None
     update_default_patterns = payload.default_ignore_patterns is not None
@@ -432,14 +381,6 @@ def update_app_settings(
     next_ui_preferences = current.ui_preferences.model_copy(
         update=payload.ui_preferences.model_dump(exclude_none=True) if payload.ui_preferences is not None else {}
     )
-    next_telemetry = current.telemetry.model_copy(
-        update=payload.telemetry.model_dump(exclude_none=True) if payload.telemetry is not None else {}
-    )
-    if (settings or get_settings()).telemetry_disabled:
-        next_telemetry = next_telemetry.model_copy(update={"mode": "off", "environment_disabled": True})
-    installation_id = existing_telemetry.get("installation_id")
-    if next_telemetry.mode in ("minimal", "enabled") and not installation_id:
-        installation_id = str(uuid4())
     next_pattern_recognition = current.pattern_recognition.model_copy(deep=True)
     if payload.pattern_recognition is not None:
         pattern_payload = payload.pattern_recognition
@@ -497,14 +438,6 @@ def update_app_settings(
         setting = AppSetting(key=APP_SETTINGS_KEY, value={})
         db.add(setting)
 
-    next_telemetry_value = {
-        "mode": next_telemetry.mode,
-        "installation_id": installation_id,
-        "last_sent_at": existing_telemetry.get("last_sent_at"),
-        "last_sent_app_version": existing_telemetry.get("last_sent_app_version"),
-        "last_user_visible_payload": next_telemetry.last_user_visible_payload,
-    }
-
     next_value = {
         "user_ignore_patterns": next_user_ignore_patterns,
         "default_ignore_patterns": next_default_ignore_patterns,
@@ -512,7 +445,6 @@ def update_app_settings(
         "feature_flags": next_feature_flags.model_dump(mode="json"),
         "scan_performance": next_scan_performance.model_dump(mode="json"),
         "ui_preferences": next_ui_preferences.model_dump(mode="json"),
-        "telemetry": next_telemetry_value,
         "history_retention": next_history_retention.model_dump(mode="json"),
     }
     if payload.pattern_recognition is not None or "pattern_recognition" in existing_value:

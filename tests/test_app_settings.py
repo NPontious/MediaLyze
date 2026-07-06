@@ -133,8 +133,6 @@ def test_get_app_settings_seeds_built_in_default_ignore_patterns_for_new_install
     assert loaded.scan_performance.comparison_scatter_point_limit == 5000
     assert loaded.ui_preferences.interface_language == "en"
     assert loaded.ui_preferences.color_theme == "system"
-    assert loaded.telemetry.mode == "none"
-    assert loaded.telemetry.environment_disabled is False
     assert loaded.history_retention.file_history.days == 30
     assert loaded.history_retention.file_history.storage_limit_gb == 0
     assert loaded.history_retention.library_history.days == 365
@@ -335,61 +333,6 @@ def test_update_app_settings_rejects_invalid_ui_preferences() -> None:
     with pytest.raises(ValidationError):
         AppSettingsUpdate(ui_preferences={"color_theme": "blue"})
 
-
-def test_update_app_settings_persists_telemetry_mode(tmp_path) -> None:
-    session_factory = build_session_factory()
-    settings = build_settings(tmp_path)
-
-    with session_factory() as db:
-        updated = update_app_settings(db, AppSettingsUpdate(telemetry={"mode": "minimal"}), settings)
-        loaded = get_app_settings(db, settings)
-
-    assert updated.telemetry.mode == "minimal"
-    assert updated.telemetry.environment_disabled is False
-    assert updated.telemetry.installation_id_suffix is not None
-    assert loaded.telemetry.mode == "minimal"
-    assert loaded.telemetry.installation_id_suffix == updated.telemetry.installation_id_suffix
-
-
-def test_telemetry_installation_id_survives_settings_updates(tmp_path) -> None:
-    session_factory = build_session_factory()
-    settings = build_settings(tmp_path)
-
-    with session_factory() as db:
-        enabled = update_app_settings(db, AppSettingsUpdate(telemetry={"mode": "enabled"}), settings)
-        installation_id = enabled.telemetry.installation_id
-
-        disabled = update_app_settings(db, AppSettingsUpdate(telemetry={"mode": "off"}), settings)
-        updated = update_app_settings(
-            db,
-            AppSettingsUpdate(
-                telemetry={"mode": "minimal"},
-                scan_performance={"scan_worker_count": 5},
-                ui_preferences={"interface_language": "de"},
-            ),
-            settings,
-        )
-        loaded = get_app_settings(db, settings)
-
-    assert installation_id is not None
-    assert disabled.telemetry.installation_id == installation_id
-    assert updated.telemetry.installation_id == installation_id
-    assert loaded.telemetry.installation_id == installation_id
-    assert loaded.telemetry.installation_id_suffix == installation_id[-8:]
-
-
-def test_telemetry_disabled_env_forces_off_mode(tmp_path) -> None:
-    session_factory = build_session_factory()
-    settings = build_settings(tmp_path, telemetry_disabled=True)
-
-    with session_factory() as db:
-        updated = update_app_settings(db, AppSettingsUpdate(telemetry={"mode": "enabled"}), settings)
-        loaded = get_app_settings(db, settings)
-
-    assert updated.telemetry.mode == "off"
-    assert updated.telemetry.environment_disabled is True
-    assert loaded.telemetry.mode == "off"
-    assert loaded.telemetry.environment_disabled is True
 
 
 def test_get_app_settings_skips_built_in_default_ignore_patterns_when_disabled(tmp_path) -> None:

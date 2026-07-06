@@ -504,3 +504,24 @@ def test_profile_api_crud_and_official_profile_protection(tmp_path) -> None:
     )
     assert response.status_code == 400
     assert "read-only" in response.json()["detail"]
+
+
+def test_new_hardware_profiles_evaluation(tmp_path) -> None:
+    settings = Settings(config_path=tmp_path)
+    profiles = {p.id: p for p in list_profiles(settings, "hardware")}
+    amd_profile = profiles.get("amd-ryzen-7-7840hs")
+    pixel_profile = profiles.get("google-pixel-9")
+    assert amd_profile is not None
+    assert pixel_profile is not None
+
+    amd_res = evaluate_hardware_profile(
+        _file(extension="mkv", video_streams=[SimpleNamespace(stream_index=0, codec="av1", width=3840, height=2160, frame_rate=60, bit_depth=10, hdr_type="HDR10")]),
+        amd_profile,
+    )
+    assert amd_res.status == CompatibilityStatus.direct_play
+
+    pixel_res = evaluate_hardware_profile(
+        _file(extension="mp4", video_streams=[SimpleNamespace(stream_index=0, codec="hevc", width=3840, height=2160, frame_rate=60, bit_depth=10, hdr_type="HDR10+")]),
+        pixel_profile,
+    )
+    assert pixel_res.status == CompatibilityStatus.direct_play

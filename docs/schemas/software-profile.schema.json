@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.medialyze.app/schemas/software-profile.schema.json",
+  "$id": "https://raw.githubusercontent.com/NPontious/MediaLyze/main/docs/schemas/software-profile.schema.json",
   "title": "MediaLyze software/player profile",
   "type": "object",
   "required": [

@@ -1,6 +1,6 @@
 services:
   medialyze:
-    image: ghcr.io/frederikemmer/medialyze:latest
+    image: ghcr.io/npontious/medialyze:latest
     container_name: medialyze
     hostname: medialyze
     ports:

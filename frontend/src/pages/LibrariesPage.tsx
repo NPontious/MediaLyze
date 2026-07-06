@@ -14,8 +14,6 @@ import {
   History,
   Lock,
   Plus,
-  Proportions,
-  Radio,
   Save,
   Search,
   Server,
@@ -37,8 +35,6 @@ import { DeleteIcon } from "../components/DeleteIcon";
 import { PanelLeftToggleIcon } from "../components/PanelLeftToggleIcon";
 import { PathBrowser } from "../components/PathBrowser";
 import { RemoveIcon } from "../components/RemoveIcon";
-import { SquarePenIcon } from "../components/SquarePenIcon";
-import { TelemetryModeToggle } from "../components/TelemetryModeToggle";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { SUPPORTED_INTERFACE_LANGUAGES, type SupportedInterfaceLanguage } from "../i18n";
 import { useAppData } from "../lib/app-data";
@@ -62,7 +58,6 @@ import {
   type ResolutionCategory,
   type RecentScanJob,
   type ScanJobDetail,
-  type TelemetryMode,
 } from "../lib/api";
 import { getDesktopBridge, isDesktopApp } from "../lib/desktop";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
@@ -199,21 +194,7 @@ type PatternSectionKey =
   | "series_folder_regexes"
   | "season_folder_regexes"
   | "bonus_folder_patterns";
-
-type TelemetryPayloadView = "last" | "minimal" | "enabled";
-
-type PatternRecognitionSectionState = Record<PatternSectionKey, boolean>;
-
-const PATTERN_RECOGNITION_SECTION_STORAGE_KEY = "medialyze-pattern-recognition-sections";
-
-const DEFAULT_PATTERN_RECOGNITION_SECTION_STATE: PatternRecognitionSectionState = {
-  series_folder_regexes: true,
-  season_folder_regexes: true,
-  bonus_folder_patterns: false,
-};
-
-const PATTERN_DOCS_URL = "https://github.com/frederikemmer/MediaLyze/blob/dev/docs/patterns.md";
-const TELEMETRY_STATS_URL = "https://www.medialyze.app/stats";
+const PATTERN_DOCS_URL = "https://github.com/NPontious/MediaLyze/blob/dev/docs/patterns.md";
 
 function normalizePatternRecognitionInputs(settings?: PatternRecognitionSettings | null): PatternRecognitionSettings {
   const next = settings ?? DEFAULT_PATTERN_RECOGNITION_INPUTS;
@@ -787,7 +768,6 @@ const SETTINGS_NAV_GROUPS: SettingsNavigationGroup[] = [
     items: [
       { id: "historyRetention", labelKey: "libraries.historyRetention.title", icon: History },
       { id: "recentScanLogs", labelKey: "scanLogs.title", icon: Archive },
-      { id: "telemetry", labelKey: "telemetry.panel.title", icon: Radio },
     ],
   },
 ];
@@ -956,22 +936,11 @@ export function LibrariesPage() {
   const [historyRetentionStatusTone, setHistoryRetentionStatusTone] = useState<"success" | "error">("error");
   const [resolutionCategoriesStatus, setResolutionCategoriesStatus] = useState<string | null>(null);
   const [patternRecognitionStatus, setPatternRecognitionStatus] = useState<string | null>(null);
-  const [telemetryPreviewStatus, setTelemetryPreviewStatus] = useState<string | null>(null);
-  const [telemetryPreviewJsonByMode, setTelemetryPreviewJsonByMode] = useState<
-    Partial<Record<Exclude<TelemetryPayloadView, "last">, string>>
-  >({});
-  const [telemetryPayloadView, setTelemetryPayloadView] = useState<TelemetryPayloadView>("last");
-  const [loadingTelemetryPayloadView, setLoadingTelemetryPayloadView] = useState<Exclude<TelemetryPayloadView, "last"> | null>(null);
-  const [telemetryStatus, setTelemetryStatus] = useState<string | null>(null);
-  const [telemetryIdCopied, setTelemetryIdCopied] = useState(false);
-  const [pendingTelemetryMode, setPendingTelemetryMode] = useState<TelemetryMode | null>(null);
   const [isSavingFeatureFlags, setIsSavingFeatureFlags] = useState(false);
   const [isSavingScanPerformance, setIsSavingScanPerformance] = useState(false);
   const [isSavingHistoryRetention, setIsSavingHistoryRetention] = useState(false);
   const [isSavingResolutionCategories, setIsSavingResolutionCategories] = useState(false);
   const [isSavingPatternRecognition, setIsSavingPatternRecognition] = useState(false);
-  const [isLoadingTelemetryPreview, setIsLoadingTelemetryPreview] = useState(false);
-  const [isSavingTelemetry, setIsSavingTelemetry] = useState(false);
   const ignorePatternsSaveTimer = useRef<number | null>(null);
   const copiedScanDiagnosticResetTimer = useRef<number | null>(null);
   const scanWorkerCountInputRef = useRef("4");
@@ -988,32 +957,11 @@ export function LibrariesPage() {
   const historyReconstructionLoadedRef = useRef(false);
   const persistedIgnorePatterns = useRef<PersistedIgnorePatterns>({ user: [], default: [] });
   const seededDefaultIgnorePatterns = useRef<string[] | null>(null);
-  const libraryNameInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
-  const telemetryEnabledClickStampsRef = useRef<number[]>([]);
   const resolutionOptions = normalizeResolutionCategories(appSettings.resolution_categories);
   const resolutionOptionIds = resolutionOptions.map((category) => category.id);
   const resolutionOptionLabels = new Map(resolutionOptions.map((category) => [category.id, category.label]));
   const appScanPerformance = appSettings.scan_performance ?? DEFAULT_SCAN_PERFORMANCE;
   const appHistoryRetention = appSettings.history_retention ?? DEFAULT_HISTORY_RETENTION;
-  const appTelemetry = appSettings.telemetry ?? {
-    mode: "none" as TelemetryMode,
-    environment_disabled: false,
-    installation_id: null,
-    last_user_visible_payload: null,
-  };
-  const telemetryInstallationId = appTelemetry.installation_id ?? "";
-  const selectedTelemetryPayloadJson =
-    telemetryPayloadView === "last"
-      ? appTelemetry.last_user_visible_payload
-        ? JSON.stringify(appTelemetry.last_user_visible_payload, null, 2)
-        : ""
-      : telemetryPreviewJsonByMode[telemetryPayloadView] ?? "";
-  const selectedTelemetryPayloadPlaceholder =
-    telemetryPayloadView === "last"
-      ? appTelemetry.mode === "off" || appTelemetry.environment_disabled
-        ? t("telemetry.lastPayload.noneAndOff")
-        : t("telemetry.lastPayload.none")
-      : t("telemetry.preview.notLoaded");
   const { preference: themePref, setPreference: setThemePref } = useTheme();
   const { activeJobs, hasActiveJobs, refresh, trackJob } = useScanJobs();
   const hadActiveJobsRef = useRef(hasActiveJobs);
@@ -1072,24 +1020,6 @@ export function LibrariesPage() {
     targetLibraryId,
   ]);
 
-  async function openTelemetryStatsPage() {
-    const desktopBridge = getDesktopBridge();
-    if (desktopBridge?.openExternalUrl) {
-      await desktopBridge.openExternalUrl(TELEMETRY_STATS_URL);
-      return;
-    }
-    window.open(TELEMETRY_STATS_URL, "_blank", "noopener,noreferrer");
-  }
-
-  async function copyTelemetryInstallationId() {
-    if (!telemetryInstallationId || !navigator.clipboard?.writeText) {
-      return;
-    }
-    await navigator.clipboard.writeText(telemetryInstallationId);
-    setTelemetryIdCopied(true);
-    window.setTimeout(() => setTelemetryIdCopied(false), 2000);
-  }
-
   useEffect(() => {
     const nextInputs = historyRetentionInputsFromSettings(appHistoryRetention);
     historyRetentionInputsRef.current = nextInputs;
@@ -1146,81 +1076,6 @@ export function LibrariesPage() {
     }
   }
 
-  async function selectTelemetryPayloadView(view: TelemetryPayloadView) {
-    setTelemetryPreviewStatus(null);
-    if (view === "last") {
-      setTelemetryPayloadView(view);
-      return;
-    }
-    if (telemetryPreviewJsonByMode[view]) {
-      setTelemetryPayloadView(view);
-      return;
-    }
-    if (isLoadingTelemetryPreview) {
-      return;
-    }
-    setLoadingTelemetryPayloadView(view);
-    setIsLoadingTelemetryPreview(true);
-    try {
-      const preview = await api.telemetryPreview(view);
-      setTelemetryPreviewJsonByMode((current) => ({
-        ...current,
-        [preview.mode === "enabled" ? "enabled" : "minimal"]: JSON.stringify(preview.payload, null, 2),
-      }));
-      setTelemetryPayloadView(preview.mode === "enabled" ? "enabled" : "minimal");
-    } catch {
-      setTelemetryPreviewStatus(t("telemetry.preview.loadFailed"));
-    } finally {
-      setIsLoadingTelemetryPreview(false);
-      setLoadingTelemetryPayloadView(null);
-    }
-  }
-
-  async function saveTelemetryMode(mode: "off" | "minimal" | "enabled") {
-    setIsSavingTelemetry(true);
-    setPendingTelemetryMode(mode);
-    setTelemetryStatus(null);
-    try {
-      const updated = await api.updateAppSettings({ telemetry: { mode } });
-      applyUpdatedAppSettingsState(updated);
-    } catch {
-      setTelemetryStatus(t("telemetry.saveFailed"));
-    } finally {
-      setIsSavingTelemetry(false);
-      setPendingTelemetryMode(null);
-    }
-  }
-
-  async function sendTelemetryNowSilently() {
-    if (isSavingTelemetry || appTelemetry.environment_disabled || appTelemetry.mode !== "enabled") {
-      return;
-    }
-    setIsSavingTelemetry(true);
-    setPendingTelemetryMode("enabled");
-    try {
-      const updated = await api.telemetrySendNow();
-      applyUpdatedAppSettingsState(updated);
-    } catch {
-      // Hidden dev shortcut: keep the UI quiet if the manual send fails.
-    } finally {
-      setIsSavingTelemetry(false);
-      setPendingTelemetryMode(null);
-    }
-  }
-
-  function handleConfirmedTelemetryModeClick(mode: "off" | "minimal" | "enabled") {
-    if (mode !== "enabled" || appTelemetry.mode !== "enabled") {
-      return;
-    }
-    const now = Date.now();
-    telemetryEnabledClickStampsRef.current = [...telemetryEnabledClickStampsRef.current, now].filter(
-      (timestamp) => now - timestamp <= 1200,
-    );
-    if (telemetryEnabledClickStampsRef.current.length >= 3) {
-      telemetryEnabledClickStampsRef.current = [];
-      void sendTelemetryNowSilently();
-    }
-  }
 
   const refreshHistoryStorage = (showLoading = false) => {
     if (showLoading) {
@@ -6882,118 +6737,6 @@ export function LibrariesPage() {
           </AsyncPanel>
           ) : null}
 
-          {activeSettingsPanelId === "telemetry" ? (
-          <AsyncPanel
-            title={t("telemetry.panel.title")}
-            collapseActions={
-              <TelemetryModeToggle
-                compact
-                mode={appTelemetry.mode}
-                disabled={!appSettingsLoaded || isSavingTelemetry || appTelemetry.environment_disabled}
-                undecided={appTelemetry.mode === "none" || appTelemetry.mode === "initialized"}
-                pendingMode={pendingTelemetryMode}
-                onChange={(mode) => void saveTelemetryMode(mode)}
-                onConfirmedModeClick={handleConfirmedTelemetryModeClick}
-              />
-            }
-          >
-            <div className="settings-sidebar-stack telemetry-panel-content">
-              <p className="app-settings-section-copy">{t("telemetry.panel.description")}</p>
-              {appTelemetry.environment_disabled ? (
-                <div className="alert">{t("telemetry.environmentDisabled")}</div>
-              ) : null}
-              <div className="telemetry-mode-card-grid">
-                <div className="telemetry-mode-card telemetry-mode-card-off">
-                  <strong>{t("telemetry.mode.off")}</strong>
-                  <span>{t("telemetry.modeDescriptions.off")}</span>
-                </div>
-                <div className="telemetry-mode-card telemetry-mode-card-minimal">
-                  <strong>{t("telemetry.mode.minimal")}</strong>
-                  <span>{t("telemetry.modeDescriptions.minimal")}</span>
-                </div>
-                <div className="telemetry-mode-card telemetry-mode-card-enabled">
-                  <strong>{t("telemetry.mode.enabled")}</strong>
-                  <span>{t("telemetry.modeDescriptions.enabled")}</span>
-                </div>
-              </div>
-              <div className="app-settings-section">
-                <div className="telemetry-stats-info">
-                  <div>
-                    <p className="app-settings-section-title">{t("telemetry.stats.title")}</p>
-                    <p className="app-settings-section-copy">{t("telemetry.stats.description")}</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="secondary icon-only-button telemetry-stats-link"
-                    aria-label={t("telemetry.stats.openAria")}
-                    data-tooltip={t("telemetry.stats.openAria")}
-                    onClick={() => void openTelemetryStatsPage()}
-                  >
-                    <SquareArrowOutUpRight size={18} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="telemetry-installation-id-row">
-                  <div className="telemetry-installation-id-control">
-                    <input
-                      type="text"
-                      readOnly
-                      value={telemetryInstallationId || t("telemetry.stats.installationIdMissing")}
-                      aria-label={t("telemetry.stats.installationIdLabel")}
-                    />
-                    <button
-                      type="button"
-                      className="secondary icon-only-button telemetry-copy-id-button"
-                      aria-label={telemetryIdCopied ? t("telemetry.stats.copied") : t("telemetry.stats.copy")}
-                      data-tooltip={telemetryIdCopied ? t("telemetry.stats.copied") : t("telemetry.stats.copy")}
-                      disabled={!telemetryInstallationId || !navigator.clipboard?.writeText}
-                      onClick={() => void copyTelemetryInstallationId()}
-                    >
-                      <Copy size={16} aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-                <div className="telemetry-preview-actions">
-                  <SlidingTogglePill
-                    activeKey={telemetryPayloadView}
-                    className="nav-active-pill telemetry-preview-view-pill"
-                  />
-                  <button
-                    type="button"
-                    data-toggle-key="last"
-                    className={`telemetry-preview-view-button${telemetryPayloadView === "last" ? " active" : ""}`}
-                    aria-pressed={telemetryPayloadView === "last"}
-                    onClick={() => void selectTelemetryPayloadView("last")}
-                  >
-                    <span>{t("telemetry.preview.views.last")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    data-toggle-key="minimal"
-                    className={`telemetry-preview-view-button${telemetryPayloadView === "minimal" ? " active" : ""}${loadingTelemetryPayloadView === "minimal" ? " is-loading" : ""}`}
-                    aria-pressed={telemetryPayloadView === "minimal"}
-                    onClick={() => void selectTelemetryPayloadView("minimal")}
-                  >
-                    <span>{t("telemetry.preview.views.minimal")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    data-toggle-key="enabled"
-                    className={`telemetry-preview-view-button${telemetryPayloadView === "enabled" ? " active" : ""}${loadingTelemetryPayloadView === "enabled" ? " is-loading" : ""}`}
-                    aria-pressed={telemetryPayloadView === "enabled"}
-                    onClick={() => void selectTelemetryPayloadView("enabled")}
-                  >
-                    <span>{t("telemetry.preview.views.enabled")}</span>
-                  </button>
-                </div>
-                <pre className="telemetry-preview-json" aria-label={t("telemetry.preview.jsonLabel")}>
-                  {selectedTelemetryPayloadJson || selectedTelemetryPayloadPlaceholder}
-                </pre>
-                {telemetryPreviewStatus ? <div className="alert">{telemetryPreviewStatus}</div> : null}
-              </div>
-              {telemetryStatus ? <div className="alert">{telemetryStatus}</div> : null}
-            </div>
-          </AsyncPanel>
-          ) : null}
 
           {activeSettingsPanelId === "appSettings" ? (
           <AsyncPanel

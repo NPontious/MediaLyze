@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 - add official hardware profiles for Google Pixel 9 and AMD Ryzen 7 7840HS (Radeon 780M / Phoenix APU)
 - pass dynamic `SOURCE_REPO` build argument in Docker build workflows so GHCR packages on forks automatically link to the forked repository
+- remove telemetry endpoints, services, UI components, and settings
+- change default web server and container port from 8080 to 8083
+- fix dark mode contrast and repeating select dropdown arrows in the compatibility profiles panel
 
 ### 🐛 Fixed
 
