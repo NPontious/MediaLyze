@@ -1203,6 +1203,7 @@ export type AppSettings = {
   ui_preferences?: {
     interface_language: "en" | "de" | "es" | "uk";
     color_theme: "system" | "light" | "dark";
+  };
   feature_flags: {
     show_analyzed_files_csv_export: boolean;
     show_full_width_app_shell: boolean;
