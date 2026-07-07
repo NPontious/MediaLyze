@@ -114,6 +114,12 @@ class Library(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    roots: Mapped[list[LibraryRoot]] = relationship(
+        back_populates="library",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="LibraryRoot.id",
+    )
     assigned_quality_profile: Mapped[QualityProfileDefinition | None] = relationship(
         back_populates="libraries",
         foreign_keys=[quality_profile_id],
@@ -143,6 +149,23 @@ class Library(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class LibraryRoot(TimestampMixin, Base):
+    __tablename__ = "library_roots"
+    __table_args__ = (
+        Index("ix_library_roots_library_id", "library_id"),
+        Index("ix_library_roots_library_path_key", "library_id", "path_key", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="CASCADE"), nullable=False)
+    path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    path_key: Mapped[str] = mapped_column(String(2048), nullable=False)
+
+    library: Mapped[Library] = relationship(back_populates="roots")
+    media_files: Mapped[list[MediaFile]] = relationship(back_populates="library_root")
 
 
 class AppSetting(Base):
@@ -241,7 +264,7 @@ class MediaSeason(TimestampMixin, Base):
 class MediaFile(Base):
     __tablename__ = "media_files"
     __table_args__ = (
-        Index("ix_media_files_library_relative_path", "library_id", "relative_path", unique=True),
+        Index("ix_media_files_library_root_relative_path", "library_id", "library_root_id", "relative_path", unique=True),
         Index("ix_media_files_scan_status", "scan_status"),
         Index("ix_media_files_quality_score", "quality_score"),
         Index("ix_media_files_library_size_bytes", "library_id", "size_bytes"),
@@ -271,6 +294,7 @@ class MediaFile(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="CASCADE"), nullable=False)
+    library_root_id: Mapped[int | None] = mapped_column(ForeignKey("library_roots.id", ondelete="CASCADE"), nullable=True)
     relative_path: Mapped[str] = mapped_column(String(2048), nullable=False)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     extension: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -360,6 +384,7 @@ class MediaFile(Base):
     recognition_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     library: Mapped[Library] = relationship(back_populates="media_files")
+    library_root: Mapped[LibraryRoot | None] = relationship(back_populates="media_files")
     series: Mapped[MediaSeries | None] = relationship(back_populates="media_files")
     season: Mapped[MediaSeason | None] = relationship(back_populates="media_files")
     media_format: Mapped[MediaFormat | None] = relationship(

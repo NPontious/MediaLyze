@@ -5094,7 +5094,11 @@ export function LibrariesPage() {
                                 tooltipClassName="library-details-tooltip"
                                 content={
                                   <div className="library-details-tooltip-content">
-                                    <p className="library-details-tooltip-path">{library.path}</p>
+                                    {(library.roots?.length ? library.roots : [{ id: 0, path: library.path, display_name: "", path_key: library.path }]).map((root) => (
+                                      <p className="library-details-tooltip-path" key={`${library.id}-${root.path}`}>
+                                        {root.path}
+                                      </p>
+                                    ))}
                                     <div className="library-details-tooltip-stats">
                                       <span>{library.file_count} {t("libraries.files").toLowerCase()}</span>
                                       <span>{formatBytes(library.total_size_bytes)}</span>

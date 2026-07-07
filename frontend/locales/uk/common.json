@@ -1204,6 +1204,7 @@
     "bonusContent": "Бонус",
     "showFullFilename": "Показати повне ім'я файлу",
     "showFullRelativePath": "Показати повний відносний шлях",
+    "root": "Корінь",
     "relativePath": "Відносний шлях",
     "size": "Розмір",
     "duration": "Тривалість",

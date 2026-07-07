@@ -472,6 +472,12 @@ export type LibrarySummary = {
   id: number;
   name: string;
   path: string;
+  roots?: Array<{
+    id: number;
+    path: string;
+    display_name: string;
+    path_key: string;
+  }>;
   type: LibraryType;
   last_scan_at: string | null;
   scan_mode: "manual" | "scheduled" | "scheduled_daily" | "watch";
@@ -523,6 +529,9 @@ export type LibraryStatistics = {
 export type MediaFileRow = {
   id: number;
   library_id: number;
+  root_id?: number | null;
+  root_name?: string | null;
+  display_path?: string | null;
   relative_path: string;
   filename: string;
   extension: string;
@@ -1164,6 +1173,9 @@ export type RecentScanJobPage = {
 
 export type DuplicateGroupFile = {
   id: number;
+  root_id?: number | null;
+  root_name?: string | null;
+  display_path?: string | null;
   relative_path: string;
   filename: string;
   size_bytes: number;

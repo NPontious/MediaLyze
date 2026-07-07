@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from collections import defaultdict
 from copy import deepcopy
+import os
 from pathlib import PurePosixPath
 
 from sqlalchemy import case, delete, distinct, func, literal, select, union_all
@@ -13,6 +14,7 @@ from backend.app.models.entities import (
     AudioStream,
     ExternalSubtitle,
     Library,
+    LibraryRoot,
     MediaChapter,
     MediaFile,
     MediaFormat,
@@ -21,14 +23,19 @@ from backend.app.models.entities import (
     SubtitleStream,
     VideoStream,
 )
-from backend.app.schemas.library import LibraryCreate, LibraryStatistics, LibrarySummary, LibraryUpdate
+from backend.app.schemas.library import LibraryCreate, LibraryRootRead, LibraryStatistics, LibrarySummary, LibraryUpdate
 from backend.app.schemas.media import DistributionItem
 from backend.app.schemas.quality import QualityProfile
 from backend.app.services.app_settings import get_app_settings as load_app_settings
 from backend.app.services.container_formats import format_container_label
 from backend.app.services.languages import normalize_language_code
 from backend.app.services.numeric_distributions import build_numeric_distributions
-from backend.app.services.path_access import is_watch_supported_for_library, resolve_library_path, resolve_library_paths
+from backend.app.services.path_access import (
+    is_watch_supported_for_library,
+    library_root_display_name,
+    normalized_library_path_key,
+    resolve_library_roots,
+)
 from backend.app.services.quality import normalize_quality_profile
 from backend.app.services.quality_profiles import (
     effective_quality_profile_for_library,
@@ -156,6 +163,15 @@ def _library_summary_from_model(
 ) -> LibrarySummary:
     app_resolution_categories = resolution_categories or load_app_settings(db).resolution_categories
     summary = LibrarySummary.model_validate(library)
+    if not summary.roots:
+        summary.roots = [
+            LibraryRootRead(
+                id=0,
+                path=library.path,
+                display_name=library_root_display_name(library.path),
+                path_key=normalized_library_path_key(library.path),
+            )
+        ]
     summary.quality_profile = QualityProfile.model_validate(
         effective_quality_profile_for_library(db, library, app_resolution_categories)
     )
@@ -274,19 +290,18 @@ def normalize_scan_config(scan_mode, scan_config: dict | None) -> dict:
     return normalized
 
 
-def _normalize_library_scan_settings(
+def _normalize_library_root_scan_settings(
     settings: Settings,
-    path_value: str,
+    root_paths: Iterable[str],
     scan_mode,
     scan_config: dict | None,
 ) -> tuple:
     normalized_scan_config = normalize_scan_config(scan_mode, scan_config)
-    selected_paths = normalized_scan_config.get("selected_paths") or []
-    if scan_mode == "watch" and (selected_paths or not is_watch_supported_for_library(settings, path_value)):
+    if scan_mode == "watch" and any(not is_watch_supported_for_library(settings, path_value) for path_value in root_paths):
         fallback_config = dict(normalized_scan_config)
         fallback_config["interval_minutes"] = 60
         return "scheduled", normalize_scan_config("scheduled", fallback_config)
-    return scan_mode, normalize_scan_config(scan_mode, scan_config)
+    return scan_mode, normalized_scan_config
 
 
 def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> Library:
@@ -294,17 +309,27 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
     app_settings = load_app_settings(db, settings)
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
     selected_profile = validate_library_quality_profile(db, payload.type, payload.quality_profile_id)
-    if payload.paths:
-        safe_path, selected_paths = resolve_library_paths(settings, payload.paths)
-    else:
-        safe_path = resolve_library_path(settings, payload.path)
-        selected_paths = []
+    root_inputs = payload.paths or [payload.path]
+    resolved_roots = resolve_library_roots(settings, root_inputs)
+    safe_path = resolved_roots[0].path
+    if len(resolved_roots) > 1:
+        try:
+            common_path = os.path.commonpath([str(root.path) for root in resolved_roots])
+        except ValueError:
+            common_path = ""
+        if common_path and common_path != os.path.sep:
+            safe_path = type(resolved_roots[0].path)(common_path)
     initial_scan_config = dict(payload.scan_config or {})
-    if selected_paths:
-        initial_scan_config["selected_paths"] = selected_paths
-    scan_mode, scan_config = _normalize_library_scan_settings(
+    if len(resolved_roots) > 1:
+        try:
+            selected_paths = [root.path.relative_to(safe_path).as_posix() for root in resolved_roots]
+        except ValueError:
+            selected_paths = []
+        if selected_paths:
+            initial_scan_config["selected_paths"] = selected_paths
+    scan_mode, scan_config = _normalize_library_root_scan_settings(
         settings,
-        str(safe_path),
+        [str(root.path) for root in resolved_roots],
         payload.scan_mode,
         initial_scan_config,
     )
@@ -320,6 +345,16 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
         show_on_dashboard=payload.show_on_dashboard,
     )
     db.add(library)
+    db.flush()
+    for root in resolved_roots:
+        db.add(
+            LibraryRoot(
+                library_id=library.id,
+                path=str(root.path),
+                display_name=root.display_name,
+                path_key=root.path_key,
+            )
+        )
     db.commit()
     db.refresh(library)
     stats_cache.invalidate(cache_key)
@@ -358,9 +393,10 @@ def update_library_settings(
     if payload.scan_mode is not None:
         next_scan_config = dict(library.scan_config or {})
         next_scan_config.update(payload.scan_config or {})
-        library.scan_mode, library.scan_config = _normalize_library_scan_settings(
+        root_paths = [str(root.path) for root in (library.roots or [])] or [library.path]
+        library.scan_mode, library.scan_config = _normalize_library_root_scan_settings(
             settings,
-            library.path,
+            root_paths,
             payload.scan_mode,
             next_scan_config,
         )

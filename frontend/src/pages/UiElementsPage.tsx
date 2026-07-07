@@ -888,7 +888,7 @@ function DuplicateGroupFixture({ suppressed = false }: { suppressed?: boolean })
       </div>
       <div className="duplicate-group-items-scroll">
         <div className="duplicate-group-item-card">
-          <span className="duplicate-group-item-name">Arrival.2016.mkv</span>
+          <span className="duplicate-group-item-name">Movies 4K / Arrival.2016.mkv</span>
           <span className="duplicate-group-item-size">18.4 GB</span>
           <button type="button" className="secondary icon-only-button duplicate-group-open-button" aria-label="Open file">
             <ArrowUpRight className="duplicate-group-open-icon" aria-hidden="true" />
@@ -901,7 +901,7 @@ function DuplicateGroupFixture({ suppressed = false }: { suppressed?: boolean })
 
 function PathBrowserFixture() {
   const [value, setValue] = useState(".");
-  const [selectedPaths, setSelectedPaths] = useState(["Movies"]);
+  const [selectedPaths, setSelectedPaths] = useState(["Movies", "Archive/Anime"]);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {

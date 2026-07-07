@@ -128,6 +128,8 @@ def test_shipped_profiles_load_with_matching_ids(tmp_path) -> None:
         "apple-tv-4k-2nd-gen",
         "apple-tv-4k-3rd-gen",
         "apple-tv-hd",
+        "fire-tv-stick-4k-max",
+        "onn-4k-2023",
     ]
     assert {profile.id for profile in list_profiles(settings, "software")} == {
         "jellyfin-android",

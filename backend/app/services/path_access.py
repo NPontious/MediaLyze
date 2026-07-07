@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 import re
 
@@ -29,6 +30,13 @@ _REMOTE_FS_TYPES = frozenset(
 )
 _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 _WINDOWS_DRIVE_RE = re.compile(r"^[a-zA-Z]:[\\/]")
+
+
+@dataclass(frozen=True)
+class ResolvedLibraryRoot:
+    path: Path
+    display_name: str
+    path_key: str
 
 
 def _looks_like_uri(path_value: str) -> bool:
@@ -58,6 +66,22 @@ def _normalize_existing_path(path_value: str) -> str:
 def _normalize_compare_path(path_value: str) -> str:
     normalized = path_value.replace("\\", "/").rstrip("/")
     return normalized or "/"
+
+
+def normalized_library_path_key(path_value: str) -> str:
+    return _normalize_compare_path(path_value).lower()
+
+
+def library_root_display_name(path_value: str) -> str:
+    normalized = _normalize_compare_path(path_value)
+    name = Path(normalized).name
+    if name:
+        return name
+    if normalized.startswith("//"):
+        parts = [part for part in normalized.split("/") if part]
+        if parts:
+            return parts[-1]
+    return normalized
 
 
 def _best_partition_for_path(path: Path):
@@ -152,6 +176,22 @@ def resolve_library_path(settings: Settings, path_value: str) -> Path:
 
 
 def resolve_library_paths(settings: Settings, path_values: Sequence[str]) -> tuple[Path, list[str]]:
+    resolved_roots = resolve_library_roots(settings, path_values)
+    resolved_paths = [root.path for root in resolved_roots]
+
+    if len(resolved_paths) == 1:
+        return resolved_paths[0], []
+
+    try:
+        root_path = Path(os.path.commonpath([str(path) for path in resolved_paths]))
+    except ValueError as exc:
+        raise ValueError("Selected library paths must share a common parent directory") from exc
+
+    selected_paths = [path.relative_to(root_path).as_posix() for path in resolved_paths]
+    return root_path, selected_paths
+
+
+def resolve_library_roots(settings: Settings, path_values: Sequence[str]) -> list[ResolvedLibraryRoot]:
     resolved_paths: list[Path] = []
     seen_paths: set[str] = set()
 
@@ -160,7 +200,7 @@ def resolve_library_paths(settings: Settings, path_values: Sequence[str]) -> tup
         if not candidate:
             continue
         resolved = resolve_library_path(settings, candidate)
-        normalized = str(resolved)
+        normalized = normalized_library_path_key(str(resolved))
         if normalized in seen_paths:
             continue
         resolved_paths.append(resolved)
@@ -174,16 +214,14 @@ def resolve_library_paths(settings: Settings, path_values: Sequence[str]) -> tup
             if path == other or path in other.parents or other in path.parents:
                 raise ValueError("Selected library paths must not overlap")
 
-    if len(resolved_paths) == 1:
-        return resolved_paths[0], []
-
-    try:
-        root_path = Path(os.path.commonpath([str(path) for path in resolved_paths]))
-    except ValueError as exc:
-        raise ValueError("Selected library paths must share a common parent directory") from exc
-
-    selected_paths = [path.relative_to(root_path).as_posix() for path in resolved_paths]
-    return root_path, selected_paths
+    return [
+        ResolvedLibraryRoot(
+            path=path,
+            display_name=library_root_display_name(str(path)),
+            path_key=normalized_library_path_key(str(path)),
+        )
+        for path in resolved_paths
+    ]
 
 
 def is_watch_supported_for_library(settings: Settings, path_value: str) -> bool:

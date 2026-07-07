@@ -20,6 +20,7 @@ from backend.app.models.entities import (
     JobStatus,
     Library,
     LibraryHistory,
+    LibraryRoot,
     LibraryType,
     MediaFile,
     MediaChapter,
@@ -327,6 +328,62 @@ def test_run_scan_limits_discovery_to_selected_paths_and_keeps_directory_in_rela
         ).all()
 
     assert scanned_paths == ["Movies A/movie-a.mkv", "Movies B/movie-b.mkv"]
+
+
+def test_run_scan_allows_same_relative_path_in_different_library_roots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first_root = tmp_path / "server-a" / "Movies"
+    second_root = tmp_path / "server-b" / "Movies"
+    first_root.mkdir(parents=True)
+    second_root.mkdir(parents=True)
+    (first_root / "movie.mkv").write_text("video-a")
+    (second_root / "movie.mkv").write_text("video-b")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    payload = {
+        "format": {"format_name": "matroska", "duration": "60.0", "bit_rate": "1000", "probe_score": 100},
+        "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}],
+    }
+
+    monkeypatch.setattr("backend.app.services.scanner.run_ffprobe", lambda file_path, ffprobe_path: payload)
+    monkeypatch.setattr("backend.app.services.scanner.detect_external_subtitles", lambda file_path, extensions: [])
+
+    settings = Settings(
+        config_path=tmp_path / "config",
+        media_root=tmp_path,
+        ffprobe_worker_count=1,
+        scan_commit_batch_size=1,
+    )
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(first_root),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        root_a = LibraryRoot(library_id=library.id, path=str(first_root), display_name="Movies A", path_key="a")
+        root_b = LibraryRoot(library_id=library.id, path=str(second_root), display_name="Movies B", path_key="b")
+        db.add_all([root_a, root_b])
+        db.commit()
+
+        run_scan(db, settings, library.id, "incremental")
+
+        scanned_files = db.execute(
+            select(MediaFile.library_root_id, MediaFile.relative_path)
+            .where(MediaFile.library_id == library.id)
+            .order_by(MediaFile.library_root_id.asc())
+        ).all()
+
+    assert scanned_files == [(root_a.id, "movie.mkv"), (root_b.id, "movie.mkv")]
 
 
 def test_incremental_scan_reanalyzes_files_with_incomplete_metadata(tmp_path: Path, monkeypatch) -> None:

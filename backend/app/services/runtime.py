@@ -95,7 +95,7 @@ class ScanRuntimeManager:
         self.executor = self._build_executor(self.executor_max_workers)
         self.maintenance_executor = self._build_maintenance_executor()
         self.lock = Lock()
-        self.watch_observers: dict[int, tuple[str, Observer]] = {}
+        self.watch_observers: dict[int, tuple[tuple[str, ...], Observer]] = {}
         self.debounce_timers: dict[int, Timer] = {}
         self.watch_trigger_buffers: dict[int, dict] = {}
         self.active_library_ids: set[int] = set()
@@ -144,7 +144,7 @@ class ScanRuntimeManager:
             self.telemetry_send_timer = None
         self.watch_trigger_buffers.clear()
 
-        for _library_id, (_path, observer) in list(self.watch_observers.items()):
+        for _library_id, (_paths, observer) in list(self.watch_observers.items()):
             observer.stop()
             observer.join(timeout=2)
         self.watch_observers.clear()
@@ -553,15 +553,33 @@ class ScanRuntimeManager:
         try:
             library = db.get(Library, library_id)
             debounce_seconds = int((library.scan_config or {}).get("debounce_seconds", 15)) if library else 15
-            library_path = str(library.path) if library else ""
+            root_rows = list(library.roots or []) if library else []
+            watch_roots = (
+                [(root.id, str(root.path), root.display_name) for root in root_rows]
+                if root_rows
+                else [(None, str(library.path), "") for library in [library] if library]
+            )
         finally:
             db.close()
 
-        event_paths = [
-            self._relative_watch_path(path, library_path)
-            for path in paths
-        ]
-        self._record_watch_trigger(library_id, event.event_type, [path for path in event_paths if path], debounce_seconds)
+        event_paths: list[str] = []
+        root_ids: set[int] = set()
+        for path in paths:
+            for root_id, root_path, root_name in watch_roots:
+                relative_path = self._relative_watch_path(path, root_path)
+                if relative_path is None:
+                    continue
+                event_paths.append(f"{root_name}/{relative_path}" if root_name else relative_path)
+                if root_id is not None:
+                    root_ids.add(root_id)
+                break
+        self._record_watch_trigger(
+            library_id,
+            event.event_type,
+            [path for path in event_paths if path],
+            debounce_seconds,
+            root_ids=sorted(root_ids),
+        )
 
         existing = self.debounce_timers.pop(library_id, None)
         if existing:
@@ -667,25 +685,29 @@ class ScanRuntimeManager:
             )
 
     def _ensure_watch_observer(self, library: Library) -> None:
-        library_path = str(library.path)
-        if not library.path or not library.path.strip():
+        root_paths = [str(root.path) for root in (library.roots or [])] or [str(library.path)]
+        root_paths = [path for path in root_paths if path.strip()]
+        if not root_paths:
             return
-        if not Path(library_path).exists():
+        if any(not Path(path).exists() for path in root_paths):
             return
-        if not is_watch_supported_for_library(self.settings, library_path):
+        if any(not is_watch_supported_for_library(self.settings, path) for path in root_paths):
             self._remove_watch_observer(library.id)
             return
 
         current = self.watch_observers.get(library.id)
-        if current and current[0] == library_path:
+        path_signature = tuple(sorted(root_paths))
+        if current and current[0] == path_signature:
             return
 
         self._remove_watch_observer(library.id)
         observer = Observer()
-        observer.schedule(LibraryWatchHandler(self, library.id), library_path, recursive=True)
+        handler = LibraryWatchHandler(self, library.id)
+        for root_path in root_paths:
+            observer.schedule(handler, root_path, recursive=True)
         observer.daemon = True
         observer.start()
-        self.watch_observers[library.id] = (library_path, observer)
+        self.watch_observers[library.id] = (path_signature, observer)
 
     def _recover_orphaned_jobs(self) -> None:
         db = SessionLocal()
@@ -768,7 +790,7 @@ class ScanRuntimeManager:
         if not existing:
             return
         self.watch_trigger_buffers.pop(library_id, None)
-        _path, observer = existing
+        _paths, observer = existing
         observer.stop()
         observer.join(timeout=2)
 
@@ -907,6 +929,8 @@ class ScanRuntimeManager:
         event_type: str,
         relative_paths: list[str],
         debounce_seconds: int,
+        *,
+        root_ids: list[int] | None = None,
     ) -> None:
         with self.lock:
             buffer = self.watch_trigger_buffers.setdefault(
@@ -925,6 +949,10 @@ class ScanRuntimeManager:
             if event_type not in event_types:
                 event_types.append(event_type)
             buffer["event_types"] = event_types
+            if root_ids:
+                current_root_ids = {int(root_id) for root_id in buffer.get("root_ids") or []}
+                current_root_ids.update(root_ids)
+                buffer["root_ids"] = sorted(current_root_ids)
 
             current_paths = list(buffer.get("paths") or [])
             known_paths = set(current_paths)

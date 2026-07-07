@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.16.1
+
+>2026-07-07
+
+This patch release improves deployment defaults, refreshes dependencies for current security advisories, and expands the early hardware-profile catalog with two community-submitted streaming-device profiles.
+
+### ✨ New
+
+- allow a single library to combine multiple independent root folders, including desktop network/UNC paths that do not share a common parent
+- new hardware profile for Fire TV Stick 4K Max (2. Gen) [#162](https://github.com/frederikemmer/MediaLyze/issues/162) by [@nofkclue](https://github.com/nofkclue)
+- new hardware profile for Onn 4K [#164](https://github.com/frederikemmer/MediaLyze/issues/164) by [@gmg3000](https://github.com/gmg3000)
+
 ### 🐛 Bug fixes
 
 - clarify Docker host-port configuration, make the standard Compose file honor `HOST_PORT`, and keep the internal app port out of normal Docker setup docs
@@ -11,6 +23,12 @@ All notable changes to this project will be documented in this file.
 ### 🔒 Security
 
 - update ECharts and pydantic-settings to resolve Dependabot security alerts
+
+### New Contributors
+
+[@nofkclue](https://github.com/nofkclue) in [#162](https://github.com/frederikemmer/MediaLyze/issues/162)
+
+[@gmg3000](https://github.com/gmg3000) in [#164](https://github.com/frederikemmer/MediaLyze/issues/164)
 
 ## v0.16.0
 
@@ -589,7 +607,3 @@ First "rough" implementation for detecting duplicate files. May break desktop in
 ## v0.1.0
 
 >2026-03-13
-
-### ✨ New
-
-### 🐛 Bug fixes

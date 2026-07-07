@@ -23,6 +23,7 @@ from backend.app.models.entities import (
     ExternalSubtitle,
     JobStatus,
     Library,
+    LibraryRoot,
     MediaContentCategory,
     MediaChapter,
     MediaFile,
@@ -115,6 +116,13 @@ class DiscoveredMediaFile:
     sibling_filenames: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ScanRoot:
+    path: Path
+    relative_root: Path
+    library_root_id: int | None = None
+
+
 @dataclass
 class SampledPathList:
     count: int = 0
@@ -159,6 +167,7 @@ class FailedFileSamples:
 class QueuedMediaWork:
     media_file: MediaFile
     path: Path
+    relative_root: Path
     needs_analysis: bool
     needs_duplicate_processing: bool
 
@@ -167,7 +176,18 @@ def _library_root(library: Library) -> Path:
     return Path(library.path)
 
 
-def _selected_scan_roots(library: Library) -> list[Path]:
+def _library_scan_roots(library: Library) -> list[ScanRoot]:
+    roots = list(library.roots or [])
+    if roots:
+        return [
+            ScanRoot(
+                path=Path(root.path),
+                relative_root=Path(root.path),
+                library_root_id=root.id,
+            )
+            for root in roots
+        ]
+
     root = _library_root(library)
     selected_paths = [
         str(path).strip().replace("\\", "/").strip("/")
@@ -175,8 +195,8 @@ def _selected_scan_roots(library: Library) -> list[Path]:
         if str(path).strip()
     ]
     if not selected_paths:
-        return [root]
-    return [root / Path(relative_path) for relative_path in selected_paths]
+        return [ScanRoot(path=root, relative_root=root)]
+    return [ScanRoot(path=root / Path(relative_path), relative_root=root) for relative_path in selected_paths]
 
 
 def _rename_similarity_score(
@@ -1128,8 +1148,7 @@ def run_scan(
     if not library:
         raise ValueError(f"Library {library_id} not found")
 
-    root = _library_root(library)
-    scan_roots = _selected_scan_roots(library)
+    scan_roots = _library_scan_roots(library)
     job = existing_job or ScanJob(
         library_id=library_id,
         status=JobStatus.running,
@@ -1145,11 +1164,11 @@ def run_scan(
         return _scan_job_is_canceled(db, job.id) or bool(is_cancel_requested and is_cancel_requested(job.id))
 
     existing_by_path = {
-        media_file.relative_path: media_file
+        (media_file.library_root_id, media_file.relative_path): media_file
         for media_file in db.scalars(
             select(MediaFile)
             .where(MediaFile.library_id == library_id)
-            .options(selectinload(MediaFile.external_subtitles))
+            .options(selectinload(MediaFile.external_subtitles), selectinload(MediaFile.library_root))
         ).all()
     }
     incomplete_analysis_ids = _incomplete_analysis_file_ids(db, library_id)
@@ -1173,12 +1192,13 @@ def run_scan(
     recognized_series_ids: set[int] = set()
     recognized_season_ids: set[int] = set()
 
-    def _missing_rename_candidates() -> list[MediaFile]:
+    def _missing_rename_candidates(library_root_id: int | None, relative_root: Path) -> list[MediaFile]:
         return [
             candidate
-            for candidate_path, candidate in existing_by_path.items()
-            if candidate_path not in seen_relative_paths
-            and not (root / candidate.relative_path).exists()
+            for candidate_key, candidate in existing_by_path.items()
+            if candidate_key[0] == library_root_id
+            and candidate_key not in seen_relative_paths
+            and not (relative_root / candidate.relative_path).exists()
         ]
 
     def _log_rename_candidate(candidate: MediaFile, relative_path: str, reason: str) -> MediaFile:
@@ -1193,6 +1213,7 @@ def run_scan(
 
     def _find_hash_rename_candidate(
         relative_path: str,
+        relative_root: Path,
         candidates: list[MediaFile],
     ) -> MediaFile | None:
         hash_candidates = [
@@ -1204,7 +1225,7 @@ def run_scan(
         if not hash_candidates:
             return None
         try:
-            payload = FileHashDuplicateDetectionStrategy().build_payload(root / relative_path)
+            payload = FileHashDuplicateDetectionStrategy().build_payload(relative_root / relative_path)
         except OSError:
             logger.exception("Failed to hash rename candidate %s", relative_path)
             return None
@@ -1265,10 +1286,12 @@ def run_scan(
 
     def _find_rename_candidate(
         relative_path: str,
+        library_root_id: int | None,
+        relative_root: Path,
         size_bytes: int,
         mtime: float,
     ) -> MediaFile | None:
-        candidates = _missing_rename_candidates()
+        candidates = _missing_rename_candidates(library_root_id, relative_root)
         exact_candidates = [
             candidate
             for candidate in candidates
@@ -1277,7 +1300,7 @@ def run_scan(
         if len(exact_candidates) == 1:
             return _log_rename_candidate(exact_candidates[0], relative_path, "size and mtime")
 
-        hash_candidate = _find_hash_rename_candidate(relative_path, candidates)
+        hash_candidate = _find_hash_rename_candidate(relative_path, relative_root, candidates)
         if hash_candidate is not None:
             return hash_candidate
 
@@ -1363,7 +1386,7 @@ def run_scan(
             episodes_classified += 1
 
     discovery = DiscoveryResult(files=[], collect_files=False)
-    seen_relative_paths: set[str] = set()
+    seen_relative_paths: set[tuple[int | None, str]] = set()
     queued_work_total = 0
     queued_for_analysis = 0
     queued_for_duplicate_processing = 0
@@ -1424,7 +1447,7 @@ def run_scan(
         str | None,
         str | None,
     ]:
-        relative_path = work.path.relative_to(root).as_posix()
+        relative_path = work.path.relative_to(work.relative_root).as_posix()
         payload: dict | None = None
         subtitles: list[dict[str, str | None]] = []
         analysis_error: str | None = None
@@ -1435,7 +1458,7 @@ def run_scan(
 
         if work.needs_analysis:
             try:
-                payload, subtitles = _analyze_path(work.path, root, settings, ignore_patterns)
+                payload, subtitles = _analyze_path(work.path, work.relative_root, settings, ignore_patterns)
             except Exception as exc:
                 logger.exception("Media analysis failed for %s", relative_path)
                 analysis_error, analysis_error_detail = _error_details(exc)
@@ -1574,30 +1597,38 @@ def run_scan(
                 pending[executor.submit(_safe_process_work, work)] = work
 
             for scan_root in scan_roots:
-                if not scan_root.exists() or not scan_root.is_dir():
+                if not scan_root.path.exists() or not scan_root.path.is_dir():
                     continue
                 for discovered_media_file in _stream_media_files(
-                    scan_root,
+                    scan_root.path,
                     get_allowed_media_extensions(library.type),
                     discovery=discovery,
                     ignore_patterns=ignore_patterns,
-                    relative_root=root,
+                    relative_root=scan_root.relative_root,
                     pattern_recognition_settings=pattern_recognition_settings,
                     should_cancel=_should_cancel,
                 ):
                     file_path = discovered_media_file.path
-                    relative_path = file_path.relative_to(root).as_posix()
-                    seen_relative_paths.add(relative_path)
+                    relative_path = file_path.relative_to(scan_root.relative_root).as_posix()
+                    relative_key = (scan_root.library_root_id, relative_path)
+                    seen_relative_paths.add(relative_key)
                     discovery_progress_counter += 1
                     stat = file_path.stat()
-                    media_file = existing_by_path.get(relative_path)
+                    media_file = existing_by_path.get(relative_key)
 
                     if media_file is None:
-                        rename_candidate = _find_rename_candidate(relative_path, stat.st_size, stat.st_mtime)
+                        rename_candidate = _find_rename_candidate(
+                            relative_path,
+                            scan_root.library_root_id,
+                            scan_root.relative_root,
+                            stat.st_size,
+                            stat.st_mtime,
+                        )
                         created_media_file = rename_candidate is None
                         if rename_candidate is None:
                             media_file = MediaFile(
                                 library_id=library.id,
+                                library_root_id=scan_root.library_root_id,
                                 relative_path=relative_path,
                                 filename=file_path.name,
                                 extension=file_path.suffix.lower().lstrip("."),
@@ -1611,8 +1642,9 @@ def run_scan(
                             _recognize_media_file(media_file, relative_path)
                             new_files.add(relative_path)
                         else:
-                            existing_by_path.pop(rename_candidate.relative_path, None)
+                            existing_by_path.pop((rename_candidate.library_root_id, rename_candidate.relative_path), None)
                             media_file = rename_candidate
+                            media_file.library_root_id = scan_root.library_root_id
                             media_file.relative_path = relative_path
                             media_file.filename = file_path.name
                             media_file.extension = file_path.suffix.lower().lstrip(".")
@@ -1631,6 +1663,7 @@ def run_scan(
                             QueuedMediaWork(
                                 media_file=media_file,
                                 path=file_path,
+                                relative_root=scan_root.relative_root,
                                 needs_analysis=True,
                                 needs_duplicate_processing=True,
                             )
@@ -1642,7 +1675,7 @@ def run_scan(
                         if not changed and scan_type != "full" and not analysis_incomplete:
                             current_external_subtitles = _visible_external_subtitles(
                                 file_path,
-                                root,
+                                scan_root.relative_root,
                                 settings.subtitle_extensions,
                                 ignore_patterns,
                                 sibling_filenames=discovered_media_file.sibling_filenames,
@@ -1683,6 +1716,7 @@ def run_scan(
                                 QueuedMediaWork(
                                     media_file=media_file,
                                     path=file_path,
+                                    relative_root=scan_root.relative_root,
                                     needs_analysis=needs_analysis,
                                     needs_duplicate_processing=needs_duplicate_processing,
                                 )
@@ -1699,12 +1733,12 @@ def run_scan(
 
             stale_ids = [
                 media_file.id
-                for relative_path, media_file in existing_by_path.items()
-                if relative_path not in seen_relative_paths
+                for relative_key, media_file in existing_by_path.items()
+                if relative_key not in seen_relative_paths
             ]
-            for relative_path, media_file in existing_by_path.items():
-                if relative_path not in seen_relative_paths:
-                    deleted_files.add(relative_path)
+            for relative_key, media_file in existing_by_path.items():
+                if relative_key not in seen_relative_paths:
+                    deleted_files.add(media_file.relative_path)
             if stale_ids:
                 db.execute(delete(MediaFile).where(MediaFile.id.in_(stale_ids)))
             _cleanup_empty_series_entries(db, library.id)

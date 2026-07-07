@@ -55,14 +55,17 @@ Desktop-specific behavior:
 - local paths support `watch`
 - network paths fall back from `watch` to scheduled scanning
 
-### 2.3 Selected scan roots
+### 2.3 Library roots
 
-A library can be created from multiple selected directories when they share a common parent. Internally:
+A library can be created from one or more root directories. New multi-root libraries store each selected directory in `library_roots`, so roots do not need to share a common parent.
 
-- the shared parent becomes the stored library root
-- the chosen subdirectories are stored in `scan_config.selected_paths`
-- scanning only traverses those selected roots
-- relative media paths keep the selected directory names
+- `libraries.path` remains as the first/root legacy path for compatibility
+- `library_roots.path` is the canonical scan root list
+- `media_files.library_root_id` identifies which root owns a file
+- `media_files.relative_path` is relative to its owning root
+- UI and CSV exports can use `display_path` (`root name / relative path`) when root context is needed
+
+Legacy libraries created with `scan_config.selected_paths` are migrated to `library_roots` during database initialization.
 
 ## 3) Type-Aware File Discovery
 

@@ -872,9 +872,12 @@ export function buildFileColumns(
         ) : (
           <div className="media-file-cell">
             <span className={`media-tree-indent media-tree-indent-${rowDepth(row)}`} aria-hidden="true" />
-            <Link to={`/files/${row.id}`} className="file-link">
-              {row.filename}
-            </Link>
+            <span className="media-file-cell-copy">
+              <Link to={`/files/${row.id}`} className="file-link">
+                {row.filename}
+              </Link>
+              {row.root_name ? <span className="media-tree-subtitle">{row.root_name}</span> : null}
+            </span>
           </div>
         ),
     },
@@ -2004,7 +2007,7 @@ export function LibraryDetailPage() {
       }
 
       const matchingItems = group.items.filter((item) =>
-        matchesSearchTokens(`${item.filename} ${item.relative_path}`, duplicateSearchTokens),
+        matchesSearchTokens(`${item.filename} ${item.display_path ?? item.relative_path}`, duplicateSearchTokens),
       );
       if (matchingItems.length === 0) {
         return [];
@@ -3862,8 +3865,8 @@ export function LibraryDetailPage() {
                             {group.items.map((item) => (
                               <div key={item.id} className="duplicate-group-item-card">
                                 <TooltipTrigger
-                                  content={item.relative_path}
-                                  ariaLabel={item.relative_path}
+                                  content={item.display_path ?? item.relative_path}
+                                  ariaLabel={item.display_path ?? item.relative_path}
                                   className="duplicate-group-item-name-tooltip-trigger"
                                   maxWidth={720}
                                   pinOnClick={false}

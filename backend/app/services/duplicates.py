@@ -11,7 +11,7 @@ from typing import Protocol
 from sqlalchemy import Select, delete, exists, func, select, union
 from sqlalchemy.orm import Session
 
-from backend.app.models.entities import DuplicateDetectionMode, DuplicateGroupSuppression, Library, MediaFile
+from backend.app.models.entities import DuplicateDetectionMode, DuplicateGroupSuppression, Library, LibraryRoot, MediaFile
 from backend.app.schemas.duplicates import (
     DuplicateGroupFileRead,
     DuplicateGroupPageRead,
@@ -460,38 +460,48 @@ def _group_files_by_signature(
             rows = db.execute(
                 select(
                     MediaFile.id,
+                    MediaFile.library_root_id,
+                    LibraryRoot.display_name.label("root_name"),
                     MediaFile.relative_path,
                     MediaFile.filename,
                     MediaFile.size_bytes,
                     MediaFile.content_hash.label("signature"),
                 )
+                .outerjoin(LibraryRoot, LibraryRoot.id == MediaFile.library_root_id)
                 .where(
                     MediaFile.library_id == library_id,
                     MediaFile.content_hash_algorithm == FILE_HASH_ALGORITHM,
                     MediaFile.content_hash.in_(signatures),
                 )
-                .order_by(MediaFile.content_hash.asc(), MediaFile.relative_path.asc())
+                .order_by(MediaFile.content_hash.asc(), LibraryRoot.display_name.asc(), MediaFile.relative_path.asc())
             ).all()
         else:
             rows = db.execute(
                 select(
                     MediaFile.id,
+                    MediaFile.library_root_id,
+                    LibraryRoot.display_name.label("root_name"),
                     MediaFile.relative_path,
                     MediaFile.filename,
                     MediaFile.size_bytes,
                     MediaFile.filename_signature.label("signature"),
                 )
+                .outerjoin(LibraryRoot, LibraryRoot.id == MediaFile.library_root_id)
                 .where(
                     MediaFile.library_id == library_id,
                     MediaFile.filename_signature.in_(signatures),
                 )
-                .order_by(MediaFile.filename_signature.asc(), MediaFile.relative_path.asc())
+                .order_by(MediaFile.filename_signature.asc(), LibraryRoot.display_name.asc(), MediaFile.relative_path.asc())
             ).all()
 
         for row in rows:
+            display_path = f"{row.root_name}/{row.relative_path}" if row.root_name else row.relative_path
             grouped_items[(mode, str(row.signature))].append(
                 DuplicateGroupFileRead(
                     id=row.id,
+                    root_id=row.library_root_id,
+                    root_name=row.root_name,
+                    display_path=display_path,
                     relative_path=row.relative_path,
                     filename=row.filename,
                     size_bytes=row.size_bytes,

@@ -61,6 +61,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "is_builtin": "ALTER TABLE quality_profiles ADD COLUMN is_builtin BOOLEAN NOT NULL DEFAULT 0",
     },
     "media_files": {
+        "library_root_id": "ALTER TABLE media_files ADD COLUMN library_root_id INTEGER",
         "last_seen_at": "ALTER TABLE media_files ADD COLUMN last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "last_analyzed_at": "ALTER TABLE media_files ADD COLUMN last_analyzed_at DATETIME",
         "scan_status": "ALTER TABLE media_files ADD COLUMN scan_status VARCHAR(16) NOT NULL DEFAULT 'pending'",
@@ -205,7 +206,12 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS ix_media_files_library_relative_path ON media_files (library_id, relative_path)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_media_files_library_root_relative_path "
+    "ON media_files (library_id, library_root_id, relative_path)",
+    "CREATE INDEX IF NOT EXISTS ix_media_files_library_relative_path ON media_files (library_id, relative_path)",
+    "CREATE INDEX IF NOT EXISTS ix_media_files_library_root_id ON media_files (library_root_id)",
+    "CREATE INDEX IF NOT EXISTS ix_library_roots_library_id ON library_roots (library_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_library_roots_library_path_key ON library_roots (library_id, path_key)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_scan_status ON media_files (scan_status)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_quality_score ON media_files (quality_score)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_size_bytes ON media_files (library_id, size_bytes)",
@@ -577,6 +583,130 @@ def _sqlite_has_unique_index_for_columns(connection, table_name: str, columns: t
     return False
 
 
+def _drop_sqlite_index_if_exists(connection, index_name: str) -> None:
+    connection.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
+
+
+def _normalize_path_key(path_value: str) -> str:
+    normalized = str(path_value or "").replace("\\", "/").rstrip("/")
+    return (normalized or "/").lower()
+
+
+def _display_name_for_path(path_value: str) -> str:
+    normalized = str(path_value or "").replace("\\", "/").rstrip("/")
+    parts = [part for part in normalized.split("/") if part]
+    return parts[-1] if parts else (normalized or "/")
+
+
+def _legacy_selected_paths(scan_config: str | dict | None) -> list[str]:
+    if isinstance(scan_config, str):
+        try:
+            payload = json.loads(scan_config or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+    elif isinstance(scan_config, dict):
+        payload = scan_config
+    else:
+        payload = {}
+    selected_paths = payload.get("selected_paths") if isinstance(payload, dict) else None
+    if not isinstance(selected_paths, list):
+        return []
+    result: list[str] = []
+    for raw_path in selected_paths:
+        candidate = str(raw_path or "").strip().replace("\\", "/").strip("/")
+        if candidate:
+            result.append(candidate)
+    return result
+
+
+def _join_posix_path(root: str, relative_path: str) -> str:
+    normalized_root = str(root or "").replace("\\", "/").rstrip("/")
+    normalized_relative = str(relative_path or "").replace("\\", "/").strip("/")
+    if not normalized_relative:
+        return normalized_root or "/"
+    return f"{normalized_root}/{normalized_relative}" if normalized_root else normalized_relative
+
+
+def _ensure_library_roots_backfill(connection) -> None:
+    if not _sqlite_has_table(connection, "libraries") or not _sqlite_has_table(connection, "library_roots"):
+        return
+
+    library_rows = connection.execute(
+        text("SELECT id, path, scan_config FROM libraries ORDER BY id ASC")
+    ).mappings().all()
+    for library in library_rows:
+        library_id = int(library["id"])
+        existing_root_count = connection.execute(
+            text("SELECT COUNT(*) FROM library_roots WHERE library_id = :library_id"),
+            {"library_id": library_id},
+        ).scalar_one()
+        if existing_root_count:
+            continue
+
+        library_path = str(library["path"] or "")
+        selected_paths = _legacy_selected_paths(library["scan_config"])
+        root_specs = [
+            (selected_path, _join_posix_path(library_path, selected_path))
+            for selected_path in selected_paths
+        ] or [("", library_path)]
+
+        inserted_roots: list[tuple[int, str]] = []
+        for selected_path, root_path in root_specs:
+            result = connection.execute(
+                text(
+                    """
+                    INSERT INTO library_roots (library_id, path, display_name, path_key, created_at, updated_at)
+                    VALUES (:library_id, :path, :display_name, :path_key, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """
+                ),
+                {
+                    "library_id": library_id,
+                    "path": root_path,
+                    "display_name": _display_name_for_path(root_path),
+                    "path_key": _normalize_path_key(root_path),
+                },
+            )
+            inserted_roots.append((int(result.lastrowid), selected_path))
+
+        if not _sqlite_has_table(connection, "media_files") or "library_root_id" not in _sqlite_column_names(connection, "media_files"):
+            continue
+
+        if selected_paths:
+            for root_id, selected_path in inserted_roots:
+                prefix = f"{selected_path}/"
+                connection.execute(
+                    text(
+                        """
+                        UPDATE media_files
+                        SET library_root_id = :root_id,
+                            relative_path = SUBSTR(relative_path, :prefix_length)
+                        WHERE library_id = :library_id
+                          AND library_root_id IS NULL
+                          AND (relative_path = :selected_path OR relative_path LIKE :prefix_like)
+                        """
+                    ),
+                    {
+                        "root_id": root_id,
+                        "library_id": library_id,
+                        "selected_path": selected_path,
+                        "prefix_like": f"{prefix}%",
+                        "prefix_length": len(prefix) + 1,
+                    },
+                )
+
+        fallback_root_id = inserted_roots[0][0]
+        connection.execute(
+            text(
+                """
+                UPDATE media_files
+                SET library_root_id = :root_id
+                WHERE library_id = :library_id AND library_root_id IS NULL
+                """
+            ),
+            {"root_id": fallback_root_id, "library_id": library_id},
+        )
+
+
 def _rebuild_libraries_table_without_unique_path(connection) -> None:
     if not _sqlite_has_table(connection, "libraries"):
         return
@@ -647,6 +777,8 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
                 existing_columns.add(column_name)
 
         _rebuild_libraries_table_without_unique_path(connection)
+        _ensure_library_roots_backfill(connection)
+        _drop_sqlite_index_if_exists(connection, "ix_media_files_library_relative_path")
 
         for statement in SQLITE_INDEX_STATEMENTS:
             connection.execute(text(statement))
