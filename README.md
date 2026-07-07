@@ -84,7 +84,7 @@ services:
     image: ghcr.io/frederikemmer/medialyze:latest
     container_name: medialyze
     ports:
-      - 8080:8080
+      - "${HOST_PORT:-8080}:8080"
     environment:
       # change to your timezone, e.g. "Europe/Berlin" or "America/New_York"
       TZ: UTC
@@ -104,8 +104,8 @@ and
 [env.example](docker/env.example)
 
 
-Open `http://localhost:8080`.
-The container serves plain HTTP on port `8080` by default - if you want HTTPS, terminate it in a reverse proxy.
+Open `http://localhost:8080`, or set `HOST_PORT` to expose the container on a different host port.
+The container serves plain HTTP on its internal port `8080` by default - if you want HTTPS, terminate it in a reverse proxy.
 
 #### Configuration through [Docker configuration](#docker-configuration)
 
@@ -216,8 +216,7 @@ Relevant environment variables:
 - `CONFIG_PATH`: writable config/data directory, default `/config` in server mode and the OS user-data directory in desktop mode
 - `MEDIA_ROOT`: media mount root for server mode, default `/media`
 - `APP_HOST`: bind host for the backend, default `0.0.0.0` in server mode and `127.0.0.1` in desktop mode
-- `HOST_PORT`: HTTP port exposed on the host, default `8080`; access the app via `http://<host>:<HOST_PORT>`
-- `APP_PORT`: internal app port, default `8080`
+- `HOST_PORT`: HTTP port exposed on the host by the provided Docker Compose files, default `8080`; access the app via `http://<host>:<HOST_PORT>`
 - `FRONTEND_DIST_PATH`: optional explicit frontend bundle path, mainly used by packaged desktop builds
 - `TZ`: process/container timezone, default `UTC`
 - `DISABLE_DEFAULT_IGNORE_PATTERNS`: optional; when set to `true`, built-in default ignore patterns are not preloaded

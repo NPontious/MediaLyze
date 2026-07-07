@@ -404,9 +404,14 @@ def _row_from_model(media_file: MediaFile, resolution_categories=None) -> MediaF
         classify_resolution_category(primary_video.width, primary_video.height, resolution_categories) if primary_video else None
     )
 
+    root_name = media_file.library_root.display_name if media_file.library_root else None
+    display_path = f"{root_name}/{media_file.relative_path}" if root_name else media_file.relative_path
     return MediaFileTableRow(
         id=media_file.id,
         library_id=media_file.library_id,
+        root_id=media_file.library_root_id,
+        root_name=root_name,
+        display_path=display_path,
         relative_path=media_file.relative_path,
         filename=media_file.filename,
         extension=media_file.extension,
@@ -774,6 +779,7 @@ def _load_media_files_by_ids(db: Session, selected_ids: list[int]) -> list[Media
             selectinload(MediaFile.chapters),
             selectinload(MediaFile.subtitle_streams),
             selectinload(MediaFile.external_subtitles),
+            selectinload(MediaFile.library_root),
             selectinload(MediaFile.series),
             selectinload(MediaFile.season),
         )
@@ -955,7 +961,7 @@ def _stringify_export_scalar(value: str | int | float | datetime | None) -> str 
 
 
 def _csv_export_row(row: MediaFileTableRow) -> list[str | int | float]:
-    return [
+    values = [
         row.relative_path,
         row.filename,
         row.container or "",
@@ -1008,6 +1014,9 @@ def _csv_export_row(row: MediaFileTableRow) -> list[str | int | float]:
         _stringify_export_scalar(row.episode_number_end),
         row.episode_title or "",
     ]
+    if row.root_name:
+        return [row.root_name, row.display_path or row.relative_path, *values]
+    return values
 
 
 def generate_library_files_csv_export(
@@ -1031,6 +1040,9 @@ def generate_library_files_csv_export(
     total = db.scalar(select(func.count()).select_from(ordered_query.order_by(None).subquery())) or 0
     exported_at = datetime.now(timezone.utc).replace(microsecond=0)
     filename = _csv_export_filename(library_name, exported_at)
+    library = db.get(Library, library_id)
+    include_root_context = len(library.roots or []) > 1 if library else False
+    headers = ["root_name", "display_path", *CSV_EXPORT_HEADERS] if include_root_context else CSV_EXPORT_HEADERS
     comment_lines = _csv_export_comment_lines(
         library_id=library_id,
         library_name=library_name,
@@ -1049,7 +1061,7 @@ def generate_library_files_csv_export(
         initial_writer = csv.writer(initial_buffer, lineterminator="\n")
         initial_buffer.write("\n".join(comment_lines))
         initial_buffer.write("\n\n")
-        initial_writer.writerow(CSV_EXPORT_HEADERS)
+        initial_writer.writerow(headers)
         yield initial_buffer.getvalue().encode("utf-8")
 
         for offset in range(0, total, CSV_EXPORT_BATCH_SIZE):
@@ -1061,7 +1073,14 @@ def generate_library_files_csv_export(
             batch_buffer = io.StringIO()
             batch_writer = csv.writer(batch_buffer, lineterminator="\n")
             for media_file in files:
-                batch_writer.writerow(_csv_export_row(_row_from_model(media_file, get_app_settings(db).resolution_categories)))
+                row = _row_from_model(media_file, get_app_settings(db).resolution_categories)
+                if include_root_context and not row.root_name:
+                    row.root_name = ""
+                    row.display_path = row.relative_path
+                if not include_root_context:
+                    row.root_name = None
+                    row.display_path = row.relative_path
+                batch_writer.writerow(_csv_export_row(row))
             yield batch_buffer.getvalue().encode("utf-8")
 
     return filename, iter_csv_chunks()
@@ -1106,7 +1125,7 @@ def generate_media_chapters_csv_export(db: Session, file_id: int) -> tuple[str, 
 
 
 def _media_file_path(media_file: MediaFile) -> Path:
-    base_path = Path(media_file.library.path).resolve()
+    base_path = Path(media_file.library_root.path if media_file.library_root else media_file.library.path).resolve()
     file_path = (base_path / media_file.relative_path).resolve()
     try:
         file_path.relative_to(base_path)
@@ -1136,7 +1155,7 @@ def get_media_file_source(
     media_file = db.scalar(
         select(MediaFile)
         .where(MediaFile.id == file_id)
-        .options(selectinload(MediaFile.library))
+        .options(selectinload(MediaFile.library), selectinload(MediaFile.library_root))
     )
     if media_file is None:
         return None
@@ -1163,7 +1182,7 @@ def generate_media_cover_png(
     media_file = db.scalar(
         select(MediaFile)
         .where(MediaFile.id == file_id)
-        .options(selectinload(MediaFile.library))
+        .options(selectinload(MediaFile.library), selectinload(MediaFile.library_root))
     )
     if media_file is None or not media_file.has_embedded_cover:
         return None
@@ -1327,11 +1346,13 @@ def search_media_files(
         .join(Library, Library.id == MediaFile.library_id)
         .options(
             selectinload(MediaFile.library),
+            selectinload(MediaFile.library_root),
             selectinload(MediaFile.media_format),
             selectinload(MediaFile.video_streams),
             selectinload(MediaFile.audio_streams),
             selectinload(MediaFile.subtitle_streams),
             selectinload(MediaFile.external_subtitles),
+            selectinload(MediaFile.library_root),
             selectinload(MediaFile.series),
             selectinload(MediaFile.season),
         )
@@ -1655,6 +1676,7 @@ def get_library_series_detail(db: Session, library_id: int, series_id: int) -> M
                 selectinload(MediaFile.audio_streams),
                 selectinload(MediaFile.subtitle_streams),
                 selectinload(MediaFile.external_subtitles),
+                selectinload(MediaFile.library_root),
                 selectinload(MediaFile.series),
                 selectinload(MediaFile.season),
             )
@@ -1781,6 +1803,7 @@ def get_media_file_detail(db: Session, file_id: int) -> MediaFileDetail | None:
             selectinload(MediaFile.chapters),
             selectinload(MediaFile.subtitle_streams),
             selectinload(MediaFile.external_subtitles),
+            selectinload(MediaFile.library_root),
             selectinload(MediaFile.series),
             selectinload(MediaFile.season),
         )
@@ -1815,6 +1838,7 @@ def get_media_file_stream_details(db: Session, file_id: int) -> MediaFileStreamD
             selectinload(MediaFile.chapters),
             selectinload(MediaFile.subtitle_streams),
             selectinload(MediaFile.external_subtitles),
+            selectinload(MediaFile.library_root),
         )
     )
     if not media_file:
@@ -1836,6 +1860,7 @@ def get_media_file_quality_score_detail(db: Session, file_id: int) -> MediaFileQ
         .where(MediaFile.id == file_id)
         .options(
             selectinload(MediaFile.library),
+            selectinload(MediaFile.library_root),
             selectinload(MediaFile.media_format),
             selectinload(MediaFile.video_streams),
             selectinload(MediaFile.audio_streams),

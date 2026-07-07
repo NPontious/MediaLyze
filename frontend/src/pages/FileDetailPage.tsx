@@ -1055,6 +1055,14 @@ function normalizeFileDetailPanelId(
   return availablePanelIds.includes(candidate) ? candidate : DEFAULT_FILE_DETAIL_PANEL_ID;
 }
 
+type OverviewRow = {
+  key: string;
+  label: string;
+  value: string | number;
+  tooltip?: string;
+  tooltipAria?: string;
+};
+
 function OverviewPanel({
   file,
   t,
@@ -1068,7 +1076,8 @@ function OverviewPanel({
     return t("streamDetails.unavailable");
   }
 
-  const rows = [
+  const rows: OverviewRow[] = ([
+    file.root_name ? { key: "root", label: t("fileDetail.root"), value: file.root_name } : null,
     { key: "relativePath", label: t("fileDetail.relativePath"), value: file.relative_path },
     { key: "container", label: t("fileDetail.containerLabel"), value: formatContainerLabel(file.container ?? file.extension) },
     { key: "size", label: t("fileDetail.size"), value: formatBytes(file.size_bytes) },
@@ -1093,7 +1102,7 @@ function OverviewPanel({
       tooltipAria: t("fileDetail.probeScoreTooltipAria"),
       value: formatProbeScore(file.media_format?.probe_score),
     },
-  ];
+  ] as Array<OverviewRow | null>).filter((row): row is OverviewRow => row !== null);
 
   const badges = [
     hasVideoMetadata(file) && file.video_codec ? formatCodecLabel(file.video_codec, "video") : null,
@@ -1110,7 +1119,7 @@ function OverviewPanel({
       <div className="file-detail-title-row">
         <h3 className="file-detail-title">{file.filename}</h3>
         {file.relative_path ? (
-          <TooltipTrigger ariaLabel={t("fileDetail.showFullRelativePath")} content={file.relative_path}>
+          <TooltipTrigger ariaLabel={t("fileDetail.showFullRelativePath")} content={file.display_path ?? file.relative_path}>
             ?
           </TooltipTrigger>
         ) : null}
@@ -1132,7 +1141,7 @@ function OverviewPanel({
                 {row.label}
                 {row.tooltip ? (
                   <TooltipTrigger
-                    ariaLabel={row.tooltipAria}
+                    ariaLabel={row.tooltipAria ?? row.label}
                     className="file-detail-field-tooltip"
                     content={row.tooltip}
                     maxWidth={360}

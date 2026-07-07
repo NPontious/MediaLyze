@@ -1204,6 +1204,7 @@
     "bonusContent": "Bonus",
     "showFullFilename": "Mostrar nombre completo del archivo",
     "showFullRelativePath": "Mostrar ruta relativa completa",
+    "root": "Raiz",
     "relativePath": "Ruta relativa",
     "size": "Tamaño",
     "duration": "Duración",

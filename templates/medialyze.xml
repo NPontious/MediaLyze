@@ -38,7 +38,7 @@
   <DonateLink>https://github.com/sponsors/frederikemmer</DonateLink>
   <Requires>Persistent storage for /config and read-only media mounts below /media.</Requires>
 
-  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="External port for the MediaLyze web interface." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Host port for the MediaLyze web interface. The container target port stays 8080." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/medialyze" Mode="rw" Description="Persistent configuration and SQLite database storage." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/medialyze</Config>
   <Config Name="Primary Media Mount" Target="/media/Media" Default="/mnt/user/media" Mode="ro" Description="Required read-only media mount. Change the container path to your preferred visible name, but keep it below /media, for example /media/Movies." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media</Config>
   <Config Name="Movies Media Mount" Target="/media/Movies" Default="" Mode="ro" Description="Optional additional read-only media mount. Change the container path to your preferred visible name, but keep it below /media, for example /media/Movies." Type="Path" Display="advanced" Required="false" Mask="false"></Config>

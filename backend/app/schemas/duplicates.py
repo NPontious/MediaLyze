@@ -7,6 +7,9 @@ from backend.app.models.entities import DuplicateDetectionMode
 
 class DuplicateGroupFileRead(BaseModel):
     id: int
+    root_id: int | None = None
+    root_name: str | None = None
+    display_path: str | None = None
     relative_path: str
     filename: str
     size_bytes: int

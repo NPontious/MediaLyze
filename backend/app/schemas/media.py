@@ -128,6 +128,9 @@ class MediaChapterRead(BaseModel):
 class MediaFileTableRow(BaseModel):
     id: int
     library_id: int
+    root_id: int | None = None
+    root_name: str | None = None
+    display_path: str | None = None
     relative_path: str
     filename: str
     extension: str

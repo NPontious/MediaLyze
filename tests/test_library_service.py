@@ -14,6 +14,7 @@ from backend.app.models.entities import (
     DuplicateDetectionMode,
     ExternalSubtitle,
     Library,
+    LibraryRoot,
     LibraryType,
     MediaFile,
     MediaFormat,
@@ -218,6 +219,41 @@ def test_create_library_with_multiple_paths_uses_common_root_and_selected_paths(
 
     assert library.path == str(common_root)
     assert library.scan_config == {"selected_paths": ["Movies A", "Movies B"]}
+
+
+def test_create_library_with_multiple_independent_paths_persists_library_roots(tmp_path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON;")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    settings = Settings(
+        runtime_mode="desktop",
+        config_path=tmp_path / "config",
+        media_root=tmp_path / "media-root",
+    )
+    first_dir = tmp_path / "server-a" / "Movies"
+    second_dir = tmp_path / "server-b" / "Anime"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir(parents=True)
+
+    with session_factory() as db:
+        library = create_library(
+            db,
+            settings,
+            LibraryCreate(
+                name="Combined",
+                path=str(first_dir),
+                paths=[str(first_dir), str(second_dir)],
+                type=LibraryType.movies,
+                scan_mode=ScanMode.manual,
+            ),
+        )
+        roots = db.scalars(select(LibraryRoot).where(LibraryRoot.library_id == library.id).order_by(LibraryRoot.path)).all()
+
+    assert [root.path for root in roots] == sorted([str(first_dir), str(second_dir)])
+    assert {root.display_name for root in roots} == {"Movies", "Anime"}
 
 
 def test_create_library_allows_same_root_with_different_selected_paths(tmp_path) -> None:

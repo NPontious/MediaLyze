@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import String, and_, case, cast, func, literal, or_
 
-from backend.app.models.entities import MediaFile, MediaFormat
+from backend.app.models.entities import LibraryRoot, MediaFile, MediaFormat
 from backend.app.services.languages import expand_language_search_terms
 from backend.app.services.resolution_categories import (
     ResolutionCategory,
@@ -264,6 +264,7 @@ def apply_legacy_search(query, primary_video_streams, audio_aggregates, subtitle
             or_(
                 match_patterns(MediaFile.filename, pattern_list),
                 match_patterns(MediaFile.relative_path, pattern_list),
+                MediaFile.library_root.has(match_patterns(LibraryRoot.display_name, pattern_list)),
                 match_patterns(MediaFile.extension, pattern_list),
                 match_patterns(primary_video_streams.c.codec, pattern_list),
                 match_patterns(primary_video_streams.c.hdr_type, pattern_list),
@@ -414,6 +415,7 @@ def _apply_file_search_filter(query, raw_value: str):
             or_(
                 match_patterns(MediaFile.filename, patterns),
                 match_patterns(MediaFile.relative_path, patterns),
+                MediaFile.library_root.has(match_patterns(LibraryRoot.display_name, patterns)),
                 match_patterns(MediaFile.extension, patterns),
             ),
             negated=term.negated,

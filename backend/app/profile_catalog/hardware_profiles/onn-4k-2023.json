@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "onn-4k-2023",
+  "name": "Onn 4K",
+  "category": "streaming_device",
+  "manufacturer": "Walmart",
+  "year": 2023,
+  "status": "official",
+  "verified_by": "personal testing",
+  "added": "2026-07-07",
+  "last_modified": "2026-07-07",
+  "video": {
+    "h264": {
+      "hardware_decode": true,
+      "max_resolution": "4K",
+      "max_fps": 60,
+      "bit_depth": [
+        8
+      ]
+    },
+    "hevc": {
+      "hardware_decode": true,
+      "max_resolution": "4K",
+      "max_fps": 60,
+      "bit_depth": [
+        8
+      ],
+      "hdr": [
+        "HDR10"
+      ]
+    },
+    "av1": {
+      "hardware_decode": true,
+      "max_resolution": "4K",
+      "max_fps": 60,
+      "bit_depth": [
+        8
+      ],
+      "hdr": [
+        "HDR10"
+      ]
+    },
+    "vp9": {
+      "hardware_decode": true,
+      "max_resolution": "4K",
+      "max_fps": 60,
+      "bit_depth": [
+        8
+      ],
+      "hdr": [
+        "HDR10"
+      ]
+    }
+  },
+  "audio": {
+    "aac": true,
+    "ac3": "passthrough_only",
+    "eac3": "passthrough_only",
+    "flac": true,
+    "mp3": true
+  },
+  "containers": [
+    "mp4",
+    "mkv",
+    "webm",
+    "ts"
+  ],
+  "subtitles": {
+    "subrip": true,
+    "webvtt": true,
+    "ass": "limited"
+  },
+  "notes": "Google TV device with Amlogic S905Y4, 2 GB RAM, 8 GB storage, and Wi-Fi 5.",
+  "sources": [
+    {
+      "label": "ANDROIDTV GUIDE",
+      "url": "https://www.androidtv-guide.com/streaming-gaming/onn-walmart-google-tv-2023/"
+    }
+  ]
+}

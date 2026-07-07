@@ -6,6 +6,15 @@ from backend.app.schemas.quality import QualityProfile
 from backend.app.schemas._time import UtcDateTime
 
 
+class LibraryRootRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    path: str
+    display_name: str
+    path_key: str
+
+
 class LibraryCreate(BaseModel):
     name: str
     path: str
@@ -36,6 +45,7 @@ class LibrarySummary(BaseModel):
     id: int
     name: str
     path: str
+    roots: list[LibraryRootRead] = Field(default_factory=list)
     type: LibraryType
     last_scan_at: UtcDateTime | None
     scan_mode: ScanMode
