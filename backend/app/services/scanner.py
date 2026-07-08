@@ -685,7 +685,7 @@ def _update_media_file_search_fields(media_file: MediaFile) -> None:
         )
         if has_source
     )
-    media_file.search_fields_version = 3
+    media_file.search_fields_version = 4
 
 
 def _apply_analysis_result(

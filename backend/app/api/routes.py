@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_app_settings, get_db_session, get_scan_runtime
@@ -52,7 +53,13 @@ from backend.app.schemas.scan import (
     ScanRequest,
 )
 from backend.app.schemas.update_status import UpdateStatusRead
-from backend.app.models.entities import DuplicateDetectionMode, Library, ScanJob, ScanTriggerSource
+from backend.app.models.entities import (
+    DuplicateDetectionMode,
+    JobStatus,
+    Library,
+    ScanJob,
+    ScanTriggerSource,
+)
 from backend.app.services.app_settings import get_app_settings as load_app_settings
 from backend.app.services.app_settings import update_app_settings
 from backend.app.services.browse import browse_media_root
@@ -233,6 +240,20 @@ def _library_file_search_filters(
         search_subtitle_languages=search_subtitle_languages,
         search_subtitle_codecs=search_subtitle_codecs,
         search_subtitle_sources=search_subtitle_sources,
+    )
+
+
+def _library_has_active_scan_job(db: Session, library_id: int) -> bool:
+    return (
+        db.scalar(
+            select(ScanJob.id)
+            .where(
+                ScanJob.library_id == library_id,
+                ScanJob.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+            .limit(1)
+        )
+        is not None
     )
 
 
@@ -777,6 +798,15 @@ def library_update(
     settings: Settings = Depends(get_app_settings),
     runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> LibrarySummary:
+    path_update_requested = (
+        "path" in payload.model_fields_set or "paths" in payload.model_fields_set
+    )
+    if path_update_requested and _library_has_active_scan_job(db, library_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Library path cannot be changed while a scan is active",
+        )
+
     try:
         library, quality_profile_changed = update_library_settings(db, settings, library_id, payload)
     except ValueError as exc:

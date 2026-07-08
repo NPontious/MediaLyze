@@ -1730,6 +1730,8 @@ export const api = {
     libraryId: string | number,
     payload: {
       name?: string;
+      path?: string;
+      paths?: string[];
       type?: LibraryType;
       scan_mode?: string;
       duplicate_detection_mode?: DuplicateDetectionMode;

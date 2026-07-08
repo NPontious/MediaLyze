@@ -139,6 +139,28 @@ type LibraryIdentityForm = {
   type: LibraryType;
 };
 
+type LibraryPathForm = {
+  libraryId: number;
+  libraryName: string;
+  path: string;
+  paths: string[];
+};
+
+function librarySelectedPaths(library: LibrarySummary): string[] {
+  const rootPaths = (library.roots ?? []).map((root) => root.path).filter(Boolean);
+  return rootPaths.length ? rootPaths : [library.path].filter(Boolean);
+}
+
+function toLibraryPathForm(library: LibrarySummary, isDesktop: boolean): LibraryPathForm {
+  const paths = librarySelectedPaths(library);
+  return {
+    libraryId: library.id,
+    libraryName: library.name,
+    path: paths[0] ?? (isDesktop ? "" : "."),
+    paths,
+  };
+}
+
 function isDeterminateScanProgress(
   progressMode: "indeterminate" | "determinate" | undefined,
   filesTotal: number,
@@ -783,6 +805,9 @@ export function LibrariesPage() {
   const [libraryIdentityPending, setLibraryIdentityPending] = useState<Record<number, boolean>>({});
   const [isRunningFullScanAll, setIsRunningFullScanAll] = useState(false);
   const [isCreateLibraryDialogOpen, setIsCreateLibraryDialogOpen] = useState(false);
+  const [libraryPendingDeletion, setLibraryPendingDeletion] = useState<LibrarySummary | null>(null);
+  const [deleteConfirmationInput, setDeleteConfirmationInput] = useState("");
+  const [deletingLibraryIds, setDeletingLibraryIds] = useState<Record<number, boolean>>({});
   const [dashboardVisibilityPending, setDashboardVisibilityPending] = useState<Record<number, boolean>>({});
   const [activeSettingsPanelId, setActiveSettingsPanelId] = useState<SettingsPanelId>(() =>
     getActiveSettingsPanel("configuredLibraries"),
@@ -802,6 +827,11 @@ export function LibrariesPage() {
   const [form, setForm] = useState<CreateLibraryForm>(() => createEmptyForm(desktopApp));
   const [formPathInspection, setFormPathInspection] = useState<PathInspection | null>(null);
   const [formPathInspectionError, setFormPathInspectionError] = useState<string | null>(null);
+  const [pathDialogForm, setPathDialogForm] = useState<LibraryPathForm | null>(null);
+  const [pathDialogError, setPathDialogError] = useState<string | null>(null);
+  const [isSavingPathDialog, setIsSavingPathDialog] = useState(false);
+  const [pathDialogInspection, setPathDialogInspection] = useState<PathInspection | null>(null);
+  const [pathDialogInspectionError, setPathDialogInspectionError] = useState<string | null>(null);
   const [libraryPathInspections, setLibraryPathInspections] = useState<Record<number, PathInspection | null>>({});
   const [userIgnorePatternInputs, setUserIgnorePatternInputs] = useState<string[]>([]);
   const [defaultIgnorePatternInputs, setDefaultIgnorePatternInputs] = useState<string[]>([]);
@@ -1470,6 +1500,41 @@ export function LibrariesPage() {
   }, [desktopApp, form.path]);
 
   useEffect(() => {
+    if (!desktopApp) {
+      setPathDialogInspection(null);
+      setPathDialogInspectionError(null);
+      return;
+    }
+    if (!pathDialogForm?.path.trim()) {
+      setPathDialogInspection(null);
+      setPathDialogInspectionError(null);
+      return;
+    }
+
+    let canceled = false;
+    void api
+      .inspectPath(pathDialogForm.path)
+      .then((payload) => {
+        if (canceled) {
+          return;
+        }
+        setPathDialogInspection(payload);
+        setPathDialogInspectionError(null);
+      })
+      .catch((reason: Error) => {
+        if (canceled) {
+          return;
+        }
+        setPathDialogInspection(null);
+        setPathDialogInspectionError(reason.message);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [desktopApp, pathDialogForm?.path]);
+
+  useEffect(() => {
     if (!desktopApp || libraries.length === 0) {
       return;
     }
@@ -1639,6 +1704,34 @@ export function LibrariesPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isCreateLibraryDialogOpen]);
 
+  useEffect(() => {
+    if (!pathDialogForm) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isSavingPathDialog) {
+        event.preventDefault();
+        closeLibraryPathDialog();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSavingPathDialog, pathDialogForm]);
+
+  useEffect(() => {
+    if (!libraryPendingDeletion) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deletingLibraryIds[libraryPendingDeletion.id]) {
+        event.preventDefault();
+        closeDeleteLibraryDialog();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [deletingLibraryIds, libraryPendingDeletion]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form.type) {
@@ -1676,6 +1769,19 @@ export function LibrariesPage() {
     setIsCreateLibraryDialogOpen(false);
   }
 
+  function openDeleteLibraryDialog(library: LibrarySummary) {
+    setLibraryPendingDeletion(library);
+    setDeleteConfirmationInput("");
+  }
+
+  function closeDeleteLibraryDialog() {
+    if (libraryPendingDeletion && deletingLibraryIds[libraryPendingDeletion.id]) {
+      return;
+    }
+    setLibraryPendingDeletion(null);
+    setDeleteConfirmationInput("");
+  }
+
   function addDesktopLibraryPath() {
     const nextPath = form.path.trim();
     if (!nextPath) {
@@ -1699,6 +1805,86 @@ export function LibrariesPage() {
       paths: appendSelectedLibraryPaths(current.paths, selectedPaths),
     }));
     setSubmitError(null);
+  }
+
+  function openLibraryPathDialog(library: LibrarySummary) {
+    setPathDialogForm(toLibraryPathForm(library, desktopApp));
+    setPathDialogError(null);
+    setPathDialogInspection(null);
+    setPathDialogInspectionError(null);
+  }
+
+  function closeLibraryPathDialog() {
+    if (isSavingPathDialog) {
+      return;
+    }
+    setPathDialogForm(null);
+    setPathDialogError(null);
+    setPathDialogInspection(null);
+    setPathDialogInspectionError(null);
+  }
+
+  function addDesktopPathDialogPath() {
+    const nextPath = pathDialogForm?.path.trim();
+    if (!nextPath) {
+      return;
+    }
+    setPathDialogForm((current) =>
+      current
+        ? {
+            ...current,
+            paths: appendSelectedLibraryPaths(current.paths, [nextPath]),
+          }
+        : current
+    );
+    setPathDialogError(null);
+  }
+
+  async function selectDesktopPathDialogPaths() {
+    const selectedPaths = await desktopBridge?.selectLibraryPaths();
+    if (!(selectedPaths && selectedPaths.length)) {
+      return;
+    }
+    setPathDialogForm((current) =>
+      current
+        ? {
+            ...current,
+            path: selectedPaths[selectedPaths.length - 1] ?? current.path,
+            paths: appendSelectedLibraryPaths(current.paths, selectedPaths),
+          }
+        : current
+    );
+    setPathDialogError(null);
+  }
+
+  async function saveLibraryPathDialog(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pathDialogForm) {
+      return;
+    }
+    const selectedPaths = pathDialogForm.paths.length
+      ? pathDialogForm.paths
+      : (pathDialogForm.path.trim() ? [pathDialogForm.path.trim()] : []);
+    if (!selectedPaths.length) {
+      setPathDialogError(t("pathBrowser.noneSelected"));
+      return;
+    }
+
+    setIsSavingPathDialog(true);
+    try {
+      const updated = await api.updateLibrarySettings(pathDialogForm.libraryId, {
+        path: selectedPaths[0] ?? pathDialogForm.path,
+        paths: selectedPaths,
+      });
+      upsertLibrary(updated);
+      setPathDialogForm(null);
+      setPathDialogError(null);
+      setLibraryMessages((messages) => ({ ...messages, [updated.id]: null }));
+    } catch (reason) {
+      setPathDialogError((reason as Error).message);
+    } finally {
+      setIsSavingPathDialog(false);
+    }
   }
 
   function updateLibraryForm(
@@ -1973,7 +2159,11 @@ export function LibrariesPage() {
     }
   }
 
-  async function removeLibrary(libraryId: number) {
+  async function removeLibrary(library: LibrarySummary) {
+    const libraryId = library.id;
+    setDeletingLibraryIds((current) => ({ ...current, [libraryId]: true }));
+    setQualityPickerOpenKey(null);
+    stopEditingLibraryIdentity(libraryId);
     try {
       await api.deleteLibrary(libraryId);
       removeLibraryFromStore(libraryId);
@@ -1988,9 +2178,17 @@ export function LibrariesPage() {
         return next;
       });
       stopEditingLibraryIdentity(libraryId);
+      setLibraryPendingDeletion((current) => (current?.id === libraryId ? null : current));
+      setDeleteConfirmationInput("");
       await refresh();
     } catch (reason) {
       setLibraryMessages((messages) => ({ ...messages, [libraryId]: (reason as Error).message }));
+    } finally {
+      setDeletingLibraryIds((current) => {
+        const next = { ...current };
+        delete next[libraryId];
+        return next;
+      });
     }
   }
 
@@ -4530,6 +4728,121 @@ export function LibrariesPage() {
     );
   }
 
+  function renderLibraryPathDialogForm(idPrefix = "library-path") {
+    if (!pathDialogForm) {
+      return null;
+    }
+    const pathInputId = `${idPrefix}-path`;
+
+    return (
+      <form className="form-grid" onSubmit={saveLibraryPathDialog}>
+        <p className="field-hint field-span-full">
+          {desktopApp ? t("libraries.changePathSubtitleDesktop") : t("libraries.changePathSubtitle")}
+        </p>
+        {desktopApp ? (
+          <div className="field field-span-full">
+            <label htmlFor={pathInputId}>{t("pathBrowser.selected")}</label>
+            <div className="desktop-path-field">
+              <div className="desktop-path-row">
+                <input
+                  id={pathInputId}
+                  value={pathDialogForm.path}
+                  onChange={(event) =>
+                    setPathDialogForm((current) => current ? { ...current, path: event.target.value } : current)
+                  }
+                  placeholder={t("libraries.desktopPathPlaceholder")}
+                  required
+                />
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={addDesktopPathDialogPath}
+                  disabled={isSavingPathDialog}
+                >
+                  {t("pathBrowser.addCurrent")}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => void selectDesktopPathDialogPaths()}
+                  disabled={isSavingPathDialog}
+                >
+                  {t("libraries.chooseFolder")}
+                </button>
+              </div>
+              <div className="path-browser-selected-list">
+                {pathDialogForm.paths.length ? pathDialogForm.paths.map((path) => (
+                  <span key={path} className="path-browser-selected-item">
+                    <span className="badge">{path}</span>
+                    <button
+                      type="button"
+                      className="ghost small"
+                      disabled={isSavingPathDialog}
+                      onClick={() =>
+                        setPathDialogForm((current) =>
+                          current
+                            ? {
+                                ...current,
+                                paths: current.paths.filter((candidate) => candidate !== path),
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      {t("pathBrowser.remove")}
+                    </button>
+                  </span>
+                )) : <div className="badge">{t("pathBrowser.noneSelected")}</div>}
+              </div>
+              {pathDialogInspection ? (
+                <div className="meta-row">
+                  <span className="badge">{t(`libraries.pathKinds.${pathDialogInspection.path_kind}`)}</span>
+                  {!pathDialogInspection.exists || !pathDialogInspection.is_directory ? (
+                    <span className="field-hint">{t("libraries.desktopPathMustExist")}</span>
+                  ) : null}
+                  {pathDialogInspection.exists && pathDialogInspection.is_directory && !pathDialogInspection.watch_supported ? (
+                    <span className="field-hint">{t("libraries.watchUnavailableNetwork")}</span>
+                  ) : null}
+                </div>
+              ) : null}
+              {pathDialogInspectionError ? <div className="alert">{pathDialogInspectionError}</div> : null}
+            </div>
+          </div>
+        ) : (
+          <PathBrowser
+            value={pathDialogForm.path}
+            selectedPaths={pathDialogForm.paths}
+            onChange={(path) => setPathDialogForm((current) => current ? { ...current, path } : current)}
+            onAddPath={(path) =>
+              setPathDialogForm((current) =>
+                current
+                  ? {
+                      ...current,
+                      path,
+                      paths: appendSelectedLibraryPaths(current.paths, [path]),
+                    }
+                  : current
+              )
+            }
+            onRemovePath={(path) =>
+              setPathDialogForm((current) =>
+                current
+                  ? {
+                      ...current,
+                      paths: current.paths.filter((candidate) => candidate !== path),
+                    }
+                  : current
+              )
+            }
+          />
+        )}
+        <button type="submit" className="history-retention-primary-button" disabled={isSavingPathDialog}>
+          {isSavingPathDialog ? t("libraries.savingPath") : t("libraries.savePath")}
+        </button>
+      </form>
+    );
+  }
+
   function renderQualityProfilesPanel() {
     const visibleProfiles = qualityProfiles.filter((profile) => profile.media_type === activeQualityProfileMediaType);
     const draft = qualityProfileDraft;
@@ -5054,14 +5367,20 @@ export function LibrariesPage() {
                 const isEditingLibraryIdentity = Boolean(identityForm);
                 const isSavingLibraryIdentity = Boolean(libraryIdentityPending[library.id]);
                 const canSaveLibraryIdentity = Boolean(identityForm?.name.trim());
+                const isDeletingLibrary = Boolean(deletingLibraryIds[library.id]);
+                const activeLibraryScanJob = activeJobs.find((job) => job.library_id === library.id);
 
                 return (
-                  <div className="media-card library-settings-card" key={library.id}>
+                  <div
+                    className={`media-card library-settings-card${isDeletingLibrary ? " is-deleting" : ""}`}
+                    key={library.id}
+                    aria-busy={isDeletingLibrary}
+                  >
                   <div className="library-settings-header">
                     <div className="item-meta">
                       <div className="library-title-row">
                         <div className="library-title-meta">
-                          <div className="library-title-main">
+                          <div className={`library-title-main${isEditingLibraryIdentity ? " is-editing" : ""}`}>
                             {isEditingLibraryIdentity ? (
                               <div className="library-title-inline-editor">
                                 <input
@@ -5072,7 +5391,7 @@ export function LibrariesPage() {
                                   className="library-title-input"
                                   value={identityForm?.name ?? ""}
                                   aria-label={t("libraries.editNameAria", { name: library.name })}
-                                  disabled={isSavingLibraryIdentity}
+                                  disabled={isSavingLibraryIdentity || isDeletingLibrary}
                                   onChange={(event) =>
                                     updateLibraryIdentityForm(library.id, { name: event.target.value })
                                   }
@@ -5081,7 +5400,17 @@ export function LibrariesPage() {
                               </div>
                             ) : (
                               <h3>
-                                <Link to={`/libraries/${library.id}`} className="file-link">
+                                <Link
+                                  to={`/libraries/${library.id}`}
+                                  className="file-link"
+                                  aria-disabled={isDeletingLibrary}
+                                  tabIndex={isDeletingLibrary ? -1 : undefined}
+                                  onClick={(event) => {
+                                    if (isDeletingLibrary) {
+                                      event.preventDefault();
+                                    }
+                                  }}
+                                >
                                   {library.name}
                                 </Link>
                               </h3>
@@ -5110,25 +5439,25 @@ export function LibrariesPage() {
                               />
                             ) : null}
                             <div className="meta-tags library-title-tags">
-                              {isEditingLibraryIdentity ? (
-                                <select
-                                  className="library-title-type-select"
-                                  value={identityForm?.type ?? library.type}
-                                  aria-label={t("libraries.editTypeAria", { name: library.name })}
-                                  disabled={isSavingLibraryIdentity}
-                                  onChange={(event) =>
-                                    updateLibraryIdentityForm(library.id, { type: event.target.value as LibraryType })
-                                  }
-                                  onKeyDown={(event) => handleLibraryIdentityEditorKeyDown(event, library)}
-                                >
-                                  <option value="movies">{t("libraryTypes.movies")}</option>
-                                  <option value="series">{t("libraryTypes.series")}</option>
-                                  <option value="music">{t("libraryTypes.music")}</option>
-                                  <option value="audiobooks">{t("libraryTypes.audiobooks")}</option>
-                                  <option value="mixed">{t("libraryTypes.mixed")}</option>
-                                  <option value="other">{t("libraryTypes.other")}</option>
-                                </select>
-                              ) : (
+	                              {isEditingLibraryIdentity ? (
+	                                <select
+	                                  className="library-title-type-select"
+	                                  value={identityForm?.type ?? library.type}
+	                                  aria-label={t("libraries.editTypeAria", { name: library.name })}
+	                                  disabled={isSavingLibraryIdentity || isDeletingLibrary}
+	                                  onChange={(event) =>
+	                                    updateLibraryIdentityForm(library.id, { type: event.target.value as LibraryType })
+	                                  }
+	                                  onKeyDown={(event) => handleLibraryIdentityEditorKeyDown(event, library)}
+	                                >
+	                                  <option value="movies">{t("libraryTypes.movies")}</option>
+	                                  <option value="series">{t("libraryTypes.series")}</option>
+	                                  <option value="music">{t("libraryTypes.music")}</option>
+	                                  <option value="audiobooks">{t("libraryTypes.audiobooks")}</option>
+	                                  <option value="mixed">{t("libraryTypes.mixed")}</option>
+	                                  <option value="other">{t("libraryTypes.other")}</option>
+	                                </select>
+	                              ) : (
                                 <span className="badge">{t(`libraryTypes.${library.type}`)}</span>
                               )}
                               {!isEditingLibraryIdentity ? (
@@ -5143,11 +5472,27 @@ export function LibrariesPage() {
                                       : t("libraries.scanning")}
                                   </span>
                                 ))}
+                              {isDeletingLibrary ? <span className="badge delete-badge">{t("libraries.deleting")}</span> : null}
                             </div>
                           </div>
-                        </div>
-                        <div className="library-title-actions">
-                          <button
+	                        </div>
+	                        <div className="library-title-actions">
+	                          {isEditingLibraryIdentity ? (
+	                            <button
+	                              type="button"
+	                              className="secondary small library-change-path-button"
+	                              disabled={isSavingLibraryIdentity || isDeletingLibrary || Boolean(activeLibraryScanJob)}
+	                              title={
+	                                activeLibraryScanJob
+	                                  ? t("libraries.changePathActiveScanTooltip")
+	                                  : t("libraries.changePathTooltip")
+	                              }
+	                              onClick={() => openLibraryPathDialog(library)}
+	                            >
+	                              {t("libraries.changePath")}
+	                            </button>
+	                          ) : null}
+	                          <button
                             type="button"
                             className="secondary icon-only-button library-action-tooltip-trigger"
                             aria-label={
@@ -5165,7 +5510,7 @@ export function LibrariesPage() {
                                 ? t("libraries.hideFromDashboardTooltip")
                                 : t("libraries.showOnDashboardTooltip")
                             }
-                            disabled={Boolean(dashboardVisibilityPending[library.id])}
+                            disabled={Boolean(dashboardVisibilityPending[library.id]) || isDeletingLibrary}
                             onClick={() => void toggleLibraryDashboardVisibility(library)}
                           >
                             <DashboardVisibilityIcon visible={library.show_on_dashboard} />
@@ -5177,7 +5522,7 @@ export function LibrariesPage() {
                                 className="secondary icon-only-button"
                                 aria-label={t("libraries.saveEditAria", { name: library.name })}
                                 title={t("libraries.saveEditTooltip")}
-                                disabled={isSavingLibraryIdentity || !canSaveLibraryIdentity}
+                                disabled={isSavingLibraryIdentity || !canSaveLibraryIdentity || isDeletingLibrary}
                                 onClick={() => void saveLibraryIdentity(library)}
                               >
                                 <Check aria-hidden="true" className="nav-icon" />
@@ -5187,7 +5532,7 @@ export function LibrariesPage() {
                                 className="secondary icon-only-button"
                                 aria-label={t("libraries.cancelEditAria", { name: library.name })}
                                 title={t("libraries.cancelEditTooltip")}
-                                disabled={isSavingLibraryIdentity}
+                                disabled={isSavingLibraryIdentity || isDeletingLibrary}
                                 onClick={() => stopEditingLibraryIdentity(library.id)}
                               >
                                 <X aria-hidden="true" className="nav-icon" />
@@ -5200,6 +5545,7 @@ export function LibrariesPage() {
                               aria-label={t("libraries.renameAria", { name: library.name })}
                               title={t("libraries.renameTooltip")}
                               data-tooltip={t("libraries.renameTooltip")}
+                              disabled={isDeletingLibrary}
                               onClick={() => startEditingLibraryIdentity(library)}
                             >
                               <SquarePenIcon aria-hidden="true" className="nav-icon" />
@@ -5211,7 +5557,8 @@ export function LibrariesPage() {
                             aria-label={t("libraries.deleteAria", { name: library.name })}
                             title={t("libraries.deleteTooltip")}
                             data-tooltip={t("libraries.deleteTooltip")}
-                            onClick={() => void removeLibrary(library.id)}
+                            disabled={isDeletingLibrary}
+                            onClick={() => openDeleteLibraryDialog(library)}
                           >
                             <DeleteIcon size={20} aria-hidden="true" className="nav-icon" />
                           </button>
@@ -5219,6 +5566,7 @@ export function LibrariesPage() {
                             type="button"
                             className="small library-scan-button"
                             title={t("libraries.scanNowTooltip")}
+                            disabled={isDeletingLibrary}
                             onClick={() => void runLibraryScan(library.id)}
                           >
                             {t("libraries.scanNow")}
@@ -5227,13 +5575,20 @@ export function LibrariesPage() {
                       </div>
                     </div>
                   </div>
-                  {activeJobs.find((job) => job.library_id === library.id) ? (
+                  {isDeletingLibrary ? (
+                    <div className="library-delete-progress" role="status">
+                      <div className="progress is-indeterminate">
+                        <span />
+                      </div>
+                      <span>{t("libraries.deleting")}</span>
+                    </div>
+                  ) : activeLibraryScanJob ? (
                     <div
                       className={`progress${
                         isDeterminateScanProgress(
-                          activeJobs.find((job) => job.library_id === library.id)?.progress_mode,
-                          activeJobs.find((job) => job.library_id === library.id)?.files_total ?? 0,
-                          activeJobs.find((job) => job.library_id === library.id)?.phase_label ?? "",
+                          activeLibraryScanJob.progress_mode,
+                          activeLibraryScanJob.files_total,
+                          activeLibraryScanJob.phase_label,
                         )
                           ? ""
                           : " is-indeterminate"
@@ -5242,11 +5597,11 @@ export function LibrariesPage() {
                       <span
                         style={{
                           width: isDeterminateScanProgress(
-                            activeJobs.find((job) => job.library_id === library.id)?.progress_mode,
-                            activeJobs.find((job) => job.library_id === library.id)?.files_total ?? 0,
-                            activeJobs.find((job) => job.library_id === library.id)?.phase_label ?? "",
+                            activeLibraryScanJob.progress_mode,
+                            activeLibraryScanJob.files_total,
+                            activeLibraryScanJob.phase_label,
                           )
-                            ? `${activeJobs.find((job) => job.library_id === library.id)?.progress_percent ?? 0}%`
+                            ? `${activeLibraryScanJob.progress_percent ?? 0}%`
                             : undefined,
                         }}
                       />
@@ -5277,6 +5632,7 @@ export function LibrariesPage() {
                           },
                         ],
                         (scanMode) => updateLibraryForm(library.id, { scan_mode: scanMode }),
+                        isDeletingLibrary,
                       )}
                     </div>
                     <div className="field">
@@ -5302,6 +5658,7 @@ export function LibrariesPage() {
                         ],
                         (duplicateDetectionMode) =>
                           updateLibraryForm(library.id, { duplicate_detection_mode: duplicateDetectionMode }),
+                        isDeletingLibrary,
                       )}
                     </div>
                     <div className="field">
@@ -5324,6 +5681,7 @@ export function LibrariesPage() {
                             updateLibraryForm(library.id, {
                               quality_profile_id: profileId === "default" ? null : Number(profileId),
                             }),
+                          isDeletingLibrary,
                         )
                       ) : (
                         <p className="field-hint">{t("libraries.qualityProfiles.mixedDefaultHint")}</p>
@@ -5348,6 +5706,7 @@ export function LibrariesPage() {
                           className="settings-choice-input"
                           type="number"
                           min={5}
+                          disabled={isDeletingLibrary}
                           value={settingsForms[library.id]?.interval_minutes ?? 60}
                           onChange={(event) =>
                             updateLibraryForm(library.id, {
@@ -5372,6 +5731,7 @@ export function LibrariesPage() {
                           id={`scheduled-time-${library.id}`}
                           className="settings-choice-input"
                           type="time"
+                          disabled={isDeletingLibrary}
                           value={settingsForms[library.id]?.scheduled_time ?? "02:00"}
                           onChange={(event) =>
                             updateLibraryForm(library.id, {
@@ -5392,6 +5752,7 @@ export function LibrariesPage() {
                           className="settings-choice-input"
                           type="number"
                           min={3}
+                          disabled={isDeletingLibrary}
                           value={settingsForms[library.id]?.debounce_seconds ?? 15}
                           onChange={(event) =>
                             updateLibraryForm(library.id, {
@@ -6399,6 +6760,130 @@ export function LibrariesPage() {
             </div>
             {submitError ? <div className="alert">{submitError}</div> : null}
             {renderCreateLibraryForm("library-dialog")}
+          </section>
+        </div>
+      ) : null}
+      {pathDialogForm ? (
+        <div className="settings-create-library-backdrop" role="presentation" onMouseDown={closeLibraryPathDialog}>
+          <section
+            className="settings-create-library-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-library-path-dialog-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="settings-create-library-dialog-header">
+              <h2 id="settings-library-path-dialog-title">
+                {t("libraries.changePathTitle", { name: pathDialogForm.libraryName })}
+              </h2>
+              <button
+                type="button"
+                className="secondary icon-only-button settings-create-library-dialog-close"
+                aria-label={t("common.close")}
+                disabled={isSavingPathDialog}
+                onClick={closeLibraryPathDialog}
+              >
+                <X aria-hidden="true" className="nav-icon" />
+              </button>
+            </div>
+            {pathDialogError ? <div className="alert">{pathDialogError}</div> : null}
+            {renderLibraryPathDialogForm("library-path-dialog")}
+          </section>
+        </div>
+      ) : null}
+      {libraryPendingDeletion ? (
+        <div className="settings-create-library-backdrop" role="presentation" onMouseDown={closeDeleteLibraryDialog}>
+          <section
+            className="settings-create-library-dialog settings-delete-library-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-delete-library-dialog-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="settings-create-library-dialog-header">
+              <div className="settings-delete-library-title-block">
+                <h2 id="settings-delete-library-dialog-title">
+                  {t("libraries.deleteDialog.title", { name: libraryPendingDeletion.name })}
+                </h2>
+                <p>{t("libraries.deleteDialog.subtitle")}</p>
+              </div>
+              <button
+                type="button"
+                className="secondary icon-only-button settings-create-library-dialog-close"
+                aria-label={t("common.close")}
+                disabled={Boolean(deletingLibraryIds[libraryPendingDeletion.id])}
+                onClick={closeDeleteLibraryDialog}
+              >
+                <X aria-hidden="true" className="nav-icon" />
+              </button>
+            </div>
+            <div className="settings-delete-library-summary">
+              <div>
+                <span>{t("libraries.name")}</span>
+                <strong>{libraryPendingDeletion.name}</strong>
+              </div>
+              <div>
+                <span>{t("libraries.deleteDialog.pathLabel")}</span>
+                <strong>{libraryPendingDeletion.path}</strong>
+              </div>
+            </div>
+            <div className="settings-delete-library-warning">
+              <p>{t("libraries.deleteDialog.removedIntro")}</p>
+              <ul>
+                <li>{t("libraries.deleteDialog.removedItems.configuration")}</li>
+                <li>{t("libraries.deleteDialog.removedItems.metadata")}</li>
+                <li>{t("libraries.deleteDialog.removedItems.scanJobs")}</li>
+                <li>{t("libraries.deleteDialog.removedItems.duplicates")}</li>
+                <li>{t("libraries.deleteDialog.removedItems.history")}</li>
+              </ul>
+            </div>
+            <p className="settings-delete-library-assets-note">{t("libraries.deleteDialog.assetsSafe")}</p>
+            <form
+              className="settings-delete-library-confirm-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (
+                  deleteConfirmationInput === libraryPendingDeletion.name
+                  && !deletingLibraryIds[libraryPendingDeletion.id]
+                ) {
+                  void removeLibrary(libraryPendingDeletion);
+                }
+              }}
+            >
+              <label htmlFor="settings-delete-library-confirm-input">
+                {t("libraries.deleteDialog.confirmLabel", { name: libraryPendingDeletion.name })}
+              </label>
+              <input
+                id="settings-delete-library-confirm-input"
+                type="text"
+                autoFocus
+                value={deleteConfirmationInput}
+                disabled={Boolean(deletingLibraryIds[libraryPendingDeletion.id])}
+                onChange={(event) => setDeleteConfirmationInput(event.target.value)}
+              />
+              <div className="settings-delete-library-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={Boolean(deletingLibraryIds[libraryPendingDeletion.id])}
+                  onClick={closeDeleteLibraryDialog}
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="submit"
+                  className="settings-delete-library-confirm-button"
+                  disabled={
+                    deleteConfirmationInput !== libraryPendingDeletion.name
+                    || Boolean(deletingLibraryIds[libraryPendingDeletion.id])
+                  }
+                >
+                  {deletingLibraryIds[libraryPendingDeletion.id]
+                    ? t("libraries.deleteDialog.confirming")
+                    : t("libraries.deleteDialog.confirm")}
+                </button>
+              </div>
+            </form>
           </section>
         </div>
       ) : null}

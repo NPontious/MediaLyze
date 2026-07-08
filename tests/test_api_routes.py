@@ -1543,6 +1543,40 @@ def test_library_create_returns_400_for_snapshot_symlink_loops(tmp_path, monkeyp
     assert response.json() == {"detail": f"Invalid path under MEDIA_ROOT: {snapshot}"}
 
 
+def test_library_path_update_returns_409_while_scan_is_active(tmp_path) -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    old_dir = tmp_path / "old"
+    new_dir = tmp_path / "new"
+    old_dir.mkdir()
+    new_dir.mkdir()
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(old_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        db.add(ScanJob(library_id=library.id, status=JobStatus.running, job_type="incremental"))
+        db.commit()
+
+        client = _build_test_app(db)
+        client.app.dependency_overrides[get_app_settings] = lambda: Settings(runtime_mode="server", media_root=tmp_path)
+        response = client.patch(
+            f"/api/libraries/{library.id}",
+            json={"path": "new", "paths": ["new"]},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Library path cannot be changed while a scan is active"}
+
+
 def test_libraries_route_serializes_timestamps_as_utc_z_strings() -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
