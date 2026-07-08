@@ -52,6 +52,7 @@ import {
   type SoftwareProfile,
 } from "../lib/api";
 import { useAppData } from "../lib/app-data";
+import { canAttemptClipboardCopy, copyTextToClipboard } from "../lib/clipboard";
 import { formatBytes, formatCodecLabel, formatContainerLabel, formatDate, formatDuration } from "../lib/format";
 import { formatHdrType } from "../lib/hdr";
 import {
@@ -1721,15 +1722,14 @@ export function FileDetailPage() {
   );
 
   const rawJsonText = useMemo(() => JSON.stringify(file?.raw_ffprobe_json ?? {}, null, 2), [file?.raw_ffprobe_json]);
-  const canCopyRawJson = typeof navigator !== "undefined" && Boolean(navigator.clipboard?.writeText);
+  const canCopyRawJson = canAttemptClipboardCopy();
   const rawJsonCopyLabel = rawJsonCopied ? t("fileDetail.rawJsonCopied") : t("fileDetail.copyRawJson");
 
   const copyRawJson = useCallback(async () => {
-    const clipboard = navigator.clipboard;
-    if (!clipboard?.writeText) {
+    const copied = await copyTextToClipboard(rawJsonText);
+    if (!copied) {
       return;
     }
-    await clipboard.writeText(rawJsonText);
     setRawJsonCopied(true);
     if (rawJsonCopyResetTimeoutRef.current !== null) {
       window.clearTimeout(rawJsonCopyResetTimeoutRef.current);

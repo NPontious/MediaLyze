@@ -4,11 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Bug fixes
+
+- keep the raw ffprobe JSON copy action working in browsers that do not expose the async Clipboard API on non-local HTTP origins
+
 ## v0.16.1
 
 >2026-07-07
 
-This patch release improves deployment defaults, refreshes dependencies for current security advisories, and expands the early hardware-profile catalog with two community-submitted streaming-device profiles.
+This patch release improves deployment defaults, refreshes dependencies for current security advisories, and expands the early hardware-profile catalog with two community-submitted streaming-device profiles. [#168](https://github.com/frederikemmer/MediaLyze/issues/168)
 
 ### ✨ New
 

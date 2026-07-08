@@ -71,7 +71,7 @@ from backend.app.utils.glob_patterns import matches_ignore_pattern
 from backend.app.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
-ANALYSIS_SCHEMA_VERSION = 3
+ANALYSIS_SCHEMA_VERSION = 4
 MAX_FILE_LIST_SAMPLE_SIZE = 50
 MAX_FAILED_FILE_SAMPLE_SIZE = 200
 MAX_IGNORE_PATTERN_SAMPLE_SIZE = 10
@@ -584,10 +584,19 @@ def _joined_unique(values: list[str]) -> str:
     return " ".join(sorted({value for value in values if value}))
 
 
+def _audio_bitrate_from_streams_or_format(media_file: MediaFile) -> int | None:
+    audio_bitrate = sum(max(stream.bit_rate or 0, 0) for stream in media_file.audio_streams)
+    if audio_bitrate > 0:
+        return audio_bitrate
+    if media_file.audio_streams and not media_file.video_streams and media_file.media_format and media_file.media_format.bit_rate:
+        return media_file.media_format.bit_rate
+    return None
+
+
 def _update_media_file_search_fields(media_file: MediaFile) -> None:
     primary_video = min(media_file.video_streams, key=lambda stream: stream.stream_index, default=None)
     media_file.duration_seconds = media_file.media_format.duration if media_file.media_format else None
-    media_file.audio_bitrate = sum(max(stream.bit_rate or 0, 0) for stream in media_file.audio_streams) or None
+    media_file.audio_bitrate = _audio_bitrate_from_streams_or_format(media_file)
     media_file.bitrate = (
         media_file.media_format.bit_rate if media_file.media_format and media_file.media_format.bit_rate else media_file.audio_bitrate
     )
