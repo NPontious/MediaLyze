@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Bug fixes
+
+- serve FLAC previews with the `audio/flac` MIME type so Safari can play them correctly [#170](https://github.com/frederikemmer/MediaLyze/issues/170)
+
 ## v0.16.2
 
 >2026-07-09
