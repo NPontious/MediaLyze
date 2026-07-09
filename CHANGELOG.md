@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.16.2
+
+>2026-07-09
+
+This patch release improves library path maintenance, makes library deletion safer, and fixes metadata handling issues reported by users.
+
 ### ✨ Enhancements
 
 - allow changing the folder paths for existing libraries while keeping existing analyzed metadata and history [#167](https://github.com/frederikemmer/MediaLyze/issues/167)
