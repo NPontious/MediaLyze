@@ -1359,7 +1359,7 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Library title actions" source={`${settings} > Libraries`} classes={["library-title-actions", "library-action-tooltip-trigger"]}>
+              <VariantCard title="Library title actions" source={`${settings} > Libraries`} classes={["library-title-actions", "library-action-tooltip-trigger", "library-change-path-button"]}>
                 <div className="library-title-actions">
                   <button type="button" className="secondary icon-only-button library-action-tooltip-trigger" aria-label="Show library on dashboard">
                     <DashboardVisibilityIcon visible />
@@ -1369,6 +1369,9 @@ export function UiElementsPage() {
                   </button>
                   <button type="button" className="secondary icon-only-button library-action-tooltip-trigger" aria-label="Delete library">
                     <DeleteIcon size={20} aria-hidden="true" className="nav-icon" />
+                  </button>
+                  <button type="button" className="secondary small library-change-path-button">
+                    Change path
                   </button>
                 </div>
               </VariantCard>
@@ -1914,6 +1917,90 @@ export function UiElementsPage() {
                       <div className="field"><label>Name</label><input defaultValue="Movies" /></div>
                     </div>
                   </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Change library path dialog shell" source={`${settings} > Libraries > Edit library`} classes={["settings-create-library-backdrop", "settings-create-library-dialog", "path-browser-selected-item"]}>
+                <div className="settings-create-library-backdrop ui-elements-static-backdrop">
+                  <section className="settings-create-library-dialog">
+                    <div className="settings-create-library-dialog-header">
+                      <h2>Change path for Movies</h2>
+                      <button type="button" className="secondary icon-only-button settings-create-library-dialog-close" aria-label="Close">
+                        <X className="nav-icon" />
+                      </button>
+                    </div>
+                    <div className="form-grid">
+                      <p className="field-hint field-span-full">Update the folders for this library. Existing analysis history is kept.</p>
+                      <div className="path-browser-selected-list field-span-full">
+                        <span className="path-browser-selected-item badge">
+                          <span>/media/movies</span>
+                          <span className="path-browser-pill-divider" aria-hidden="true" />
+                          <button type="button" className="path-browser-pill-remove" aria-label="Remove">×</button>
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Delete library confirmation dialog" source={`${settings} > Delete library`} classes={["settings-delete-library-dialog", "settings-delete-library-warning", "settings-delete-library-confirm-button"]} wide>
+                <div className="settings-create-library-backdrop ui-elements-static-backdrop">
+                  <section className="settings-create-library-dialog settings-delete-library-dialog">
+                    <div className="settings-create-library-dialog-header">
+                      <div className="settings-delete-library-title-block">
+                        <h2>Delete Movies?</h2>
+                        <p>This removes the library from MediaLyze and cannot be undone.</p>
+                      </div>
+                      <button type="button" className="secondary icon-only-button settings-create-library-dialog-close" aria-label="Close">
+                        <X className="nav-icon" />
+                      </button>
+                    </div>
+                    <div className="settings-delete-library-summary">
+                      <div><span>Name</span><strong>Movies</strong></div>
+                      <div><span>Path</span><strong>/media/movies</strong></div>
+                    </div>
+                    <div className="settings-delete-library-warning">
+                      <p>The following MediaLyze database data will be deleted:</p>
+                      <ul>
+                        <li>Library configuration and scan settings</li>
+                        <li>Analyzed metadata, scan jobs, duplicate data, and history</li>
+                      </ul>
+                    </div>
+                    <p className="settings-delete-library-assets-note">Media files and assets in the library path are not deleted or modified.</p>
+                    <div className="settings-delete-library-confirm-form">
+                      <label>Type Movies to confirm.</label>
+                      <input defaultValue="Movies" />
+                      <div className="settings-delete-library-actions">
+                        <button type="button" className="secondary">Cancel</button>
+                        <button type="button" className="settings-delete-library-confirm-button">Delete library</button>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Library deleting state" source={`${settings} > Configured libraries`} classes={["library-settings-card", "is-deleting", "library-delete-progress", "delete-badge"]}>
+                <div className="media-card library-settings-card is-deleting" aria-busy="true">
+                  <div className="library-settings-header">
+                    <div className="library-title-row">
+                      <div className="library-title-meta">
+                        <div className="library-title-main">
+                          <h3><span className="file-link">Movies</span></h3>
+                          <div className="meta-tags library-title-tags">
+                            <span className="badge">Movies</span>
+                            <span className="badge">Manual</span>
+                            <span className="badge delete-badge">Deleting library…</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="library-title-actions">
+                        <button type="button" className="secondary icon-only-button" disabled><DashboardVisibilityIcon visible /></button>
+                        <button type="button" className="secondary icon-only-button" disabled><SquarePenIcon className="nav-icon" /></button>
+                        <button type="button" className="secondary icon-only-button" disabled><DeleteIcon size={20} className="nav-icon" /></button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="library-delete-progress" role="status">
+                    <div className="progress is-indeterminate"><span /></div>
+                    <span>Deleting library…</span>
+                  </div>
                 </div>
               </VariantCard>
               <VariantCard title="Search and quality popovers" source={`${libraryDetail} / ${settings}`} classes={["search-filter-picker-popover", "quality-picker-popover", "search-filter-picker-item"]}>

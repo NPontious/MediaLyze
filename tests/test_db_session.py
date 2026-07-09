@@ -9,9 +9,18 @@ os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"
 os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="medialyze-media-"))
 
 from backend.app.core.config import Settings
-from backend.app.db.session import create_engine_for_settings, init_db
+from backend.app.db.session import _backfill_media_file_search_fields, create_engine_for_settings, init_db
 from backend.app.db.base import Base
-from backend.app.models.entities import Library, LibraryType, ScanMode
+from backend.app.models.entities import (
+    AudioStream,
+    Library,
+    LibraryType,
+    MediaFile,
+    MediaFormat,
+    ScanMode,
+    ScanStatus,
+    VideoStream,
+)
 
 
 def test_sqlite_engine_configures_busy_timeout(tmp_path) -> None:
@@ -280,6 +289,66 @@ def test_init_db_adds_missing_indexes_for_existing_sqlite_schema() -> None:
     assert "ix_media_file_history_captured_at" in media_file_history_index_names
     assert "ix_library_history_library_snapshot_day" in library_history_index_names
     assert "ix_library_history_captured_at" in library_history_index_names
+
+
+def test_search_field_backfill_uses_format_bitrate_for_audio_only_files() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        library = Library(name="Music", path="/tmp/music", type=LibraryType.music, scan_mode=ScanMode.manual, scan_config={})
+        db.add(library)
+        db.flush()
+
+        audio_file = MediaFile(
+            library_id=library.id,
+            relative_path="song.flac",
+            filename="song.flac",
+            extension="flac",
+            size_bytes=1,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+            search_fields_version=3,
+        )
+        video_file = MediaFile(
+            library_id=library.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=1,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+            search_fields_version=3,
+        )
+        db.add_all([audio_file, video_file])
+        db.flush()
+        audio_file_id = audio_file.id
+        video_file_id = video_file.id
+        db.add_all(
+            [
+                MediaFormat(media_file_id=audio_file.id, duration=180.0, bit_rate=900_000),
+                AudioStream(media_file_id=audio_file.id, stream_index=0, codec="flac", bit_rate=None),
+                MediaFormat(media_file_id=video_file.id, duration=60.0, bit_rate=8_000_000),
+                VideoStream(media_file_id=video_file.id, stream_index=0, codec="h264", width=1920, height=1080),
+                AudioStream(media_file_id=video_file.id, stream_index=1, codec="aac", bit_rate=None),
+            ]
+        )
+        db.commit()
+
+    with engine.begin() as connection:
+        _backfill_media_file_search_fields(connection)
+
+    with session_factory() as db:
+        refreshed_audio = db.get(MediaFile, audio_file_id)
+        refreshed_video = db.get(MediaFile, video_file_id)
+
+    assert refreshed_audio is not None
+    assert refreshed_audio.audio_bitrate == 900_000
+    assert refreshed_audio.search_fields_version == 4
+    assert refreshed_video is not None
+    assert refreshed_video.audio_bitrate is None
+    assert refreshed_video.search_fields_version == 4
 
 
 def test_sqlite_utc_datetime_roundtrip_restores_utc_tzinfo() -> None:

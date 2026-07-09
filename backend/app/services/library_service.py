@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from collections import defaultdict
 from copy import deepcopy
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import case, delete, distinct, func, literal, select, union_all
 from sqlalchemy.orm import Session
@@ -31,6 +31,7 @@ from backend.app.services.container_formats import format_container_label
 from backend.app.services.languages import normalize_language_code
 from backend.app.services.numeric_distributions import build_numeric_distributions
 from backend.app.services.path_access import (
+    ResolvedLibraryRoot,
     is_watch_supported_for_library,
     library_root_display_name,
     normalized_library_path_key,
@@ -304,13 +305,14 @@ def _normalize_library_root_scan_settings(
     return scan_mode, normalized_scan_config
 
 
-def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> Library:
-    cache_key = str(id(db.get_bind()))
-    app_settings = load_app_settings(db, settings)
-    ensure_default_quality_profiles(db, app_settings.resolution_categories)
-    selected_profile = validate_library_quality_profile(db, payload.type, payload.quality_profile_id)
-    root_inputs = payload.paths or [payload.path]
-    resolved_roots = resolve_library_roots(settings, root_inputs)
+def _resolved_library_path_config(
+    settings: Settings,
+    root_inputs: Iterable[str],
+    scan_config: dict | None,
+    *,
+    derive_selected_paths: bool,
+) -> tuple[Path, list[ResolvedLibraryRoot], dict]:
+    resolved_roots = resolve_library_roots(settings, list(root_inputs))
     safe_path = resolved_roots[0].path
     if len(resolved_roots) > 1:
         try:
@@ -319,14 +321,81 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
             common_path = ""
         if common_path and common_path != os.path.sep:
             safe_path = type(resolved_roots[0].path)(common_path)
-    initial_scan_config = dict(payload.scan_config or {})
-    if len(resolved_roots) > 1:
+
+    next_scan_config = dict(scan_config or {})
+    if derive_selected_paths and len(resolved_roots) > 1:
         try:
             selected_paths = [root.path.relative_to(safe_path).as_posix() for root in resolved_roots]
         except ValueError:
             selected_paths = []
         if selected_paths:
-            initial_scan_config["selected_paths"] = selected_paths
+            next_scan_config["selected_paths"] = selected_paths
+        else:
+            next_scan_config.pop("selected_paths", None)
+    elif derive_selected_paths:
+        next_scan_config.pop("selected_paths", None)
+    return safe_path, resolved_roots, next_scan_config
+
+
+def _replace_library_roots_preserving_media(
+    db: Session,
+    library: Library,
+    resolved_roots: list[ResolvedLibraryRoot],
+) -> None:
+    existing_roots = list(library.roots or [])
+    existing_by_key = {root.path_key: root for root in existing_roots}
+    reused_root_ids: set[int] = set()
+    resolved_path_keys = {item.path_key for item in resolved_roots}
+    unmatched_existing = [
+        root for root in existing_roots if root.path_key not in resolved_path_keys
+    ]
+
+    for resolved_root in resolved_roots:
+        root = existing_by_key.get(resolved_root.path_key)
+        if root is not None:
+            reused_root_ids.add(root.id)
+            root.path = str(resolved_root.path)
+            root.display_name = resolved_root.display_name
+            root.path_key = resolved_root.path_key
+            continue
+
+        if unmatched_existing:
+            root = unmatched_existing.pop(0)
+            reused_root_ids.add(root.id)
+            root.path = str(resolved_root.path)
+            root.display_name = resolved_root.display_name
+            root.path_key = resolved_root.path_key
+        else:
+            root = LibraryRoot(
+                library_id=library.id,
+                path=str(resolved_root.path),
+                display_name=resolved_root.display_name,
+                path_key=resolved_root.path_key,
+            )
+            db.add(root)
+
+    stale_roots = [root for root in existing_roots if root.id not in reused_root_ids]
+    for root in stale_roots:
+        db.execute(
+            MediaFile.__table__.update()
+            .where(MediaFile.library_root_id == root.id)
+            .values(library_root_id=None)
+        )
+        db.delete(root)
+
+
+def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> Library:
+    cache_key = str(id(db.get_bind()))
+    app_settings = load_app_settings(db, settings)
+    ensure_default_quality_profiles(db, app_settings.resolution_categories)
+    selected_profile = validate_library_quality_profile(db, payload.type, payload.quality_profile_id)
+    root_inputs = payload.paths or [payload.path]
+    safe_path, resolved_roots, initial_scan_config = _resolved_library_path_config(
+        settings,
+        root_inputs,
+        payload.scan_config,
+        derive_selected_paths=bool(payload.paths),
+    )
     scan_mode, scan_config = _normalize_library_root_scan_settings(
         settings,
         [str(root.path) for root in resolved_roots],
@@ -389,6 +458,26 @@ def update_library_settings(
             compatible_profile = None
         if compatible_profile is None:
             library.quality_profile_id = None
+
+    path_fields_updated = "path" in payload.model_fields_set or "paths" in payload.model_fields_set
+    if path_fields_updated:
+        root_inputs = payload.paths if payload.paths is not None else []
+        if not root_inputs and payload.path is not None:
+            root_inputs = [payload.path]
+        safe_path, resolved_roots, next_scan_config = _resolved_library_path_config(
+            settings,
+            root_inputs,
+            library.scan_config,
+            derive_selected_paths=True,
+        )
+        _replace_library_roots_preserving_media(db, library, resolved_roots)
+        library.path = str(safe_path)
+        library.scan_mode, library.scan_config = _normalize_library_root_scan_settings(
+            settings,
+            [str(root.path) for root in resolved_roots],
+            library.scan_mode,
+            next_scan_config,
+        )
 
     if payload.scan_mode is not None:
         next_scan_config = dict(library.scan_config or {})

@@ -26,6 +26,7 @@ from backend.app.models.entities import (
     MediaSeason,
     MediaSeries,
     SubtitleStream,
+    VideoStream,
 )
 from backend.app.schemas.media import (
     GroupedLooseFileTableRowRead,
@@ -885,10 +886,22 @@ def _build_filtered_library_file_ids_subquery(
 
 
 def _ensure_library_search_fields(db: Session, library_id: int) -> None:
+    audio_only_format_bitrate_backfill_needed = and_(
+        MediaFile.search_fields_version < 4,
+        MediaFile.audio_bitrate.is_(None),
+        select(AudioStream.id).where(AudioStream.media_file_id == MediaFile.id).exists(),
+        ~select(VideoStream.id).where(VideoStream.media_file_id == MediaFile.id).exists(),
+        select(MediaFormat.bit_rate)
+        .where(MediaFormat.media_file_id == MediaFile.id, MediaFormat.bit_rate.is_not(None), MediaFormat.bit_rate > 0)
+        .exists(),
+    )
     needs_backfill = db.scalar(
         select(func.count())
         .select_from(MediaFile)
-        .where(MediaFile.library_id == library_id, MediaFile.search_fields_version < 2)
+        .where(
+            MediaFile.library_id == library_id,
+            or_(MediaFile.search_fields_version < 2, audio_only_format_bitrate_backfill_needed),
+        )
     )
     if not needs_backfill:
         return

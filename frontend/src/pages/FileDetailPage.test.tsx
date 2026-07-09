@@ -451,6 +451,14 @@ async function selectFileDetailPanel(name: string) {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: undefined,
+  });
+  Object.defineProperty(document, "execCommand", {
+    configurable: true,
+    value: undefined,
+  });
   vi.restoreAllMocks();
 });
 
@@ -1292,6 +1300,37 @@ describe("FileDetailPage", () => {
     expect(copyButton).toHaveClass("async-panel-toggle-icon-button-flat");
     fireEvent.click(copyButton);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(file.raw_ffprobe_json, null, 2)));
+    expect(screen.getByRole("button", { name: "Copied raw ffprobe JSON" })).toBeInTheDocument();
+  });
+
+  it("copies raw JSON through the textarea fallback when the Clipboard API is unavailable", async () => {
+    const file = createFileDetail();
+    let copiedText = "";
+    const execCommand = vi.fn((command: string) => {
+      copiedText = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : "";
+      return command === "copy";
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+
+    renderPage(file.id);
+
+    await selectFileDetailPanel("Raw ffprobe JSON");
+    const copyButton = screen.getByRole("button", { name: "Copy raw ffprobe JSON" });
+    expect(copyButton).not.toBeDisabled();
+    fireEvent.click(copyButton);
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(copiedText).toBe(JSON.stringify(file.raw_ffprobe_json, null, 2));
     expect(screen.getByRole("button", { name: "Copied raw ffprobe JSON" })).toBeInTheDocument();
   });
 });

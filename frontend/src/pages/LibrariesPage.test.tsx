@@ -1,6 +1,6 @@
 import i18n from "../i18n";
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
@@ -452,6 +452,7 @@ beforeEach(() => {
   vi.spyOn(api, "createQualityProfile").mockResolvedValue(createQualityProfileDefinition({ id: 2, name: "New video profile", is_default: false }));
   vi.spyOn(api, "updateQualityProfile").mockResolvedValue(createQualityProfileDefinition());
   vi.spyOn(api, "deleteQualityProfile").mockResolvedValue(undefined);
+  vi.spyOn(api, "deleteLibrary").mockResolvedValue(undefined);
   delete window.medialyzeDesktop;
 });
 
@@ -1986,6 +1987,78 @@ describe("LibrariesPage settings panels", () => {
     expect(await screen.findByRole("button", { name: "Show library Movies on dashboard" })).toBeInTheDocument();
   });
 
+  it("requires the exact library name before deleting a library", async () => {
+    const library = createLibrarySummary();
+    vi.spyOn(api, "libraries").mockResolvedValue([library]);
+    const deleteSpy = vi.spyOn(api, "deleteLibrary").mockResolvedValue(undefined);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete library Movies" }));
+
+    expect(await screen.findByRole("dialog", { name: "Delete Movies?" })).toBeInTheDocument();
+    expect(screen.getByText("Media files, folders, subtitles, cover art, and other assets in the library path are not deleted or modified.")).toBeInTheDocument();
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    const confirmButton = screen.getByRole("button", { name: "Delete library" });
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Type Movies to confirm."), { target: { value: "Movie" } });
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Type Movies to confirm."), { target: { value: "Movies" } });
+    expect(confirmButton).toBeEnabled();
+  });
+
+  it("shows a deleting state until library deletion completes", async () => {
+    const library = createLibrarySummary();
+    let resolveDelete: () => void = () => {};
+    const deletePromise = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    vi.spyOn(api, "libraries")
+      .mockResolvedValueOnce([library])
+      .mockResolvedValue([]);
+    const deleteSpy = vi.spyOn(api, "deleteLibrary").mockReturnValue(deletePromise);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete library Movies" }));
+    fireEvent.change(screen.getByLabelText("Type Movies to confirm."), { target: { value: "Movies" } });
+    fireEvent.click(screen.getByRole("button", { name: "Delete library" }));
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(1));
+    expect(await screen.findAllByText("Deleting library…")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit library Movies" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete library Movies" })).toBeDisabled();
+
+    await act(async () => {
+      resolveDelete();
+      await deletePromise;
+    });
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Movies" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("dialog", { name: "Delete Movies?" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the library visible and clears the deleting state when deletion fails", async () => {
+    const library = createLibrarySummary();
+    vi.spyOn(api, "libraries").mockResolvedValue([library]);
+    vi.spyOn(api, "deleteLibrary").mockRejectedValue(new Error("Database is busy"));
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete library Movies" }));
+    fireEvent.change(screen.getByLabelText("Type Movies to confirm."), { target: { value: "Movies" } });
+    fireEvent.click(screen.getByRole("button", { name: "Delete library" }));
+
+    expect(await screen.findByText("Database is busy")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Movies" })).toBeInTheDocument();
+    expect(screen.queryByText("Deleting library…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete library Movies" })).toBeEnabled();
+  });
+
   it("edits library name and type inline from the library header", async () => {
     vi.spyOn(api, "libraries").mockResolvedValue([createLibrarySummary()]);
     const promptSpy = vi.spyOn(window, "prompt").mockImplementation(() => null);
@@ -2011,6 +2084,89 @@ describe("LibrariesPage settings panels", () => {
     await waitFor(() => expect(updateSpy).toHaveBeenCalledWith(1, { name: "Shows", type: "series" }));
     expect(await screen.findByRole("link", { name: "Shows" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit library Shows" })).toBeInTheDocument();
+  });
+
+  it("changes a library path from the server path browser dialog", async () => {
+    vi.spyOn(api, "libraries").mockResolvedValue([
+      createLibrarySummary({
+        path: "movies",
+        roots: [{ id: 1, path: "movies", display_name: "movies", path_key: "movies" }],
+      }),
+    ]);
+    const updateSpy = vi.spyOn(api, "updateLibrarySettings").mockResolvedValue(
+      createLibrarySummary({
+        path: "media",
+        roots: [{ id: 1, path: "media", display_name: "media", path_key: "media" }],
+      }),
+    );
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit library Movies" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change path" }));
+
+    expect(await screen.findByRole("dialog", { name: "Change path for Movies" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: /media/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add current folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save path" }));
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith(1, {
+        path: "media",
+        paths: ["media"],
+      }),
+    );
+  });
+
+  it("changes a desktop library path from the folder picker dialog", async () => {
+    window.medialyzeDesktop = {
+      isDesktop: () => true,
+      selectLibraryPaths: vi.fn().mockResolvedValue(["/mnt/new-media"]),
+    };
+    vi.spyOn(api, "libraries").mockResolvedValue([
+      createLibrarySummary({
+        path: "/mnt/old-media",
+        roots: [{ id: 1, path: "/mnt/old-media", display_name: "old-media", path_key: "/mnt/old-media" }],
+      }),
+    ]);
+    const updateSpy = vi.spyOn(api, "updateLibrarySettings").mockResolvedValue(
+      createLibrarySummary({
+        path: "/mnt/new-media",
+        roots: [{ id: 1, path: "/mnt/new-media", display_name: "new-media", path_key: "/mnt/new-media" }],
+      }),
+    );
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit library Movies" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change path" }));
+
+    expect(await screen.findByRole("dialog", { name: "Change path for Movies" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    expect(await screen.findByText("/mnt/new-media")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save path" }));
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith(1, {
+        path: "/mnt/new-media",
+        paths: ["/mnt/new-media"],
+      }),
+    );
+  });
+
+  it("disables library path changes while a scan is active", async () => {
+    vi.spyOn(api, "libraries").mockResolvedValue([createLibrarySummary()]);
+    vi.spyOn(api, "activeScanJobs").mockResolvedValue([
+      createScanJob({ id: 42, library_id: 1, library_name: "Movies", status: "running" }),
+    ]);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit library Movies" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change path" })).toBeDisabled());
   });
 
   it("keeps recent scan logs out of the active panel by default", async () => {

@@ -513,7 +513,6 @@ def test_incremental_scan_reanalyzes_older_analysis_schema_and_backfills_music_m
                 "codec_name": "flac",
                 "channels": 2,
                 "sample_rate": "96000",
-                "bit_rate": "900000",
                 "bit_rate_mode": "vbr",
                 "tags": {
                     "title": "Song A",
@@ -572,13 +571,69 @@ def test_incremental_scan_reanalyzes_older_analysis_schema_and_backfills_music_m
     assert refreshed.audio_disc == "1/2"
     assert refreshed.audio_composer == "Composer A"
     assert refreshed.audio_channels == 2
+    assert refreshed.bitrate == 900000
+    assert refreshed.audio_bitrate == 900000
     assert refreshed.sample_rate == 96000
     assert refreshed.track_number == "03/12"
     assert refreshed.bit_rate_mode == "vbr"
     assert refreshed.has_embedded_cover is True
     assert refreshed.analysis_schema_version == scanner_service.ANALYSIS_SCHEMA_VERSION
+    assert refreshed.search_fields_version == 4
     assert audio_stream is not None
+    assert audio_stream.bit_rate is None
     assert audio_stream.track == "03/12"
+
+
+def test_scan_does_not_use_format_bitrate_as_audio_bitrate_for_video_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    media_dir = tmp_path / "library"
+    media_dir.mkdir()
+    video_path = media_dir / "movie.mkv"
+    video_path.write_text("video")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    payload = {
+        "format": {"format_name": "matroska", "duration": "60.0", "bit_rate": "8000000", "probe_score": 100},
+        "streams": [
+            {
+                "index": 0,
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+            },
+            {
+                "index": 1,
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "channels": 2,
+                "sample_rate": "48000",
+            },
+        ],
+    }
+
+    monkeypatch.setattr("backend.app.services.scanner.run_ffprobe", lambda file_path, ffprobe_path: payload)
+    monkeypatch.setattr("backend.app.services.scanner.detect_external_subtitles", lambda file_path, extensions: [])
+
+    settings = Settings(config_path=tmp_path / "config", media_root=tmp_path, ffprobe_worker_count=1, scan_commit_batch_size=1)
+
+    with session_factory() as db:
+        library = Library(name="Movies", path=str(media_dir), type=LibraryType.movies, scan_mode=ScanMode.manual, scan_config={})
+        db.add(library)
+        db.commit()
+
+        job = run_scan(db, settings, library.id, "full")
+        media_file = db.scalar(select(MediaFile).where(MediaFile.library_id == library.id))
+
+    assert job.files_scanned == 1
+    assert media_file is not None
+    assert media_file.bitrate == 8000000
+    assert media_file.audio_bitrate is None
 
 
 def test_incremental_scan_replaces_audiobook_chapters_and_metadata(

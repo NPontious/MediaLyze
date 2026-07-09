@@ -41,6 +41,7 @@ import {
   type MediaFileSearchResult,
 } from "../lib/api";
 import { useAppData } from "../lib/app-data";
+import { canAttemptClipboardCopy, copyTextToClipboard } from "../lib/clipboard";
 import { formatBytes, formatCodecLabel, formatContainerLabel, formatDate, formatDuration } from "../lib/format";
 import { formatHdrType } from "../lib/hdr";
 
@@ -694,7 +695,7 @@ function CompareSectionView({
     ? filteredRows.slice(0, CHAPTER_COMPARE_PREVIEW_LIMIT + 1)
     : filteredRows;
   const hasRawJson = Boolean(section.rawJson);
-  const canCopyRawJson = typeof navigator !== "undefined" && Boolean(navigator.clipboard?.writeText);
+  const canCopyRawJson = canAttemptClipboardCopy();
 
   useEffect(() => {
     setOpen(changedCount > 0);
@@ -707,12 +708,11 @@ function CompareSectionView({
   }, []);
 
   const copyRawJson = useCallback(async (side: CompareSlotKey) => {
-    const clipboard = navigator.clipboard;
     const value = section.rawJson?.find((entry) => entry.key === side)?.value ?? {};
-    if (!clipboard?.writeText) {
+    const copied = await copyTextToClipboard(JSON.stringify(value, null, 2));
+    if (!copied) {
       return;
     }
-    await clipboard.writeText(JSON.stringify(value, null, 2));
     setCopiedRawSide(side);
     if (rawCopyResetTimeoutRef.current !== null) {
       window.clearTimeout(rawCopyResetTimeoutRef.current);

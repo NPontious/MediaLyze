@@ -321,9 +321,29 @@ def _backfill_media_file_search_fields(connection) -> None:
               duration_seconds = (SELECT duration FROM media_formats WHERE media_file_id = media_files.id LIMIT 1),
               bitrate = (SELECT bit_rate FROM media_formats WHERE media_file_id = media_files.id LIMIT 1),
               audio_bitrate = (
-                SELECT NULLIF(SUM(COALESCE(bit_rate, 0)), 0)
-                FROM audio_streams
-                WHERE media_file_id = media_files.id
+                COALESCE(
+                  (
+                    SELECT NULLIF(SUM(COALESCE(bit_rate, 0)), 0)
+                    FROM audio_streams
+                    WHERE media_file_id = media_files.id
+                  ),
+                  CASE
+                    WHEN EXISTS (
+                      SELECT 1 FROM audio_streams
+                      WHERE media_file_id = media_files.id
+                    )
+                    AND NOT EXISTS (
+                      SELECT 1 FROM video_streams
+                      WHERE media_file_id = media_files.id
+                    )
+                    THEN (
+                      SELECT bit_rate FROM media_formats
+                      WHERE media_file_id = media_files.id
+                      LIMIT 1
+                    )
+                    ELSE NULL
+                  END
+                )
               ),
               primary_video_codec = (
                 SELECT codec FROM video_streams
@@ -544,8 +564,8 @@ def _backfill_media_file_search_fields(connection) -> None:
                 LOWER(TRIM(COALESCE(audiobook_language, ''))) || ' ' ||
                 LOWER(TRIM(COALESCE(audiobook_abridged, '')))
               ),
-              search_fields_version = 3
-            WHERE search_fields_version < 3
+              search_fields_version = 4
+            WHERE search_fields_version < 4
             """
         )
     )

@@ -482,7 +482,7 @@ def calculate_quality_score(
         _numeric_category(
             key="audio_bitrate",
             config=profile.audio_bitrate,
-            actual=selected_audio.bit_rate if selected_audio else None,
+            actual=_audio_bitrate_for_quality(score_input, selected_audio),
             missing_is_zero=True,
         ),
         _numeric_category(
@@ -766,6 +766,14 @@ def _select_audio_stream(
         if matching:
             return max(matching, key=_audio_stream_sort_key)
     return max(streams, key=_audio_stream_sort_key)
+
+
+def _audio_bitrate_for_quality(score_input: QualityScoreInput, selected_audio: QualityAudioStream | None) -> int | None:
+    if selected_audio and selected_audio.bit_rate and selected_audio.bit_rate > 0:
+        return selected_audio.bit_rate
+    if score_input.audio_streams and not score_input.video_streams and score_input.container_bit_rate:
+        return score_input.container_bit_rate
+    return None
 
 
 def _visual_density(score_input: QualityScoreInput, primary_video: QualityVideoStream | None) -> float | None:

@@ -4,11 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.16.2
+
+>2026-07-09
+
+This patch release improves library path maintenance, makes library deletion safer, and fixes metadata handling issues reported by users.
+
+### ✨ Enhancements
+
+- allow changing the folder paths for existing libraries while keeping existing analyzed metadata and history [#167](https://github.com/frederikemmer/MediaLyze/issues/167)
+
+### 🐛 Bug fixes
+
+- require an explicit library-name confirmation before deleting a library and show an in-progress deleting state while MediaLyze removes its database records
+- keep the raw ffprobe JSON copy action working in browsers that do not expose the async Clipboard API on non-local HTTP origins [#168](https://github.com/frederikemmer/MediaLyze/issues/168)
+- derive missing audio-only bitrates from ffprobe format bitrate so FLAC/VBR files feed audio-bitrate sorting, statistics, and quality scoring correctly [#166](https://github.com/frederikemmer/MediaLyze/issues/166) with help from [@inventor7777](https://github.com/inventor7777)
+
 ## v0.16.1
 
 >2026-07-07
 
-This patch release improves deployment defaults, refreshes dependencies for current security advisories, and expands the early hardware-profile catalog with two community-submitted streaming-device profiles.
+This patch release improves deployment defaults, refreshes dependencies for current security advisories, and expands the early hardware-profile catalog with two community-submitted streaming-device profiles. [#168](https://github.com/frederikemmer/MediaLyze/issues/168)
 
 ### ✨ New
 

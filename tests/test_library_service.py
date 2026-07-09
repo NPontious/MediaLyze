@@ -17,6 +17,8 @@ from backend.app.models.entities import (
     LibraryRoot,
     LibraryType,
     MediaFile,
+    MediaFileHistory,
+    MediaFileHistoryCaptureReason,
     MediaFormat,
     ScanMode,
     ScanStatus,
@@ -254,6 +256,206 @@ def test_create_library_with_multiple_independent_paths_persists_library_roots(t
 
     assert [root.path for root in roots] == sorted([str(first_dir), str(second_dir)])
     assert {root.display_name for root in roots} == {"Movies", "Anime"}
+
+
+def test_update_library_settings_can_change_path_and_keep_media_history(tmp_path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON;")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    settings = Settings(
+        runtime_mode="desktop",
+        config_path=tmp_path / "config",
+        media_root=tmp_path / "media-root",
+    )
+    first_dir = tmp_path / "old-movies"
+    second_dir = tmp_path / "new-movies"
+    first_dir.mkdir()
+    second_dir.mkdir()
+
+    with session_factory() as db:
+        library = create_library(
+            db,
+            settings,
+            LibraryCreate(
+                name="Movies",
+                path=str(first_dir),
+                type=LibraryType.movies,
+                scan_mode=ScanMode.manual,
+            ),
+        )
+        root = db.scalar(select(LibraryRoot).where(LibraryRoot.library_id == library.id))
+        assert root is not None
+        media_file = MediaFile(
+            library_id=library.id,
+            library_root_id=root.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=123,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+            quality_score=5,
+        )
+        db.add(media_file)
+        db.flush()
+        db.add(
+            MediaFileHistory(
+                library_id=library.id,
+                media_file_id=media_file.id,
+                relative_path=media_file.relative_path,
+                filename=media_file.filename,
+                capture_reason=MediaFileHistoryCaptureReason.scan_analysis,
+                snapshot_hash="abc",
+                snapshot={"relative_path": media_file.relative_path},
+            )
+        )
+        db.commit()
+
+        updated, quality_profile_changed = update_library_settings(
+            db,
+            settings,
+            library.id,
+            LibraryUpdate(path=str(second_dir), paths=[str(second_dir)]),
+        )
+        db.expire_all()
+        roots = db.scalars(select(LibraryRoot).where(LibraryRoot.library_id == library.id)).all()
+        files = db.scalars(select(MediaFile).where(MediaFile.library_id == library.id)).all()
+        history_entries = db.scalars(
+            select(MediaFileHistory).where(MediaFileHistory.library_id == library.id)
+        ).all()
+
+    assert updated is not None
+    assert updated.path == str(second_dir.resolve())
+    assert [root.path for root in roots] == [str(second_dir.resolve())]
+    assert [media_file.relative_path for media_file in files] == ["movie.mkv"]
+    assert files[0].library_root_id == roots[0].id
+    assert [entry.relative_path for entry in history_entries] == ["movie.mkv"]
+    assert quality_profile_changed is False
+
+
+def test_update_library_settings_replaces_removed_roots_without_deleting_media(tmp_path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON;")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    settings = Settings(
+        runtime_mode="desktop",
+        config_path=tmp_path / "config",
+        media_root=tmp_path / "media-root",
+    )
+    first_dir = tmp_path / "server-a" / "Movies"
+    second_dir = tmp_path / "server-b" / "Anime"
+    replacement_dir = tmp_path / "server-c" / "Documentaries"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir(parents=True)
+    replacement_dir.mkdir(parents=True)
+
+    with session_factory() as db:
+        library = create_library(
+            db,
+            settings,
+            LibraryCreate(
+                name="Combined",
+                path=str(first_dir),
+                paths=[str(first_dir), str(second_dir)],
+                type=LibraryType.movies,
+                scan_mode=ScanMode.manual,
+            ),
+        )
+        roots = db.scalars(
+            select(LibraryRoot).where(LibraryRoot.library_id == library.id).order_by(LibraryRoot.id)
+        ).all()
+        stale_root_id = roots[1].id
+        db.add(
+            MediaFile(
+                library_id=library.id,
+                library_root_id=stale_root_id,
+                relative_path="anime.mkv",
+                filename="anime.mkv",
+                extension="mkv",
+                size_bytes=123,
+                mtime=1.0,
+                scan_status=ScanStatus.ready,
+                quality_score=5,
+            )
+        )
+        db.commit()
+
+        updated, _quality_profile_changed = update_library_settings(
+            db,
+            settings,
+            library.id,
+            LibraryUpdate(paths=[str(replacement_dir)]),
+        )
+        db.expire_all()
+        roots = db.scalars(
+            select(LibraryRoot).where(LibraryRoot.library_id == library.id).order_by(LibraryRoot.id)
+        ).all()
+        files = db.scalars(select(MediaFile).where(MediaFile.library_id == library.id)).all()
+
+    assert updated is not None
+    assert updated.path == str(replacement_dir.resolve())
+    assert updated.scan_config == {}
+    assert [root.path for root in roots] == [str(replacement_dir.resolve())]
+    assert [media_file.relative_path for media_file in files] == ["anime.mkv"]
+    assert files[0].library_root_id is None
+
+
+def test_update_library_path_falls_back_to_scheduled_for_desktop_network_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON;")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    settings = Settings(
+        runtime_mode="desktop",
+        config_path=tmp_path / "config",
+        media_root=tmp_path / "media-root",
+    )
+    first_dir = tmp_path / "local-movies"
+    network_dir = tmp_path / "network-movies"
+    first_dir.mkdir()
+    network_dir.mkdir()
+
+    with session_factory() as db:
+        library = create_library(
+            db,
+            settings,
+            LibraryCreate(
+                name="Network Movies",
+                path=str(first_dir),
+                type=LibraryType.movies,
+                scan_mode=ScanMode.watch,
+                scan_config={"debounce_seconds": 8},
+            ),
+        )
+
+        monkeypatch.setattr(
+            "backend.app.services.library_service.is_watch_supported_for_library",
+            lambda active_settings, path_value: path_value != str(network_dir.resolve()),
+        )
+
+        updated, quality_profile_changed = update_library_settings(
+            db,
+            settings,
+            library.id,
+            LibraryUpdate(path=str(network_dir), paths=[str(network_dir)]),
+        )
+
+    assert updated is not None
+    assert updated.path == str(network_dir.resolve())
+    assert updated.scan_mode == ScanMode.scheduled
+    assert updated.scan_config == {"interval_minutes": 60}
+    assert quality_profile_changed is False
 
 
 def test_create_library_allows_same_root_with_different_selected_paths(tmp_path) -> None:

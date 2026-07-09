@@ -180,6 +180,90 @@ def test_quality_score_omits_inactive_metrics_from_weighted_score() -> None:
     assert categories["music_tags"].actual == ["title", "artist"]
 
 
+def test_quality_score_uses_format_bitrate_for_audio_only_streams_without_stream_bitrate() -> None:
+    probe = ProbeResult(
+        raw={},
+        media_format=NormalizedFormat(container_format="flac", duration=180, bit_rate=900000, probe_score=100),
+        audio_streams=[
+            NormalizedAudioStream(
+                stream_index=0,
+                codec="flac",
+                profile=None,
+                spatial_audio_profile=None,
+                channels=2,
+                channel_layout="stereo",
+                sample_rate=44100,
+                bit_rate=None,
+                language=None,
+                default_flag=True,
+                forced_flag=False,
+            )
+        ],
+    )
+
+    breakdown = calculate_quality_score(
+        build_quality_score_input(probe),
+        quality_profile={
+            "active_metrics": ["audio_bitrate"],
+            "audio_bitrate": {"weight": 10, "minimum": 96000, "ideal": 256000, "maximum": 1024000},
+        },
+    )
+    categories = {category.key: category for category in breakdown.categories}
+
+    assert categories["audio_bitrate"].actual == 900000
+    assert categories["audio_bitrate"].notes == []
+
+
+def test_quality_score_does_not_use_format_bitrate_as_audio_bitrate_for_video_files() -> None:
+    probe = ProbeResult(
+        raw={},
+        media_format=NormalizedFormat(container_format="matroska", duration=180, bit_rate=8000000, probe_score=100),
+        video_streams=[
+            NormalizedVideoStream(
+                stream_index=0,
+                codec="h264",
+                profile=None,
+                width=1920,
+                height=1080,
+                pix_fmt=None,
+                color_space=None,
+                color_transfer=None,
+                color_primaries=None,
+                frame_rate=24.0,
+                bit_rate=None,
+                hdr_type=None,
+            )
+        ],
+        audio_streams=[
+            NormalizedAudioStream(
+                stream_index=1,
+                codec="aac",
+                profile=None,
+                spatial_audio_profile=None,
+                channels=2,
+                channel_layout="stereo",
+                sample_rate=48000,
+                bit_rate=None,
+                language=None,
+                default_flag=True,
+                forced_flag=False,
+            )
+        ],
+    )
+
+    breakdown = calculate_quality_score(
+        build_quality_score_input(probe),
+        quality_profile={
+            "active_metrics": ["audio_bitrate"],
+            "audio_bitrate": {"weight": 10, "minimum": 96000, "ideal": 256000, "maximum": 512000},
+        },
+    )
+    categories = {category.key: category for category in breakdown.categories}
+
+    assert categories["audio_bitrate"].actual is None
+    assert categories["audio_bitrate"].notes == ["missing_value"]
+
+
 def test_quality_score_scores_audiobook_metadata_and_chapters() -> None:
     probe = ProbeResult(
         raw={},
