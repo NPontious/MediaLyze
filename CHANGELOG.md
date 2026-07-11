@@ -13,6 +13,7 @@ This patch release fixes FLAC audio previews in browsers that require an exact m
 ### 🐛 Bug fixes
 
 - keep the server path browser recoverable when changing a library folder whose old path no longer exists [#167](https://github.com/frederikemmer/MediaLyze/issues/167)
+- read stream language tag variants before treating audio or subtitle tracks as undefined [#173](https://github.com/frederikemmer/MediaLyze/issues/173)
 - serve FLAC previews with the `audio/flac` MIME type so Safari can play them correctly [#170](https://github.com/frederikemmer/MediaLyze/issues/170)
 
 ## v0.16.2
