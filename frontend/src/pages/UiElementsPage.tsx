@@ -928,6 +928,40 @@ function PathBrowserFixture() {
   );
 }
 
+function MissingPathBrowserFixture() {
+  const [value, setValue] = useState("MissingMovies");
+  const [selectedPaths, setSelectedPaths] = useState(["MissingMovies"]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const originalBrowse = api.browse;
+    api.browse = async (path = ".") => {
+      if (path === "MissingMovies") {
+        throw new Error("Folder not found");
+      }
+      return mockBrowseResponses[path] ?? mockBrowseResponses["."];
+    };
+    setReady(true);
+    return () => {
+      api.browse = originalBrowse;
+    };
+  }, []);
+
+  if (!ready) {
+    return <div className="notice">Loading path browser...</div>;
+  }
+
+  return (
+    <PathBrowser
+      value={value}
+      selectedPaths={selectedPaths}
+      onChange={setValue}
+      onAddPath={(path) => setSelectedPaths((current) => (current.includes(path) ? current : [...current, path]))}
+      onRemovePath={(path) => setSelectedPaths((current) => current.filter((item) => item !== path))}
+    />
+  );
+}
+
 function ComparisonChartFixture() {
   const [selection, setSelection] = useState<ComparisonSelection>({
     xField: "duration",
@@ -1883,6 +1917,9 @@ export function UiElementsPage() {
               </VariantCard>
               <VariantCard title="Path browser fixture" source={`${settings} > Create library`} classes={["path-browser", "path-entry", "path-browser-selected-item"]}>
                 <PathBrowserFixture />
+              </VariantCard>
+              <VariantCard title="Path browser missing folder recovery" source={`${settings} > Libraries > Change path`} classes={["path-browser", "alert", "path-browser-selected-item"]}>
+                <MissingPathBrowserFixture />
               </VariantCard>
               <VariantCard title="Telemetry controls" source={`${settings} > Telemetry / Release notes`} classes={["telemetry-mode-toggle", "telemetry-mode-card", "telemetry-preview-actions"]}>
                 <div className="stack">

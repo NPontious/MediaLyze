@@ -2119,6 +2119,49 @@ describe("LibrariesPage settings panels", () => {
     );
   });
 
+  it("lets users recover from a missing old library path when changing server folders", async () => {
+    vi.spyOn(api, "libraries").mockResolvedValue([
+      createLibrarySummary({
+        path: "movies",
+        roots: [{ id: 1, path: "movies", display_name: "movies", path_key: "movies" }],
+      }),
+    ]);
+    vi.mocked(api.browse).mockImplementation(async (path = ".") => {
+      if (path === "movies") {
+        throw new Error("Path does not exist");
+      }
+      if (path === "media") {
+        return { current_path: "media", parent_path: ".", entries: [] };
+      }
+      return createBrowseResponse();
+    });
+    const updateSpy = vi.spyOn(api, "updateLibrarySettings").mockResolvedValue(
+      createLibrarySummary({
+        path: "media",
+        roots: [{ id: 1, path: "media", display_name: "media", path_key: "media" }],
+      }),
+    );
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit library Movies" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change path" }));
+
+    expect(await screen.findByText("Path does not exist")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Up" }));
+    fireEvent.click(await screen.findByRole("button", { name: /media/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add current folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save path" }));
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith(1, {
+        path: "media",
+        paths: ["media"],
+      }),
+    );
+  });
+
   it("changes a desktop library path from the folder picker dialog", async () => {
     window.medialyzeDesktop = {
       isDesktop: () => true,
