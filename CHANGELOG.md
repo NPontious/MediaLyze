@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.16.3
+
+>2026-07-11
+
+This patch release fixes FLAC audio previews in browsers that require an exact media MIME type.
+
 ### 🐛 Bug fixes
 
 - serve FLAC previews with the `audio/flac` MIME type so Safari can play them correctly [#170](https://github.com/frederikemmer/MediaLyze/issues/170)
