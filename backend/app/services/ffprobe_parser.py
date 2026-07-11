@@ -101,6 +101,17 @@ def _abridged_value(tags: dict[str, Any]) -> str | None:
     return raw.strip()
 
 
+def _stream_language(tags: dict[str, Any]) -> str | None:
+    language = normalize_language_code(_tag_value(tags, "language", "lang"))
+    if language and language != "und":
+        return language
+
+    ietf_language = normalize_language_code(
+        _tag_value(tags, "language_ietf", "language-ietf", "language ietf", "languageietf")
+    )
+    return ietf_language or language
+
+
 def _tag_text(tags: dict[str, Any] | None) -> dict[str, str]:
     if not isinstance(tags, dict):
         return {}
@@ -618,7 +629,7 @@ def normalize_ffprobe_payload(payload: dict[str, Any]) -> ProbeResult:
                     replay_gain_peak=tags.get("replaygain_track_peak") or tags.get("replay_gain_peak"),
                     writing_library=tags.get("encoder") or tags.get("writing_library"),
                     md5_unencoded=tags.get("md5") or tags.get("MD5") or tags.get("md5_unencoded"),
-                    language=normalize_language_code(tags.get("language")),
+                    language=_stream_language(tags),
                     default_flag=bool(disposition.get("default")),
                     forced_flag=bool(disposition.get("forced")),
                     # Music-specific metadata from tags
@@ -641,7 +652,7 @@ def normalize_ffprobe_payload(payload: dict[str, Any]) -> ProbeResult:
                 NormalizedSubtitleStream(
                     stream_index=int(stream.get("index", 0)),
                     codec=codec_name,
-                    language=normalize_language_code(tags.get("language")),
+                    language=_stream_language(tags),
                     default_flag=bool(disposition.get("default")),
                     forced_flag=bool(disposition.get("forced")),
                     subtitle_type=_subtitle_type(codec_name),

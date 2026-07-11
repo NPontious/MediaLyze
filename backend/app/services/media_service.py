@@ -1161,6 +1161,13 @@ def _safe_media_filename(filename: str, fallback_stem: str) -> str:
     return safe_name or fallback_stem
 
 
+def _media_response_type(file_path: Path) -> str:
+    if file_path.suffix.lower() == ".flac":
+        return "audio/flac"
+    media_type, _encoding = mimetypes.guess_type(file_path.name)
+    return media_type or "application/octet-stream"
+
+
 def get_media_file_source(
     db: Session,
     file_id: int,
@@ -1177,11 +1184,10 @@ def get_media_file_source(
     if not file_path.is_file():
         return None
 
-    media_type, _encoding = mimetypes.guess_type(file_path.name)
     return (
         file_path,
         _safe_media_filename(media_file.filename, f"file-{file_id}{file_path.suffix}"),
-        media_type or "application/octet-stream",
+        _media_response_type(file_path),
     )
 
 

@@ -21,6 +21,7 @@ export function PathBrowser({ value, selectedPaths, onChange, onAddPath, onRemov
   const [currentPath, setCurrentPath] = useState<string>(value || ".");
   const [error, setError] = useState<string | null>(null);
   const currentPathLabel = isRootPath(browser?.current_path) ? null : (browser?.current_path ?? currentPath);
+  const canNavigateUp = Boolean(browser?.parent_path) || Boolean(error && !isRootPath(currentPath));
 
   useEffect(() => {
     setCurrentPath(value || ".");
@@ -39,6 +40,7 @@ export function PathBrowser({ value, selectedPaths, onChange, onAddPath, onRemov
       .catch((reason: Error) => {
         if (!cancelled) {
           setError(reason.message);
+          setBrowser(null);
         }
       });
     return () => {
@@ -79,13 +81,14 @@ export function PathBrowser({ value, selectedPaths, onChange, onAddPath, onRemov
             >
               {t("pathBrowser.addCurrent")}
             </button>
-            {browser?.parent_path ? (
+            {canNavigateUp ? (
               <button
                 type="button"
                 className="secondary small"
                 onClick={() => {
-                  setCurrentPath(browser.parent_path ?? ".");
-                  onChange(browser.parent_path ?? ".");
+                  const nextPath = browser?.parent_path ?? ".";
+                  setCurrentPath(nextPath);
+                  onChange(nextPath);
                 }}
               >
                 {t("pathBrowser.up")}

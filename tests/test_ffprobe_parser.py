@@ -64,6 +64,81 @@ def test_normalize_ffprobe_payload_extracts_streams() -> None:
     assert normalized.subtitle_streams[0].subtitle_type == "text"
 
 
+def test_normalize_ffprobe_payload_reads_stream_language_tag_variants() -> None:
+    payload = {
+        "format": {"format_name": "matroska,webm"},
+        "streams": [
+            {
+                "index": 1,
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "tags": {"LANGUAGE": "ENG"},
+            },
+            {
+                "index": 2,
+                "codec_type": "subtitle",
+                "codec_name": "subrip",
+                "tags": {"Language": "DEU"},
+            },
+        ],
+    }
+
+    normalized = normalize_ffprobe_payload(payload)
+
+    assert normalized.audio_streams[0].language == "en"
+    assert normalized.subtitle_streams[0].language == "de"
+
+
+def test_normalize_ffprobe_payload_prefers_ietf_language_when_language_is_undefined() -> None:
+    payload = {
+        "format": {"format_name": "matroska,webm"},
+        "streams": [
+            {
+                "index": 1,
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "tags": {"language": "und", "language_ietf": "de-DE"},
+            },
+            {
+                "index": 2,
+                "codec_type": "subtitle",
+                "codec_name": "subrip",
+                "tags": {"language": "und", "language-ietf": "en-US"},
+            },
+        ],
+    }
+
+    normalized = normalize_ffprobe_payload(payload)
+
+    assert normalized.audio_streams[0].language == "de"
+    assert normalized.subtitle_streams[0].language == "en"
+
+
+def test_normalize_ffprobe_payload_keeps_missing_stream_languages_undefined() -> None:
+    payload = {
+        "format": {"format_name": "matroska,webm"},
+        "streams": [
+            {
+                "index": 1,
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "tags": {"language": ""},
+            },
+            {
+                "index": 2,
+                "codec_type": "subtitle",
+                "codec_name": "subrip",
+                "tags": {},
+            },
+        ],
+    }
+
+    normalized = normalize_ffprobe_payload(payload)
+
+    assert normalized.audio_streams[0].language is None
+    assert normalized.subtitle_streams[0].language is None
+
+
 def test_normalize_ffprobe_payload_extracts_music_tag_metadata() -> None:
     payload = {
         "format": {"format_name": "mp3"},

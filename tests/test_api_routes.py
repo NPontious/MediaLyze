@@ -430,6 +430,38 @@ def test_file_media_returns_streamable_content_and_download_headers(tmp_path) ->
     assert 'attachment; filename="movie.mp4"' in download_response.headers["content-disposition"]
 
 
+def test_file_media_returns_flac_audio_content_type(tmp_path) -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    source_path = tmp_path / "music" / "song.flac"
+    source_path.parent.mkdir()
+    source_path.write_bytes(b"fLaC-audio-bytes")
+
+    with session_factory() as db:
+        library = Library(name="Music", path=str(tmp_path), type=LibraryType.music, scan_mode=ScanMode.manual, scan_config={})
+        db.add(library)
+        db.flush()
+        media_file = MediaFile(
+            library_id=library.id,
+            relative_path="music/song.flac",
+            filename="song.flac",
+            extension="flac",
+            size_bytes=source_path.stat().st_size,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+        )
+        db.add(media_file)
+        db.commit()
+
+        response = _build_test_app(db).get(f"/api/files/{media_file.id}/media")
+
+    assert response.status_code == 200
+    assert response.content == b"fLaC-audio-bytes"
+    assert response.headers["content-type"].startswith("audio/flac")
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_file_media_returns_404_for_missing_file_source(tmp_path) -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
