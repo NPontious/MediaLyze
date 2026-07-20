@@ -262,15 +262,36 @@ export type JellyfinConnection = {
 };
 
 export type JellyfinSyncStatus = JellyfinConnection & {
+  sync_job_id: number | null;
+  sync_job_status: "queued" | "running" | "completed" | "canceled" | "failed" | null;
+  sync_trigger_source: "manual" | "scheduled" | null;
+  sync_job_active: boolean;
+  sync_job_error: string | null;
+  sync_summary: Record<string, unknown>;
   sync_phase: string | null;
   sync_phase_detail: string | null;
   sync_current: number;
   sync_total: number | null;
+  cancellation_requested?: boolean;
   item_count: number;
   matched_item_count: number;
   unmatched_item_count: number;
   library_count: number;
   user_count: number;
+};
+
+export type JellyfinSyncStart = {
+  job_id: number;
+  status: "queued" | "running";
+  trigger_source: "manual" | "scheduled";
+  accepted: boolean;
+};
+
+export type JellyfinMatchRecomputeStatus = {
+  status: "idle" | "queued" | "running" | "success" | "error";
+  active: boolean;
+  rerun_pending: boolean;
+  last_error: string | null;
 };
 
 export type JellyfinUser = {
@@ -1850,10 +1871,14 @@ export const api = {
       { method: "POST", body: JSON.stringify(payload) },
     ),
   syncJellyfin: () =>
-    request<{ status: string; libraries_synced: number; items_synced: number; users_synced: number }>(
+    request<JellyfinSyncStart>(
       "/jellyfin/sync",
       { method: "POST" },
     ),
+  cancelJellyfinSync: (jobId?: number | null) =>
+    request<{ job_id: number | null; status: string | null; cancellation_requested: boolean }>(`/jellyfin/sync/cancel${jobId ? `?job_id=${jobId}` : ""}`, {
+      method: "POST",
+    }),
   jellyfinSyncStatus: () => request<JellyfinSyncStatus>("/jellyfin/sync/status"),
   jellyfinUsers: () => request<JellyfinUser[]>("/jellyfin/users"),
   updateJellyfinUsers: (enabledUserIds: string[]) =>
@@ -1862,6 +1887,8 @@ export const api = {
       body: JSON.stringify({ enabled_user_ids: enabledUserIds }),
     }),
   jellyfinPathMappings: () => request<JellyfinPathMapping[]>("/jellyfin/path-mappings"),
+  jellyfinMatchRecomputeStatus: () =>
+    request<JellyfinMatchRecomputeStatus>("/jellyfin/matches/recompute/status"),
   createJellyfinPathMapping: (payload: Omit<JellyfinPathMapping, "id">) =>
     request<JellyfinPathMapping>("/jellyfin/path-mappings", {
       method: "POST",

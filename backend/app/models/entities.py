@@ -72,6 +72,11 @@ class ScanTriggerSource(str, Enum):
     watchdog = "watchdog"
 
 
+class JellyfinSyncTriggerSource(str, Enum):
+    manual = "manual"
+    scheduled = "scheduled"
+
+
 class MediaFileHistoryCaptureReason(str, Enum):
     scan_analysis = "scan_analysis"
     quality_recompute = "quality_recompute"
@@ -200,6 +205,36 @@ class JellyfinConnection(TimestampMixin, Base):
     last_sync_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_sync_finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_successful_sync_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class JellyfinSyncJob(Base):
+    __tablename__ = "jellyfin_sync_jobs"
+    __table_args__ = (
+        Index("ix_jellyfin_sync_jobs_status", "status"),
+        Index("ix_jellyfin_sync_jobs_queued_at", "queued_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[JobStatus] = mapped_column(
+        SqlEnum(JobStatus, native_enum=False),
+        default=JobStatus.queued,
+        nullable=False,
+    )
+    trigger_source: Mapped[JellyfinSyncTriggerSource] = mapped_column(
+        SqlEnum(JellyfinSyncTriggerSource, native_enum=False),
+        default=JellyfinSyncTriggerSource.manual,
+        nullable=False,
+    )
+    # SQLite permits multiple NULL values in a UNIQUE column. Keeping the
+    # constant value 1 only while a job is active gives us a database-backed
+    # single-flight lock across request and scheduler threads.
+    active_lock: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
+    cancellation_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    queued_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    sync_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class JellyfinUser(TimestampMixin, Base):

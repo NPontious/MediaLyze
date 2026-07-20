@@ -40,11 +40,13 @@ from backend.app.schemas.jellyfin import (
     JellyfinLibraryOverviewRead,
     JellyfinLibraryRead,
     JellyfinMatchCreate,
+    JellyfinMatchRecomputeStatusRead,
     JellyfinMatchRead,
     JellyfinPathMappingCreate,
     JellyfinPathMappingRead,
     JellyfinPathMappingUpdate,
-    JellyfinSyncRead,
+    JellyfinSyncCancelRead,
+    JellyfinSyncStartRead,
     JellyfinSyncStatusRead,
     JellyfinTestRead,
     JellyfinTestRequest,
@@ -136,9 +138,12 @@ from backend.app.services.jellyfin_catalog import (
     item_size as get_jellyfin_item_size,
 )
 from backend.app.services.jellyfin_images import JELLYFIN_IMAGE_CACHE
-from backend.app.services.jellyfin_matching import map_library_locations, recompute_jellyfin_matches
-from backend.app.services.jellyfin_sync import get_or_create_jellyfin_connection, run_jellyfin_sync
+from backend.app.services.jellyfin_jobs import (
+    get_active_jellyfin_sync_job,
+    get_latest_jellyfin_sync_job,
+)
 from backend.app.services.jellyfin_progress import get_jellyfin_progress
+from backend.app.services.jellyfin_sync import get_or_create_jellyfin_connection
 from backend.app.services.media_search import LibraryFileSearchFilters, SearchValidationError
 from backend.app.services.media_service import (
     generate_media_chapters_csv_export,
@@ -627,21 +632,6 @@ def _jellyfin_item_read(item: JellyfinItem) -> JellyfinItemRead:
     )
 
 
-def _refresh_jellyfin_mapping_state(db: Session) -> None:
-    mappings = list(db.scalars(select(JellyfinPathMapping).where(JellyfinPathMapping.enabled.is_(True))))
-    for library in db.scalars(select(JellyfinLibrary)):
-        library.mapped_locations, library.mapped_status = map_library_locations(
-            list(library.locations or []), mappings
-        )
-        if library.link_method == "manual":
-            if library.linked_library_id is not None:
-                library.mapped_status = "linked"
-        elif library.linked_library_id is not None:
-            library.mapped_status = "linked"
-    db.commit()
-    recompute_jellyfin_matches(db)
-
-
 @router.get("/jellyfin/connection", response_model=JellyfinConnectionRead)
 def jellyfin_connection_get(
     db: Session = Depends(get_db_session),
@@ -695,14 +685,24 @@ def jellyfin_test(
     )
 
 
-@router.post("/jellyfin/sync", response_model=JellyfinSyncRead)
-def jellyfin_sync(db: Session = Depends(get_db_session)) -> JellyfinSyncRead:
+@router.post("/jellyfin/sync", response_model=JellyfinSyncStartRead, status_code=202)
+def jellyfin_sync(
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinSyncStartRead:
     try:
-        return JellyfinSyncRead.model_validate(run_jellyfin_sync(db))
-    except JellyfinError as exc:
+        return JellyfinSyncStartRead.model_validate(runtime.request_jellyfin_sync())
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/jellyfin/sync/cancel", response_model=JellyfinSyncCancelRead)
+def jellyfin_sync_cancel(
+    job_id: int | None = Query(default=None, ge=1),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinSyncCancelRead:
+    return JellyfinSyncCancelRead.model_validate(runtime.cancel_jellyfin_sync(job_id))
 
 
 @router.get("/jellyfin/sync/status", response_model=JellyfinSyncStatusRead)
@@ -712,12 +712,24 @@ def jellyfin_sync_status(
 ) -> JellyfinSyncStatusRead:
     connection = _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime)
     progress = get_jellyfin_progress()
+    job = get_active_jellyfin_sync_job(db) or get_latest_jellyfin_sync_job(db)
+    job_active = bool(job and job.active_lock == 1 and job.status in {JobStatus.queued, JobStatus.running})
     return JellyfinSyncStatusRead(
         **connection.model_dump(),
+        sync_job_id=job.id if job else None,
+        sync_job_status=job.status.value if job else None,
+        sync_trigger_source=job.trigger_source.value if job else None,
+        sync_job_active=job_active,
+        sync_job_error=job.error if job else None,
+        sync_summary=dict(job.sync_summary or {}) if job else {},
         sync_phase=progress["phase"],
         sync_phase_detail=progress["detail"],
         sync_current=int(progress["current"] or 0),
         sync_total=int(progress["total"]) if progress["total"] is not None else None,
+        cancellation_requested=bool(
+            (job.cancellation_requested if job else False)
+            or progress["cancellation_requested"]
+        ),
         item_count=db.scalar(select(func.count(JellyfinItem.id))) or 0,
         matched_item_count=db.scalar(
             select(func.count(JellyfinItem.id)).where(JellyfinItem.match_status == "matched")
@@ -756,16 +768,28 @@ def jellyfin_path_mappings(db: Session = Depends(get_db_session)) -> list[Jellyf
     return list(db.scalars(select(JellyfinPathMapping).order_by(JellyfinPathMapping.id.asc())))
 
 
+def _queue_jellyfin_mapping_refresh(
+    db: Session,
+    runtime: ScanRuntimeManager,
+) -> None:
+    for library in db.scalars(
+        select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id.is_(None))
+    ):
+        library.mapped_status = "updating"
+    db.commit()
+    runtime.request_jellyfin_match_recompute()
+
+
 @router.post("/jellyfin/path-mappings", response_model=JellyfinPathMappingRead, status_code=201)
 def jellyfin_path_mapping_create(
     payload: JellyfinPathMappingCreate,
     db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> JellyfinPathMapping:
     mapping = JellyfinPathMapping(**payload.model_dump())
     db.add(mapping)
-    db.commit()
+    _queue_jellyfin_mapping_refresh(db, runtime)
     db.refresh(mapping)
-    _refresh_jellyfin_mapping_state(db)
     return mapping
 
 
@@ -774,15 +798,15 @@ def jellyfin_path_mapping_update(
     mapping_id: int,
     payload: JellyfinPathMappingUpdate,
     db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> JellyfinPathMapping:
     mapping = db.get(JellyfinPathMapping, mapping_id)
     if mapping is None:
         raise HTTPException(status_code=404, detail="Path mapping not found")
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(mapping, key, value)
-    db.commit()
+    _queue_jellyfin_mapping_refresh(db, runtime)
     db.refresh(mapping)
-    _refresh_jellyfin_mapping_state(db)
     return mapping
 
 
@@ -790,13 +814,25 @@ def jellyfin_path_mapping_update(
 def jellyfin_path_mapping_delete(
     mapping_id: int,
     db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> None:
     mapping = db.get(JellyfinPathMapping, mapping_id)
     if mapping is None:
         raise HTTPException(status_code=404, detail="Path mapping not found")
     db.delete(mapping)
-    db.commit()
-    _refresh_jellyfin_mapping_state(db)
+    _queue_jellyfin_mapping_refresh(db, runtime)
+
+
+@router.get(
+    "/jellyfin/matches/recompute/status",
+    response_model=JellyfinMatchRecomputeStatusRead,
+)
+def jellyfin_match_recompute_status(
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinMatchRecomputeStatusRead:
+    return JellyfinMatchRecomputeStatusRead.model_validate(
+        runtime.get_jellyfin_match_recompute_status()
+    )
 
 
 @router.get("/jellyfin/libraries", response_model=list[JellyfinLibraryRead])
@@ -815,9 +851,9 @@ def jellyfin_library_link_update(
     jellyfin_library_id: int,
     payload: JellyfinLibraryLinkUpdate,
     db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> JellyfinLibraryRead:
     source = _jellyfin_library_or_404(db, jellyfin_library_id)
-    mappings = list(db.scalars(select(JellyfinPathMapping).where(JellyfinPathMapping.enabled.is_(True))))
     if payload.linked_library_id is not None and db.get(Library, payload.linked_library_id) is None:
         raise HTTPException(status_code=404, detail="MediaLyze library not found")
 
@@ -830,20 +866,16 @@ def jellyfin_library_link_update(
         ):
             other.linked_library_id = None
             other.link_method = "manual"
-            other.mapped_locations, other.mapped_status = map_library_locations(
-                list(other.locations or []), mappings
-            )
+            other.mapped_status = "updating"
 
     source.linked_library_id = payload.linked_library_id
     source.link_method = "manual"
     if payload.linked_library_id is not None:
         source.mapped_status = "linked"
     else:
-        source.mapped_locations, source.mapped_status = map_library_locations(
-            list(source.locations or []), mappings
-        )
+        source.mapped_status = "updating"
     db.commit()
-    recompute_jellyfin_matches(db)
+    runtime.request_jellyfin_match_recompute()
     db.refresh(source)
     return get_jellyfin_library_read(db, source)
 

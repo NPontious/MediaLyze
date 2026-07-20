@@ -21,10 +21,22 @@ from backend.app.services.jellyfin_matching import (
     recompute_jellyfin_matches,
 )
 from backend.app.services.jellyfin_progress import (
+    begin_jellyfin_progress,
     clear_jellyfin_progress,
+    jellyfin_cancellation_requested,
+    reset_jellyfin_cancellation,
     update_jellyfin_progress,
 )
 from backend.app.utils.time import utc_now
+
+
+class JellyfinSyncCancelled(JellyfinError):
+    pass
+
+
+def _raise_if_sync_cancelled() -> None:
+    if jellyfin_cancellation_requested():
+        raise JellyfinSyncCancelled("Jellyfin synchronization was canceled")
 
 
 def get_or_create_jellyfin_connection(db: Session) -> JellyfinConnection:
@@ -183,20 +195,31 @@ def _sync_libraries(db: Session, folders: list[dict], now: datetime) -> int:
     return len(seen)
 
 
-def run_jellyfin_sync(db: Session) -> dict[str, int | str]:
+def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, int | str]:
     connection = get_or_create_jellyfin_connection(db)
     if not connection.enabled:
         raise JellyfinError("Jellyfin integration is disabled")
-    client = JellyfinClient(connection.base_url, connection.api_key)
+    if job_id is None:
+        reset_jellyfin_cancellation()
+    begin_jellyfin_progress(job_id)
+    client = JellyfinClient(
+        connection.base_url,
+        connection.api_key,
+        cancellation_check=_raise_if_sync_cancelled,
+    )
     now = utc_now()
     connection.last_status = "running"
     connection.last_error = None
     connection.last_sync_started_at = now
     db.commit()
     update_jellyfin_progress("connecting")
+    library_count = 0
+    seen_items: set[str] = set()
+    seen_users: set[str] = set()
 
     try:
         system_info = client.get_system_info()
+        _raise_if_sync_cancelled()
         connection = get_or_create_jellyfin_connection(db)
         connection.server_name = system_info.get("ServerName")
         connection.server_version = system_info.get("Version")
@@ -206,8 +229,8 @@ def run_jellyfin_sync(db: Session) -> dict[str, int | str]:
         stored_users = {
             user.jellyfin_user_id: user for user in db.scalars(select(JellyfinUser))
         }
-        seen_users: set[str] = set()
         for payload in remote_users:
+            _raise_if_sync_cancelled()
             user_id = str(payload.get("Id") or "").strip()
             if not user_id:
                 continue
@@ -229,21 +252,29 @@ def run_jellyfin_sync(db: Session) -> dict[str, int | str]:
 
         update_jellyfin_progress("libraries")
         folders = client.get_virtual_folders()
+        _raise_if_sync_cancelled()
         library_count = _sync_libraries(db, folders, now)
         enabled_users = [user for user in stored_users.values() if user.enabled_for_sync and user.jellyfin_user_id in seen_users]
         item_sources: list[JellyfinUser | None] = enabled_users or [None]
-        seen_items: set[str] = set()
         for user in item_sources:
+            _raise_if_sync_cancelled()
             detail = user.name if user is not None else None
             update_jellyfin_progress("items", detail=detail)
+
+            def report_item_progress(current: int, total: int | None) -> None:
+                _raise_if_sync_cancelled()
+                update_jellyfin_progress(
+                    "items", detail=detail, current=current, total=total
+                )
+
             payloads = client.get_items(
                 user_id=user.jellyfin_user_id if user is not None else None,
-                progress_callback=lambda current, total, detail=detail: update_jellyfin_progress(
-                    "items", detail=detail, current=current, total=total
-                ),
+                progress_callback=report_item_progress,
             )
+            _raise_if_sync_cancelled()
             update_jellyfin_progress("saving", detail=detail, total=len(payloads))
             for index, payload in enumerate(payloads, start=1):
+                _raise_if_sync_cancelled()
                 item = _upsert_item(db, payload, folders, now)
                 if item is None:
                     continue
@@ -257,15 +288,21 @@ def run_jellyfin_sync(db: Session) -> dict[str, int | str]:
             if user is not None:
                 user.last_synced_at = now
         update_jellyfin_progress("cleanup")
+        _raise_if_sync_cancelled()
         stale_ids = list(
             db.scalars(select(JellyfinItem.id).where(JellyfinItem.jellyfin_item_id.not_in(seen_items)))
         ) if seen_items else list(db.scalars(select(JellyfinItem.id)))
         if stale_ids:
             db.execute(delete(JellyfinItem).where(JellyfinItem.id.in_(stale_ids)))
-        db.commit()
+        _raise_if_sync_cancelled()
 
         update_jellyfin_progress("matching")
-        match_summary = recompute_jellyfin_matches(db)
+        match_summary = recompute_jellyfin_matches(
+            db,
+            cancellation_check=_raise_if_sync_cancelled,
+            commit=False,
+        )
+        _raise_if_sync_cancelled()
         finished_at = utc_now()
         connection = get_or_create_jellyfin_connection(db)
         connection.last_status = "success"
@@ -273,13 +310,27 @@ def run_jellyfin_sync(db: Session) -> dict[str, int | str]:
         connection.last_sync_finished_at = finished_at
         connection.last_successful_sync_at = finished_at
         db.commit()
-        clear_jellyfin_progress()
         return {
             "status": "success",
             "libraries_synced": library_count,
             "items_synced": len(seen_items),
             "users_synced": len(seen_users),
             **match_summary,
+        }
+    except JellyfinSyncCancelled:
+        db.rollback()
+        connection = get_or_create_jellyfin_connection(db)
+        connection.last_status = "canceled"
+        connection.last_error = None
+        connection.last_sync_finished_at = utc_now()
+        db.commit()
+        return {
+            "status": "canceled",
+            "libraries_synced": 0,
+            "items_synced": 0,
+            "users_synced": 0,
+            "matches_created": 0,
+            "unmatched_items": 0,
         }
     except Exception as exc:
         db.rollback()
@@ -288,5 +339,7 @@ def run_jellyfin_sync(db: Session) -> dict[str, int | str]:
         connection.last_error = str(exc)[:2048]
         connection.last_sync_finished_at = utc_now()
         db.commit()
-        clear_jellyfin_progress()
         raise
+    finally:
+        clear_jellyfin_progress()
+        reset_jellyfin_cancellation()

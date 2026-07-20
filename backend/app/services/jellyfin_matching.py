@@ -3,18 +3,31 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
 import re
+from typing import Callable
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models.entities import (
     JellyfinItem,
+    JellyfinLibrary,
     JellyfinMediaMatch,
     JellyfinPathMapping,
     MediaFile,
 )
 
 SUPPORTED_ITEM_TYPES = {"movie", "episode", "audio", "audiobook"}
+
+
+def refresh_jellyfin_mapping_state(db: Session) -> None:
+    mappings = list(db.scalars(select(JellyfinPathMapping).where(JellyfinPathMapping.enabled.is_(True))))
+    for library in db.scalars(select(JellyfinLibrary)):
+        library.mapped_locations, library.mapped_status = map_library_locations(
+            list(library.locations or []), mappings
+        )
+        if library.linked_library_id is not None:
+            library.mapped_status = "linked"
+    db.commit()
 
 
 def normalize_jellyfin_path(value: str) -> str:
@@ -48,11 +61,20 @@ def apply_path_mappings(path: str, mappings: list[JellyfinPathMapping]) -> tuple
     return display_path, False
 
 
-def mapped_path_is_accessible(mapped_path: str, mappings: list[JellyfinPathMapping]) -> bool:
+def mapped_path_is_accessible(
+    mapped_path: str,
+    mappings: list[JellyfinPathMapping],
+    *,
+    accessibility_cache: dict[int, bool] | None = None,
+) -> bool:
     normalized = normalize_jellyfin_path(mapped_path)
     for mapping in mappings:
         target = normalize_jellyfin_path(mapping.medialyze_path_prefix)
         if mapping.enabled and (normalized == target or normalized.startswith(f"{target}/")):
+            if accessibility_cache is not None and mapping.id is not None:
+                if mapping.id not in accessibility_cache:
+                    accessibility_cache[mapping.id] = Path(mapping.medialyze_path_prefix).expanduser().exists()
+                return accessibility_cache[mapping.id]
             return Path(mapping.medialyze_path_prefix).expanduser().exists()
     return Path(mapped_path).expanduser().exists()
 
@@ -62,8 +84,16 @@ def _absolute_media_path(media_file: MediaFile) -> str:
     return normalize_jellyfin_path(str(PurePosixPath(root.replace("\\", "/")) / media_file.relative_path))
 
 
-def recompute_jellyfin_matches(db: Session, *, media_file_ids: set[int] | None = None) -> dict[str, int]:
+def recompute_jellyfin_matches(
+    db: Session,
+    *,
+    media_file_ids: set[int] | None = None,
+    cancellation_check: Callable[[], None] | None = None,
+    commit: bool = True,
+    commit_batch_size: int | None = None,
+) -> dict[str, int]:
     mappings = list(db.scalars(select(JellyfinPathMapping).where(JellyfinPathMapping.enabled.is_(True))))
+    mapping_accessibility: dict[int, bool] = {}
     manual_matches = list(
         db.scalars(select(JellyfinMediaMatch).where(JellyfinMediaMatch.match_method == "manual"))
     )
@@ -77,6 +107,8 @@ def recompute_jellyfin_matches(db: Session, *, media_file_ids: set[int] | None =
     exact_paths: dict[str, list[MediaFile]] = defaultdict(list)
     filenames: dict[str, list[MediaFile]] = defaultdict(list)
     for media_file in media_files:
+        if cancellation_check is not None:
+            cancellation_check()
         if media_file.id in manual_media_file_ids:
             continue
         exact_paths[_absolute_media_path(media_file)].append(media_file)
@@ -106,9 +138,16 @@ def recompute_jellyfin_matches(db: Session, *, media_file_ids: set[int] | None =
             if candidate.id in previously_matched_item_ids or normalize_jellyfin_path(mapped_path) in exact_paths:
                 items.append(candidate)
 
+    if commit and commit_batch_size:
+        db.commit()
+
     created = 0
     unmatched = 0
-    for item in items:
+    for item_index, item in enumerate(items):
+        if commit and commit_batch_size and item_index and item_index % commit_batch_size == 0:
+            db.commit()
+        if cancellation_check is not None:
+            cancellation_check()
         if item.match_status == "ignored":
             continue
         if item.id in manual_item_ids:
@@ -135,7 +174,11 @@ def recompute_jellyfin_matches(db: Session, *, media_file_ids: set[int] | None =
             item.mismatch_reason = "path_unmapped"
             unmatched += 1
             continue
-        if mapping_applied and not mapped_path_is_accessible(mapped_path, mappings):
+        if mapping_applied and not mapped_path_is_accessible(
+            mapped_path,
+            mappings,
+            accessibility_cache=mapping_accessibility,
+        ):
             item.match_status = "unmatched"
             item.mismatch_reason = "path_not_accessible"
             unmatched += 1
@@ -180,7 +223,10 @@ def recompute_jellyfin_matches(db: Session, *, media_file_ids: set[int] | None =
         item.match_status = "ambiguous" if len(suggestions) > 1 else "unmatched"
         unmatched += 1
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return {"matches_created": created, "unmatched_items": unmatched}
 
 

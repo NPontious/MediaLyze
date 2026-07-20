@@ -1,6 +1,12 @@
 from datetime import UTC, datetime
+import os
 from pathlib import Path
+from threading import Lock
+import tempfile
 from types import SimpleNamespace
+
+os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
+os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="medialyze-media-"))
 
 import httpx
 import pytest
@@ -22,8 +28,11 @@ from backend.app.models.entities import (
     JellyfinLibrary,
     JellyfinMediaMatch,
     JellyfinPathMapping,
+    JellyfinSyncJob,
+    JellyfinSyncTriggerSource,
     JellyfinUser,
     JellyfinUserItemData,
+    JobStatus,
     Library,
     LibraryRoot,
     LibraryType,
@@ -34,7 +43,12 @@ from backend.app.models.entities import (
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.jellyfin_client import JellyfinClient, JellyfinConfigurationError
 from backend.app.services.jellyfin_matching import apply_path_mappings, recompute_jellyfin_matches
-from backend.app.services.jellyfin_progress import clear_jellyfin_progress, update_jellyfin_progress
+from backend.app.services.jellyfin_progress import (
+    clear_jellyfin_progress,
+    request_jellyfin_cancellation,
+    reset_jellyfin_cancellation,
+    update_jellyfin_progress,
+)
 from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.media_service import list_library_files
 from backend.app.services.runtime import ScanRuntimeManager
@@ -56,12 +70,48 @@ def db() -> Session:
 class _Runtime:
     def __init__(self) -> None:
         self.scheduler = BackgroundScheduler()
+        self.jellyfin_match_recompute_requests = 0
+        self.jellyfin_sync_job: dict | None = None
 
     def refresh_jellyfin_schedule(self) -> None:
         return None
 
     def sync_library(self, _library_id: int) -> None:
         return None
+
+    def request_jellyfin_match_recompute(self) -> bool:
+        self.jellyfin_match_recompute_requests += 1
+        return True
+
+    def get_jellyfin_match_recompute_status(self) -> dict:
+        return {
+            "status": "queued" if self.jellyfin_match_recompute_requests else "idle",
+            "active": bool(self.jellyfin_match_recompute_requests),
+            "rerun_pending": False,
+            "last_error": None,
+        }
+
+    def request_jellyfin_sync(self) -> dict:
+        accepted = self.jellyfin_sync_job is None
+        if accepted:
+            self.jellyfin_sync_job = {
+                "job_id": 1,
+                "status": "queued",
+                "trigger_source": "manual",
+            }
+        return {**self.jellyfin_sync_job, "accepted": accepted}
+
+    def cancel_jellyfin_sync(self, job_id: int | None = None) -> dict:
+        if self.jellyfin_sync_job is None or (
+            job_id is not None and job_id != self.jellyfin_sync_job["job_id"]
+        ):
+            return {"job_id": None, "status": None, "cancellation_requested": False}
+        request_jellyfin_cancellation()
+        return {
+            "job_id": self.jellyfin_sync_job["job_id"],
+            "status": self.jellyfin_sync_job["status"],
+            "cancellation_requested": True,
+        }
 
 
 def _client(db: Session, settings: Settings | None = None) -> TestClient:
@@ -279,6 +329,38 @@ def test_path_mapping_and_exact_match(db: Session, tmp_path: Path) -> None:
     assert item.match_status == "matched"
 
 
+def test_match_recompute_checks_each_mapping_root_once(
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    _add_media(db, media_root)
+    db.add(JellyfinPathMapping(
+        jellyfin_path_prefix="/jellyfin/media",
+        medialyze_path_prefix=str(media_root),
+        enabled=True,
+    ))
+    db.add_all([
+        JellyfinItem(jellyfin_item_id="jf-cache-1", item_type="Movie", path="/jellyfin/media/One.mkv", title="One"),
+        JellyfinItem(jellyfin_item_id="jf-cache-2", item_type="Movie", path="/jellyfin/media/Two.mkv", title="Two"),
+    ])
+    db.commit()
+    exists_calls = 0
+
+    def tracked_exists(_path: Path) -> bool:
+        nonlocal exists_calls
+        exists_calls += 1
+        return True
+
+    monkeypatch.setattr("backend.app.services.jellyfin_matching.Path.exists", tracked_exists)
+
+    recompute_jellyfin_matches(db)
+
+    assert exists_calls == 1
+
+
 def test_unmapped_and_inaccessible_reasons(db: Session, tmp_path: Path) -> None:
     _add_media(db, tmp_path / "existing")
     unmapped = JellyfinItem(
@@ -364,6 +446,88 @@ def test_zero_interval_removes_scheduled_sync_job(monkeypatch: pytest.MonkeyPatc
     assert runtime.scheduler.get_job("jellyfin-sync") is None
 
 
+def test_runtime_deduplicates_manual_and_scheduled_jellyfin_syncs(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db.add(JellyfinConnection(
+        id=1,
+        base_url="http://jellyfin:8096",
+        api_key="secret",
+        enabled=True,
+    ))
+    db.commit()
+    factory = sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+
+    class FakeExecutor:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def submit(self, function, *args):
+            self.calls.append((function, args))
+            return SimpleNamespace()
+
+    executor = FakeExecutor()
+    runtime = object.__new__(ScanRuntimeManager)
+    runtime.started = True
+    runtime.lock = Lock()
+    runtime.maintenance_executor = executor
+    monkeypatch.setattr("backend.app.services.runtime.SessionLocal", factory)
+
+    manual = runtime.request_jellyfin_sync(JellyfinSyncTriggerSource.manual)
+    scheduled = runtime.request_jellyfin_sync(JellyfinSyncTriggerSource.scheduled)
+
+    assert manual["accepted"] is True
+    assert scheduled == {**manual, "accepted": False}
+    assert len(executor.calls) == 1
+    assert executor.calls[0][1] == (manual["job_id"],)
+    jobs = list(db.scalars(select(JellyfinSyncJob)))
+    assert [(job.id, job.status.value, job.active_lock) for job in jobs] == [
+        (manual["job_id"], "queued", 1)
+    ]
+    monkeypatch.setattr(
+        "backend.app.services.runtime.run_jellyfin_sync",
+        lambda _db, *, job_id: {
+            "status": "success",
+            "items_synced": 12,
+            "libraries_synced": 2,
+            "users_synced": 1,
+            "matches_created": 8,
+            "unmatched_items": 4,
+            "job_id": job_id,
+        },
+    )
+    function, args = executor.calls[0]
+    function(*args)
+    db.expire_all()
+    completed = db.get(JellyfinSyncJob, manual["job_id"])
+    assert completed is not None
+    assert completed.status.value == "completed"
+    assert completed.active_lock is None
+    assert completed.sync_summary["items_synced"] == 12
+
+    queued = runtime.request_jellyfin_sync(JellyfinSyncTriggerSource.scheduled)
+    assert queued["accepted"] is True
+    cancel_result = runtime.cancel_jellyfin_sync(queued["job_id"])
+    assert cancel_result == {
+        "job_id": queued["job_id"],
+        "status": "canceled",
+        "cancellation_requested": True,
+    }
+    queued_function, queued_args = executor.calls[1]
+    queued_function(*queued_args)
+    db.expire_all()
+    canceled = db.get(JellyfinSyncJob, queued["job_id"])
+    assert canceled is not None
+    assert canceled.status.value == "canceled"
+    assert canceled.active_lock is None
+
+
 def test_sync_status_exposes_live_progress(db: Session) -> None:
     client = _client(db)
     update_jellyfin_progress("items", detail="Alice", current=500, total=1200)
@@ -383,6 +547,144 @@ def test_sync_status_exposes_live_progress(db: Session) -> None:
         "sync_current": 500,
         "sync_total": 1200,
     }
+
+
+def test_sync_status_exposes_persisted_active_job(db: Session) -> None:
+    job = JellyfinSyncJob(
+        status=JobStatus.running,
+        trigger_source=JellyfinSyncTriggerSource.scheduled,
+        active_lock=1,
+    )
+    db.add(job)
+    db.commit()
+
+    payload = _client(db).get("/api/jellyfin/sync/status").json()
+
+    assert payload["sync_job_id"] == job.id
+    assert payload["sync_job_status"] == "running"
+    assert payload["sync_trigger_source"] == "scheduled"
+    assert payload["sync_job_active"] is True
+
+
+def test_manual_sync_returns_accepted_job_without_running_inline(db: Session) -> None:
+    client = _client(db)
+
+    first = client.post("/api/jellyfin/sync")
+    second = client.post("/api/jellyfin/sync")
+
+    assert first.status_code == 202
+    assert first.json() == {
+        "job_id": 1,
+        "status": "queued",
+        "trigger_source": "manual",
+        "accepted": True,
+    }
+    assert second.status_code == 202
+    assert second.json() == {**first.json(), "accepted": False}
+
+
+def test_mapping_change_returns_before_background_match_recompute(db: Session) -> None:
+    library = JellyfinLibrary(
+        name="Movies",
+        locations=["/remote/movies"],
+        mapped_status="path_unmapped",
+    )
+    db.add(library)
+    db.commit()
+    client = _client(db)
+
+    response = client.post(
+        "/api/jellyfin/path-mappings",
+        json={
+            "jellyfin_path_prefix": "/remote",
+            "medialyze_path_prefix": "/media",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 201
+    db.refresh(library)
+    assert library.mapped_status == "updating"
+    assert client.app.state.scan_runtime.jellyfin_match_recompute_requests == 1
+    assert client.get("/api/jellyfin/matches/recompute/status").json() == {
+        "status": "queued",
+        "active": True,
+        "rerun_pending": False,
+        "last_error": None,
+    }
+
+
+def test_sync_cancel_endpoint_marks_running_sync_for_cancellation(db: Session) -> None:
+    db.add(JellyfinConnection(id=1, last_status="running"))
+    db.commit()
+    client = _client(db)
+    client.app.state.scan_runtime.jellyfin_sync_job = {
+        "job_id": 1,
+        "status": "queued",
+        "trigger_source": "manual",
+    }
+    try:
+        response = client.post("/api/jellyfin/sync/cancel")
+        status_response = client.get("/api/jellyfin/sync/status")
+    finally:
+        reset_jellyfin_cancellation()
+        clear_jellyfin_progress()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "job_id": 1,
+        "status": "queued",
+        "cancellation_requested": True,
+    }
+    assert status_response.json()["cancellation_requested"] is True
+
+
+def test_canceled_sync_rolls_back_partial_catalog_changes(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db.add_all([
+        JellyfinConnection(
+            id=1,
+            base_url="http://jellyfin:8096",
+            api_key="secret",
+            enabled=True,
+        ),
+        JellyfinItem(
+            jellyfin_item_id="cached-item",
+            item_type="Movie",
+            title="Cached movie",
+        ),
+    ])
+    db.commit()
+
+    class CancelingClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_system_info(self):
+            return {"ServerName": "Test", "Version": "10.11"}
+
+        def get_users(self):
+            return []
+
+        def get_virtual_folders(self):
+            return [{"Name": "Movies", "CollectionType": "movies", "Locations": ["/media"]}]
+
+        def get_items(self, *, user_id=None, progress_callback=None):
+            request_jellyfin_cancellation()
+            if progress_callback is not None:
+                progress_callback(1, 1)
+            return [{"Id": "partial-item", "Type": "Movie", "Name": "Partial"}]
+
+    monkeypatch.setattr("backend.app.services.jellyfin_sync.JellyfinClient", CancelingClient)
+
+    result = run_jellyfin_sync(db)
+
+    assert result["status"] == "canceled"
+    assert db.get(JellyfinConnection, 1).last_status == "canceled"
+    assert db.scalar(select(JellyfinItem).where(JellyfinItem.jellyfin_item_id == "cached-item")) is not None
+    assert db.scalar(select(JellyfinItem).where(JellyfinItem.jellyfin_item_id == "partial-item")) is None
 
 
 def test_sync_persists_separate_user_data(

@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  CircleStop,
   Link2,
   Plus,
   RefreshCw,
@@ -16,6 +17,7 @@ import {
   api,
   type JellyfinConnection,
   type JellyfinLibrary,
+  type JellyfinMatchRecomputeStatus,
   type JellyfinPathMapping,
   type JellyfinSyncStatus,
   type JellyfinUser,
@@ -38,6 +40,13 @@ const EMPTY_CONNECTION: JellyfinConnection = {
   next_scheduled_sync_at: null,
 };
 
+const IDLE_MATCH_RECOMPUTE: JellyfinMatchRecomputeStatus = {
+  status: "idle",
+  active: false,
+  rerun_pending: false,
+  last_error: null,
+};
+
 const SYNC_PHASE_STEP: Record<string, number> = {
   connecting: 0,
   users: 1,
@@ -54,6 +63,14 @@ function normalizedPath(path: string) {
 
 function libraryMappingKey(libraryId: number, location: string) {
   return `${libraryId}:${location}`;
+}
+
+function libraryShowsMappingEditor(library: JellyfinLibrary) {
+  return library.linked_library_id === null && [
+    "path_unmapped",
+    "path_not_accessible",
+    "updating",
+  ].includes(library.mapped_status);
 }
 
 function normalizedSyncInterval(value: string) {
@@ -83,7 +100,7 @@ function JellyfinLibraryMappingEditor({
   location: string;
   mapping?: JellyfinPathMapping;
   disabled: boolean;
-  onSaved: () => Promise<void>;
+  onSaved: (mapping: JellyfinPathMapping) => void;
 }) {
   const { t } = useTranslation();
   const [target, setTarget] = useState(mapping?.medialyze_path_prefix || "");
@@ -112,20 +129,21 @@ function JellyfinLibraryMappingEditor({
       setSaveError(null);
       if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
       try {
+        let savedMapping: JellyfinPathMapping;
         if (mapping) {
-          await api.updateJellyfinPathMapping(mapping.id, {
+          savedMapping = await api.updateJellyfinPathMapping(mapping.id, {
             medialyze_path_prefix: nextTarget,
             enabled: true,
           });
         } else {
-          await api.createJellyfinPathMapping({
+          savedMapping = await api.createJellyfinPathMapping({
             jellyfin_path_prefix: location,
             medialyze_path_prefix: nextTarget,
             enabled: true,
           });
         }
         failedSignatureRef.current = null;
-        await onSaved();
+        onSaved(savedMapping);
         setSaveState("saved");
         feedbackTimerRef.current = window.setTimeout(() => setSaveState("idle"), 2000);
       } catch (reason) {
@@ -157,7 +175,7 @@ function JellyfinLibraryMappingEditor({
           {saveState === "saving" ? <RefreshCw className="is-spinning" aria-hidden="true" /> : null}
           {saveState === "saved" ? <CheckCircle2 aria-hidden="true" /> : null}
           {saveState === "error" ? <AlertTriangle aria-hidden="true" /> : null}
-          {saveState === "saving" ? t("jellyfin.autoSave.saving") : null}
+          {saveState === "saving" ? t("jellyfin.operation.updatingMapping") : null}
           {saveState === "saved" ? t("jellyfin.autoSave.saved") : null}
           {saveState === "error" ? saveError || t("jellyfin.autoSaveFailed") : null}
         </span>
@@ -183,6 +201,7 @@ export function JellyfinSettingsPanel({
   const [users, setUsers] = useState<JellyfinUser[]>([]);
   const [mappings, setMappings] = useState<JellyfinPathMapping[]>([]);
   const [libraries, setLibraries] = useState<JellyfinLibrary[]>([]);
+  const [matchRecompute, setMatchRecompute] = useState<JellyfinMatchRecomputeStatus>(IDLE_MATCH_RECOMPUTE);
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [syncInterval, setSyncInterval] = useState("60");
@@ -194,10 +213,17 @@ export function JellyfinSettingsPanel({
   const [connectionSaveState, setConnectionSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [connectionSaveError, setConnectionSaveError] = useState<string | null>(null);
   const [apiKeyFocused, setApiKeyFocused] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [connectionActionError, setConnectionActionError] = useState<string | null>(null);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [mappingError, setMappingError] = useState<string | null>(null);
+  const [libraryErrors, setLibraryErrors] = useState<Record<number, string | null>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+  const [cancelPending, setCancelPending] = useState(false);
   const saveFeedbackTimerRef = useRef<number | null>(null);
   const failedAutoSaveSignatureRef = useRef<string | null>(null);
+  const activeSyncJobIdRef = useRef<number | null>(null);
   const onLibrariesChangedRef = useRef(onLibrariesChanged);
   onLibrariesChangedRef.current = onLibrariesChanged;
 
@@ -211,6 +237,7 @@ export function JellyfinSettingsPanel({
     ]);
     setConnection(nextConnection);
     setStatus(nextStatus);
+    activeSyncJobIdRef.current = nextStatus.sync_job_active ? nextStatus.sync_job_id : null;
     setUsers(nextUsers);
     setMappings(nextMappings);
     setLibraries(nextLibraries);
@@ -219,17 +246,89 @@ export function JellyfinSettingsPanel({
   }, []);
 
   const reloadAfterLibraryChange = useCallback(async () => {
-    await load();
+    const [nextMappings, nextLibraries] = await Promise.all([
+      api.jellyfinPathMappings(),
+      api.jellyfinLibraries(),
+    ]);
+    setMappings(nextMappings);
+    setLibraries(nextLibraries);
     onLibrariesChangedRef.current?.();
-  }, [load]);
+  }, []);
+
+  const markMatchRecomputeQueued = useCallback(() => {
+    setMatchRecompute({
+      status: "queued",
+      active: true,
+      rerun_pending: false,
+      last_error: null,
+    });
+    setLibraries((current) => current.map((library) => (
+      library.linked_library_id === null
+        ? { ...library, mapped_status: "updating" }
+        : library
+    )));
+  }, []);
+
+  const applySavedMapping = useCallback((savedMapping: JellyfinPathMapping) => {
+    setMappings((current) => {
+      const exists = current.some((mapping) => mapping.id === savedMapping.id);
+      return exists
+        ? current.map((mapping) => mapping.id === savedMapping.id ? savedMapping : mapping)
+        : [...current, savedMapping];
+    });
+    markMatchRecomputeQueued();
+  }, [markMatchRecomputeQueued]);
 
   useEffect(() => {
     setLoading(true);
     load()
-      .then(() => setError(null))
-      .catch((reason: Error) => setError(reason.message))
+      .then(() => setLoadError(null))
+      .catch((reason: Error) => setLoadError(reason.message))
       .finally(() => setLoading(false));
   }, [load]);
+
+  useEffect(() => {
+    let active = true;
+    api.jellyfinMatchRecomputeStatus()
+      .then((nextStatus) => {
+        if (active) setMatchRecompute(nextStatus);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!matchRecompute.active) return;
+    let active = true;
+    let completionHandled = false;
+    const refreshMatchStatus = async () => {
+      try {
+        const nextStatus = await api.jellyfinMatchRecomputeStatus();
+        if (!active) return;
+        setMatchRecompute(nextStatus);
+        if (!nextStatus.active && !completionHandled) {
+          completionHandled = true;
+          await reloadAfterLibraryChange();
+        }
+      } catch (reason) {
+        if (!active) return;
+        setMatchRecompute({
+          status: "error",
+          active: false,
+          rerun_pending: false,
+          last_error: (reason as Error).message,
+        });
+      }
+    };
+    void refreshMatchStatus();
+    const timer = window.setInterval(() => void refreshMatchStatus(), 750);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [matchRecompute.active, reloadAfterLibraryChange]);
 
   useEffect(() => {
     if (!highlightedLibraryId || loading) return;
@@ -238,7 +337,11 @@ export function JellyfinSettingsPanel({
     element?.scrollIntoView({ behavior: "auto", block: "center" });
   }, [highlightedLibraryId, loading, libraries]);
 
-  const syncRunning = pending === "sync" || connection.last_status === "running";
+  const syncRunning = pending === "sync" || Boolean(status?.sync_job_active) || connection.last_status === "running";
+  const syncDisplayStatus = syncRunning ? "running" : connection.last_status;
+  const connectionBusy = pending === "test" || pending === "sync";
+  const usersBusy = pending?.startsWith("user-") ?? false;
+  const mappingBusy = pending === "mapping-new" || (pending?.startsWith("mapping-") ?? false);
   const parsedSyncInterval = normalizedSyncInterval(syncInterval);
   const autoSaveSignature = JSON.stringify([baseUrl.trim(), apiKey.trim(), parsedSyncInterval]);
   const connectionDirty = (
@@ -307,8 +410,26 @@ export function JellyfinSettingsPanel({
         if (!active) return;
         setStatus(nextStatus);
         setConnection(nextStatus);
+        const trackedJobId = activeSyncJobIdRef.current;
+        if (
+          trackedJobId !== null
+          && nextStatus.sync_job_id === trackedJobId
+          && !nextStatus.sync_job_active
+        ) {
+          activeSyncJobIdRef.current = null;
+          if (nextStatus.sync_job_status === "completed") {
+            const items = Number(nextStatus.sync_summary.items_synced || 0);
+            const libraries = Number(nextStatus.sync_summary.libraries_synced || 0);
+            setNotice(t("jellyfin.syncSucceeded", { items, libraries }));
+            await reloadAfterLibraryChange();
+          } else if (nextStatus.sync_job_status === "canceled") {
+            setCancelNotice(t("jellyfin.syncCanceled"));
+          } else if (nextStatus.sync_job_status === "failed") {
+            setConnectionActionError(nextStatus.sync_job_error || nextStatus.last_error || t("jellyfin.testFailed"));
+          }
+        }
       } catch {
-        // The owning sync request reports actionable errors when it completes.
+        // Keep the last known state; the next polling attempt may recover.
       }
     };
     void refreshStatus();
@@ -317,11 +438,11 @@ export function JellyfinSettingsPanel({
       active = false;
       window.clearInterval(timer);
     };
-  }, [syncRunning]);
+  }, [reloadAfterLibraryChange, syncRunning, t]);
 
   async function testConnection() {
     setPending("test");
-    setError(null);
+    setConnectionActionError(null);
     setNotice(null);
     try {
       const result = await api.testJellyfinConnection({
@@ -329,12 +450,12 @@ export function JellyfinSettingsPanel({
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       });
       if (!result.ok) {
-        setError(result.error || t("jellyfin.testFailed"));
+        setConnectionActionError(result.error || t("jellyfin.testFailed"));
       } else {
         setNotice(t("jellyfin.testSucceeded", { name: result.server_name || "Jellyfin", version: result.server_version || "" }));
       }
     } catch (reason) {
-      setError((reason as Error).message);
+      setConnectionActionError((reason as Error).message);
     } finally {
       setPending(null);
     }
@@ -342,17 +463,41 @@ export function JellyfinSettingsPanel({
 
   async function syncNow() {
     setPending("sync");
-    setConnection((current) => ({ ...current, last_status: "running", last_error: null }));
-    setError(null);
+    setConnectionActionError(null);
     setNotice(null);
+    setCancelNotice(null);
     try {
       const result = await api.syncJellyfin();
-      setNotice(t("jellyfin.syncSucceeded", { items: result.items_synced, libraries: result.libraries_synced }));
-      await reloadAfterLibraryChange();
+      activeSyncJobIdRef.current = result.job_id;
+      setStatus((current) => current ? {
+        ...current,
+        sync_job_id: result.job_id,
+        sync_job_status: result.status,
+        sync_trigger_source: result.trigger_source,
+        sync_job_active: true,
+        sync_job_error: null,
+        sync_summary: {},
+      } : current);
     } catch (reason) {
-      setError((reason as Error).message);
+      setConnectionActionError((reason as Error).message);
     } finally {
       setPending(null);
+    }
+  }
+
+  async function cancelSync() {
+    setCancelPending(true);
+    setConnectionActionError(null);
+    try {
+      const result = await api.cancelJellyfinSync(status?.sync_job_id);
+      if (result.cancellation_requested) {
+        setCancelNotice(t("jellyfin.cancelRequested"));
+        setStatus((current) => current ? { ...current, cancellation_requested: true } : current);
+      }
+    } catch (reason) {
+      setConnectionActionError((reason as Error).message);
+    } finally {
+      setCancelPending(false);
     }
   }
 
@@ -362,17 +507,18 @@ export function JellyfinSettingsPanel({
     ? Math.min(100, Math.round((status.sync_current / status.sync_total) * 100))
     : null;
   const syncSteps = ["connection", "catalog", "items", "matching"];
+  const cancellationRequested = cancelPending || Boolean(status?.cancellation_requested);
 
   async function toggleUser(userId: string) {
     const enabledIds = users
       .filter((user) => user.enabled_for_sync !== (user.jellyfin_user_id === userId))
       .map((user) => user.jellyfin_user_id);
     setPending(`user-${userId}`);
+    setUsersError(null);
     try {
       setUsers(await api.updateJellyfinUsers(enabledIds));
-      setError(null);
     } catch (reason) {
-      setError((reason as Error).message);
+      setUsersError((reason as Error).message);
     } finally {
       setPending(null);
     }
@@ -381,31 +527,53 @@ export function JellyfinSettingsPanel({
   async function addMapping() {
     if (!mappingSource.trim() || !mappingTarget.trim()) return;
     setPending("mapping-new");
+    setMappingError(null);
     try {
-      await api.createJellyfinPathMapping({
+      const savedMapping = await api.createJellyfinPathMapping({
         jellyfin_path_prefix: mappingSource.trim(),
         medialyze_path_prefix: mappingTarget.trim(),
         enabled: true,
       });
+      applySavedMapping(savedMapping);
       setMappingSource("");
       setMappingTarget("");
-      await reloadAfterLibraryChange();
-      setError(null);
     } catch (reason) {
-      setError((reason as Error).message);
+      setMappingError((reason as Error).message);
     } finally {
       setPending(null);
     }
   }
 
   async function deleteMapping(id: number) {
+    const previousMappings = mappings;
     setPending(`mapping-${id}`);
+    setMappingError(null);
+    setMappings((current) => current.filter((mapping) => mapping.id !== id));
     try {
       await api.deleteJellyfinPathMapping(id);
-      await reloadAfterLibraryChange();
-      setError(null);
+      markMatchRecomputeQueued();
     } catch (reason) {
-      setError((reason as Error).message);
+      setMappings(previousMappings);
+      setMappingError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function toggleMapping(mapping: JellyfinPathMapping) {
+    const previousMappings = mappings;
+    const nextEnabled = !mapping.enabled;
+    setPending(`mapping-${mapping.id}`);
+    setMappingError(null);
+    setMappings((current) => current.map((candidate) => (
+      candidate.id === mapping.id ? { ...candidate, enabled: nextEnabled } : candidate
+    )));
+    try {
+      const updated = await api.updateJellyfinPathMapping(mapping.id, { enabled: nextEnabled });
+      applySavedMapping(updated);
+    } catch (reason) {
+      setMappings(previousMappings);
+      setMappingError((reason as Error).message);
     } finally {
       setPending(null);
     }
@@ -413,34 +581,61 @@ export function JellyfinSettingsPanel({
 
   async function addLibrary(id: number) {
     setPending(`library-${id}`);
+    setLibraryErrors((current) => ({ ...current, [id]: null }));
     try {
       await api.createLibraryFromJellyfin(id);
       await reloadAfterLibraryChange();
       onLibraryCreated?.();
-      setError(null);
       setNotice(t("jellyfin.libraryCreated"));
     } catch (reason) {
-      setError((reason as Error).message);
+      setLibraryErrors((current) => ({ ...current, [id]: (reason as Error).message }));
     } finally {
       setPending(null);
     }
   }
 
   async function updateLibraryLink(jellyfinLibraryId: number, linkedLibraryId: number | null) {
+    const previousLibraries = libraries;
+    const linkedLibraryName = medialyzeLibraries.find((library) => library.id === linkedLibraryId)?.name ?? null;
     setPending(`library-link-${jellyfinLibraryId}`);
+    setLibraryErrors((current) => ({ ...current, [jellyfinLibraryId]: null }));
+    setLibraries((current) => current.map((library) => {
+      if (library.id === jellyfinLibraryId) {
+        return {
+          ...library,
+          linked_library_id: linkedLibraryId,
+          linked_library_name: linkedLibraryName,
+          link_method: "manual",
+          mapped_status: linkedLibraryId === null ? "updating" : "linked",
+          data_scope: linkedLibraryId === null ? "jellyfin_only" : "linked",
+        };
+      }
+      if (linkedLibraryId !== null && library.linked_library_id === linkedLibraryId) {
+        return {
+          ...library,
+          linked_library_id: null,
+          linked_library_name: null,
+          link_method: "manual",
+          mapped_status: "updating",
+          data_scope: "jellyfin_only",
+        };
+      }
+      return library;
+    }));
     try {
-      await api.updateJellyfinLibraryLink(jellyfinLibraryId, linkedLibraryId);
-      await reloadAfterLibraryChange();
-      setError(null);
+      const updated = await api.updateJellyfinLibraryLink(jellyfinLibraryId, linkedLibraryId);
+      setLibraries((current) => current.map((library) => library.id === updated.id ? updated : library));
+      markMatchRecomputeQueued();
     } catch (reason) {
-      setError((reason as Error).message);
+      setLibraries(previousLibraries);
+      setLibraryErrors((current) => ({ ...current, [jellyfinLibraryId]: (reason as Error).message }));
     } finally {
       setPending(null);
     }
   }
 
   return (
-    <AsyncPanel title={t("jellyfin.title")} loading={loading} error={error}>
+    <AsyncPanel title={t("jellyfin.title")} loading={loading} error={loadError}>
       <div className="jellyfin-settings">
         <section className="jellyfin-settings-section" aria-labelledby="jellyfin-connection-heading">
           <div className="jellyfin-section-heading">
@@ -479,27 +674,35 @@ export function JellyfinSettingsPanel({
             </div>
           </div>
           <div className="jellyfin-actions">
-            <button className="secondary small" type="button" disabled={pending !== null || syncRunning || autoSaving} onClick={() => void testConnection()}>
-              <Link2 aria-hidden="true" /> {t("jellyfin.testConnection")}
+            <button className="secondary small" type="button" disabled={connectionBusy || syncRunning || autoSaving} onClick={() => void testConnection()}>
+              {pending === "test" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <Link2 aria-hidden="true" />} {t("jellyfin.testConnection")}
             </button>
-            <button className="secondary small" type="button" disabled={pending !== null || syncRunning || autoSaving || connectionDirty || !connection.enabled} onClick={() => void syncNow()}>
+            <button className="secondary small" type="button" disabled={connectionBusy || syncRunning || autoSaving || connectionDirty || !connection.enabled} onClick={() => void syncNow()}>
               <RefreshCw aria-hidden="true" className={pending === "sync" ? "is-spinning" : ""} /> {t("jellyfin.syncNow")}
             </button>
+            {syncRunning ? (
+              <button className="secondary small" type="button" disabled={cancellationRequested} onClick={() => void cancelSync()}>
+                <CircleStop aria-hidden="true" /> {cancellationRequested ? t("jellyfin.cancelingSync") : t("jellyfin.cancelSync")}
+              </button>
+            ) : null}
             {connectionSaveState !== "idle" ? (
               <span className={`jellyfin-auto-save-status status-${connectionSaveState}`} role="status" aria-live="polite">
                 {connectionSaveState === "saving" ? <RefreshCw className="is-spinning" aria-hidden="true" /> : connectionSaveState === "error" ? <AlertTriangle aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
                 {connectionSaveState === "error" ? connectionSaveError || t("jellyfin.autoSaveFailed") : t(`jellyfin.autoSave.${connectionSaveState}`)}
               </span>
             ) : null}
+            {pending === "test" ? <span className="jellyfin-operation-status" role="status"><RefreshCw aria-hidden="true" className="is-spinning" />{t("jellyfin.operation.testingConnection")}</span> : null}
           </div>
+          {connectionActionError ? <div className="alert jellyfin-inline-error" role="alert">{connectionActionError}</div> : null}
           {notice ? <div className="notice success">{notice}</div> : null}
+          {cancelNotice ? <div className="notice" role="status">{cancelNotice}</div> : null}
           {syncRunning ? (
-            <div className="jellyfin-sync-progress" role="status" aria-live="polite">
+            <div className={`jellyfin-sync-progress${cancellationRequested ? " is-canceling" : ""}`} role="status" aria-live="polite">
               <div className="jellyfin-sync-progress-heading">
                 <RefreshCw aria-hidden="true" className="is-spinning" />
                 <div>
-                  <strong>{t(`jellyfin.syncPhase.${syncPhase}`)}</strong>
-                  {status?.sync_phase_detail ? <span>{status.sync_phase_detail}</span> : null}
+                  <strong>{cancellationRequested ? t("jellyfin.cancelingSync") : t(`jellyfin.syncPhase.${syncPhase}`)}</strong>
+                  {cancellationRequested ? <span>{t("jellyfin.cancelingSyncDetail")}</span> : status?.sync_phase_detail ? <span>{status.sync_phase_detail}</span> : null}
                 </div>
                 {syncPercent !== null ? <b>{syncPercent}%</b> : null}
               </div>
@@ -528,10 +731,10 @@ export function JellyfinSettingsPanel({
               </ol>
             </div>
           ) : null}
-          <div className={`jellyfin-sync-summary status-${connection.last_status}`}>
-            {connection.last_status === "error" ? <AlertTriangle aria-hidden="true" /> : connection.last_status === "running" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <CheckCircle2 aria-hidden="true" />}
+          <div className={`jellyfin-sync-summary status-${syncDisplayStatus}`}>
+            {syncDisplayStatus === "error" ? <AlertTriangle aria-hidden="true" /> : syncDisplayStatus === "running" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : syncDisplayStatus === "canceled" ? <CircleStop aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
             <div>
-              <strong>{t(`jellyfin.status.${connection.last_status}`)}</strong>
+              <strong>{t(`jellyfin.status.${syncDisplayStatus}`)}</strong>
               <span>{connection.last_successful_sync_at ? t("jellyfin.lastSync", { date: formatDate(connection.last_successful_sync_at) }) : t("jellyfin.notSynced")}</span>
               {connection.next_scheduled_sync_at ? <span>{t("jellyfin.nextSync", { date: formatDate(connection.next_scheduled_sync_at) })}</span> : null}
               {status ? <span>{t("jellyfin.matchSummary", { matched: status.matched_item_count, total: status.item_count })}</span> : null}
@@ -552,6 +755,8 @@ export function JellyfinSettingsPanel({
               ))}
             </div>
           )}
+          {usersError ? <div className="alert jellyfin-inline-error" role="alert">{usersError}</div> : null}
+          {usersBusy ? <div className="jellyfin-operation-status" role="status"><RefreshCw aria-hidden="true" className="is-spinning" />{t("jellyfin.operation.savingUsers")}</div> : null}
         </section>
 
         <section className="jellyfin-settings-section">
@@ -560,7 +765,7 @@ export function JellyfinSettingsPanel({
             <input value={mappingSource} placeholder={t("jellyfin.jellyfinPathPlaceholder")} aria-label={t("jellyfin.jellyfinPath")} onChange={(event) => setMappingSource(event.target.value)} />
             <span aria-hidden="true">→</span>
             <input value={mappingTarget} placeholder={t("jellyfin.medialyzePathPlaceholder")} aria-label={t("jellyfin.medialyzePath")} onChange={(event) => setMappingTarget(event.target.value)} />
-            <button type="button" className="secondary icon-only-button" title={t("jellyfin.addMapping")} aria-label={t("jellyfin.addMapping")} disabled={pending !== null || !mappingSource.trim() || !mappingTarget.trim()} onClick={() => void addMapping()}><Plus aria-hidden="true" /></button>
+            <button type="button" className="secondary icon-only-button" title={t("jellyfin.addMapping")} aria-label={t("jellyfin.addMapping")} disabled={mappingBusy || syncRunning || !mappingSource.trim() || !mappingTarget.trim()} onClick={() => void addMapping()}>{pending === "mapping-new" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <Plus aria-hidden="true" />}</button>
           </div>
           <div className="jellyfin-mapping-list">
             {mappings.map((mapping) => (
@@ -568,20 +773,19 @@ export function JellyfinSettingsPanel({
                 <input
                   type="checkbox"
                   checked={mapping.enabled}
+                  disabled={mappingBusy || syncRunning}
                   aria-label={t("jellyfin.mappingEnabled")}
-                  onChange={() => {
-                    setPending(`mapping-${mapping.id}`);
-                    void api.updateJellyfinPathMapping(mapping.id, { enabled: !mapping.enabled })
-                      .then(() => reloadAfterLibraryChange())
-                      .catch((reason: Error) => setError(reason.message))
-                      .finally(() => setPending(null));
-                  }}
+                  onChange={() => void toggleMapping(mapping)}
                 />
                 <code>{mapping.jellyfin_path_prefix}</code><span aria-hidden="true">→</span><code>{mapping.medialyze_path_prefix}</code>
-                <button type="button" className="secondary icon-only-button" title={t("common.delete")} aria-label={t("common.delete")} disabled={pending === `mapping-${mapping.id}`} onClick={() => void deleteMapping(mapping.id)}><Trash2 aria-hidden="true" /></button>
+                <button type="button" className="secondary icon-only-button" title={t("common.delete")} aria-label={t("common.delete")} disabled={mappingBusy || syncRunning} onClick={() => void deleteMapping(mapping.id)}>{pending === `mapping-${mapping.id}` ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <Trash2 aria-hidden="true" />}</button>
               </div>
             ))}
           </div>
+          {mappingBusy ? <div className="jellyfin-operation-status" role="status"><RefreshCw aria-hidden="true" className="is-spinning" />{t("jellyfin.operation.updatingMapping")}</div> : null}
+          {matchRecompute.active ? <div className="jellyfin-operation-status jellyfin-operation-status-prominent" role="status"><RefreshCw aria-hidden="true" className="is-spinning" /><span><strong>{t("jellyfin.backgroundUpdate.title")}</strong>{t("jellyfin.backgroundUpdate.detail")}</span></div> : null}
+          {!matchRecompute.active && matchRecompute.status === "error" ? <div className="alert jellyfin-inline-error" role="alert">{t("jellyfin.backgroundUpdate.error", { message: matchRecompute.last_error || t("fileTable.na") })}</div> : null}
+          {mappingError ? <div className="alert jellyfin-inline-error" role="alert">{mappingError}</div> : null}
         </section>
 
         <section className="jellyfin-settings-section">
@@ -592,14 +796,14 @@ export function JellyfinSettingsPanel({
                 <article
                   id={`jellyfin-library-${library.id}`}
                   tabIndex={-1}
-                  className={`jellyfin-library-card${library.mapped_status === "path_unmapped" || library.mapped_status === "path_not_accessible" ? " is-mappable" : ""}${highlightedLibraryId === String(library.id) ? " is-highlighted" : ""}`}
+                  className={`jellyfin-library-card${libraryShowsMappingEditor(library) ? " is-mappable" : ""}${highlightedLibraryId === String(library.id) ? " is-highlighted" : ""}`}
                   key={library.id}
                 >
                   <div className="jellyfin-library-card-head">
                     <div><strong>{library.name}</strong><span>{library.collection_type || t("fileTable.na")}</span></div>
                     <span className={`jellyfin-status-badge status-${library.mapped_status}`}>{t(`jellyfin.libraryStatus.${library.mapped_status}`)}</span>
                   </div>
-                  {library.mapped_status === "path_unmapped" || library.mapped_status === "path_not_accessible" ? (
+                  {libraryShowsMappingEditor(library) ? (
                     <div className="jellyfin-library-mapping-list">
                       {library.locations.map((location) => {
                         const exactMapping = mappings.find(
@@ -611,8 +815,8 @@ export function JellyfinSettingsPanel({
                             library={library}
                             location={location}
                             mapping={exactMapping}
-                            disabled={pending !== null || syncRunning}
-                            onSaved={reloadAfterLibraryChange}
+                            disabled={mappingBusy || syncRunning}
+                            onSaved={applySavedMapping}
                           />
                         );
                       })}
@@ -628,7 +832,7 @@ export function JellyfinSettingsPanel({
                     <select
                       id={`jellyfin-library-link-${library.id}`}
                       value={library.linked_library_id ?? ""}
-                      disabled={pending !== null || syncRunning}
+                      disabled={pending === `library-link-${library.id}` || pending === `library-${library.id}` || syncRunning}
                       onChange={(event) => void updateLibraryLink(library.id, event.target.value ? Number(event.target.value) : null)}
                     >
                       <option value="">{t("jellyfin.noAssociatedLibrary")}</option>
@@ -642,11 +846,13 @@ export function JellyfinSettingsPanel({
                         type="button"
                         className="secondary small"
                         title={!library.can_create_medialyze_library ? t("jellyfin.addAsLibraryUnavailable") : undefined}
-                        disabled={pending !== null || !library.can_create_medialyze_library}
+                        disabled={pending === `library-link-${library.id}` || pending === `library-${library.id}` || !library.can_create_medialyze_library}
                         onClick={() => void addLibrary(library.id)}
                       ><Plus aria-hidden="true" />{t("jellyfin.addAsLibrary")}</button>
                     ) : null}
                   </div>
+                  {pending === `library-link-${library.id}` || pending === `library-${library.id}` ? <div className="jellyfin-operation-status" role="status"><RefreshCw aria-hidden="true" className="is-spinning" />{t("jellyfin.operation.updatingLibrary")}</div> : null}
+                  {libraryErrors[library.id] ? <div className="alert jellyfin-inline-error" role="alert">{libraryErrors[library.id]}</div> : null}
                 </article>
               ))}
             </div>

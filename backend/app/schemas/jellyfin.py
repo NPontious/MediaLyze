@@ -165,10 +165,17 @@ class JellyfinLibraryItemPageRead(BaseModel):
 
 
 class JellyfinSyncStatusRead(JellyfinConnectionRead):
+    sync_job_id: int | None = None
+    sync_job_status: str | None = None
+    sync_trigger_source: str | None = None
+    sync_job_active: bool = False
+    sync_job_error: str | None = None
+    sync_summary: dict = Field(default_factory=dict)
     sync_phase: str | None = None
     sync_phase_detail: str | None = None
     sync_current: int = 0
     sync_total: int | None = None
+    cancellation_requested: bool = False
     item_count: int = 0
     matched_item_count: int = 0
     unmatched_item_count: int = 0
@@ -245,10 +252,21 @@ class JellyfinUnmatchedRead(BaseModel):
     suggested_media_file_name: str | None = None
 
 
-class JellyfinSyncRead(BaseModel):
+class JellyfinSyncStartRead(BaseModel):
+    job_id: int
     status: str
-    libraries_synced: int = 0
-    items_synced: int = 0
-    users_synced: int = 0
-    matches_created: int = 0
-    unmatched_items: int = 0
+    trigger_source: str
+    accepted: bool
+
+
+class JellyfinSyncCancelRead(BaseModel):
+    job_id: int | None = None
+    status: str | None = None
+    cancellation_requested: bool
+
+
+class JellyfinMatchRecomputeStatusRead(BaseModel):
+    status: str = "idle"
+    active: bool = False
+    rerun_pending: bool = False
+    last_error: str | None = None

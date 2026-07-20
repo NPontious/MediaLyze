@@ -30,12 +30,20 @@ class JellyfinClient:
     ITEM_PAGE_SIZE = 500
     REQUEST_ATTEMPTS = 3
 
-    def __init__(self, base_url: str, api_key: str, *, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        timeout_seconds: float = 30.0,
+        cancellation_check: Callable[[], None] | None = None,
+    ) -> None:
         self.base_url = self._validate_base_url(base_url)
         self.api_key = api_key.strip()
         if not self.api_key:
             raise JellyfinConfigurationError("A Jellyfin API key is required")
         self.timeout_seconds = timeout_seconds
+        self.cancellation_check = cancellation_check
 
     @staticmethod
     def _validate_base_url(value: str) -> str:
@@ -47,6 +55,8 @@ class JellyfinClient:
 
     def _request(self, path: str, *, params: dict | None = None) -> httpx.Response:
         for attempt in range(self.REQUEST_ATTEMPTS):
+            if self.cancellation_check is not None:
+                self.cancellation_check()
             try:
                 response = httpx.get(
                     f"{self.base_url}{path}",
@@ -56,6 +66,8 @@ class JellyfinClient:
                     follow_redirects=True,
                 )
                 response.raise_for_status()
+                if self.cancellation_check is not None:
+                    self.cancellation_check()
                 return response
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 if attempt + 1 >= self.REQUEST_ATTEMPTS:

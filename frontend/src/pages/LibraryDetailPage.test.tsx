@@ -643,7 +643,7 @@ describe("LibraryDetailPage", () => {
       item_count: 2,
       last_synced_at: "2026-07-17T10:00:00Z",
     }]);
-    vi.spyOn(api, "jellyfinLibraryOverview").mockResolvedValue({
+    const jellyfinOverviewSpy = vi.spyOn(api, "jellyfinLibraryOverview").mockResolvedValue({
       library: (await api.jellyfinLibraries())[0],
       item_count: 2,
       known_size_bytes: 2048,
@@ -661,7 +661,12 @@ describe("LibraryDetailPage", () => {
 
     renderPage(libraryId);
 
-    expect(await screen.findByText("Jellyfin catalog overview")).toBeInTheDocument();
+    const jellyfinConnection = await screen.findByRole("button", { name: "Connected to Jellyfin library Movies" });
+    fireEvent.click(jellyfinConnection);
+    expect(await screen.findByText("Last synchronization", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin source")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin catalog overview")).not.toBeInTheDocument();
+    expect(jellyfinOverviewSpy).not.toHaveBeenCalled();
     expect(await screen.findByText("Catalog episode title")).toBeInTheDocument();
     expect(await screen.findByText("Plays: 4")).toBeInTheDocument();
     expect(screen.queryByText("Jellyfin metadata only")).not.toBeInTheDocument();

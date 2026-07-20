@@ -41,6 +41,7 @@ import { FolderInputIcon } from "../components/FolderInputIcon";
 import { GitCompareArrowsIcon } from "../components/GitCompareArrowsIcon";
 import { DistributionList, type DistributionListEntry } from "../components/DistributionList";
 import { LibraryHistoryPanel } from "../components/LibraryHistoryPanel";
+import { JellyfinIcon } from "../components/JellyfinIcon";
 import { LoaderPinwheelIcon } from "../components/LoaderPinwheelIcon";
 import { SettingsIcon } from "../components/SettingsIcon";
 import { StatCard } from "../components/StatCard";
@@ -61,7 +62,6 @@ import {
   type GroupedSeriesTableRow,
   type LibraryHistoryResponse,
   type JellyfinLibrary,
-  type JellyfinLibraryOverview,
   type LibraryStatistics,
   type LibrarySummary,
   type MediaFileQualityScoreDetail,
@@ -1585,7 +1585,6 @@ export function LibraryDetailPage() {
   const [knownHasVideoMetadata, setKnownHasVideoMetadata] = useState<boolean | undefined>(undefined);
   const [libraryHistory, setLibraryHistory] = useState<LibraryHistoryResponse | null>(null);
   const [linkedJellyfinLibrary, setLinkedJellyfinLibrary] = useState<JellyfinLibrary | null>(null);
-  const [jellyfinOverview, setJellyfinOverview] = useState<JellyfinLibraryOverview | null>(null);
   const [expandedGroupedSeriesIds, setExpandedGroupedSeriesIds] = useState<Record<number, boolean>>({});
   const [expandedGroupedSeasonKeys, setExpandedGroupedSeasonKeys] = useState<Record<string, boolean>>({});
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroupPage | null>(null);
@@ -2677,21 +2676,15 @@ export function LibraryDetailPage() {
   useEffect(() => {
     const controller = new AbortController();
     setLinkedJellyfinLibrary(null);
-    setJellyfinOverview(null);
     api.jellyfinLibraries()
-      .then(async (items) => {
+      .then((items) => {
         const linked = items.find((item) => String(item.linked_library_id) === libraryId) ?? null;
         if (controller.signal.aborted) return;
         setLinkedJellyfinLibrary(linked);
-        if (linked) {
-          const overview = await api.jellyfinLibraryOverview(linked.id, null, controller.signal);
-          if (!controller.signal.aborted) setJellyfinOverview(overview);
-        }
       })
       .catch((reason: Error) => {
         if (reason.name !== "AbortError") {
           setLinkedJellyfinLibrary(null);
-          setJellyfinOverview(null);
         }
       });
     return () => controller.abort();
@@ -3449,6 +3442,24 @@ export function LibraryDetailPage() {
         <div className="panel-title-row panel-title-row-with-actions">
           <div className="panel-title-row library-statistic-title-row">
             <h2>{displayLibrary?.name ?? t("libraryDetail.loading")}</h2>
+            {linkedJellyfinLibrary ? (
+              <TooltipTrigger
+                ariaLabel={t("jellyfin.linkedLibraryTooltipAria", { name: linkedJellyfinLibrary.name })}
+                className="library-jellyfin-icon-trigger"
+                content={(
+                  <span className="library-jellyfin-icon-tooltip">
+                    <strong>{t("jellyfin.linkedLibraryTooltip", { name: linkedJellyfinLibrary.name })}</strong>
+                    <span>
+                      {linkedJellyfinLibrary.last_synced_at
+                        ? t("jellyfin.lastSyncValue", { date: formatDate(linkedJellyfinLibrary.last_synced_at) })
+                        : t("jellyfin.notSynced")}
+                    </span>
+                  </span>
+                )}
+              >
+                <JellyfinIcon aria-hidden="true" />
+              </TooltipTrigger>
+            ) : null}
             {displayLibrary?.path ? (
               <TooltipTrigger ariaLabel={t("libraryDetail.libraryPathAria")} content={displayLibrary.path}>
                 ?
@@ -3506,20 +3517,6 @@ export function LibraryDetailPage() {
           </div>
         </div>
         {quickScanError ? <div className="alert">{t("libraryDetail.quickScanError", { message: quickScanError })}</div> : null}
-        {linkedJellyfinLibrary ? (
-          <div className="library-jellyfin-source">
-            <Server aria-hidden="true" />
-            <div>
-              <strong>{t("jellyfin.linkedSource")}</strong>
-              <span>
-                {linkedJellyfinLibrary.name}
-                {jellyfinOverview ? ` · ${t("jellyfin.catalog.resultCount", { count: jellyfinOverview.item_count })}` : ""}
-                {linkedJellyfinLibrary.last_synced_at ? ` · ${t("jellyfin.catalog.lastSync", { date: formatDate(linkedJellyfinLibrary.last_synced_at) })}` : ""}
-              </span>
-            </div>
-            <span className="jellyfin-status-badge status-linked">{t("jellyfin.libraryStatus.linked")}</span>
-          </div>
-        ) : null}
         <div className="card-grid grid">
           <StatCard label={t("libraryDetail.files")} value={String(displayLibrary?.file_count ?? filesTotal ?? 0)} />
           <StatCard
@@ -3545,31 +3542,6 @@ export function LibraryDetailPage() {
       </section>
 
       <div className={`media-grid statistic-layout-grid${isEditingStatisticLayout ? " is-editing" : ""}`}>
-        {jellyfinOverview ? (
-          <div className="statistic-layout-panel-shell span-x-4 span-y-2 library-jellyfin-metadata-panel">
-            <AsyncPanel title={t("jellyfin.catalog.overview")} bodyClassName="async-panel-body-scroll">
-              <div className="library-jellyfin-distributions">
-                {[
-                  [t("jellyfin.catalog.itemTypes"), jellyfinOverview.item_type_distribution],
-                  [t("jellyfin.catalog.productionYears"), jellyfinOverview.production_year_distribution.slice(0, 8)],
-                  [t("jellyfin.catalog.addedTimeline"), jellyfinOverview.added_month_distribution.slice(-8)],
-                  [
-                    t("jellyfin.catalog.playback"),
-                    jellyfinOverview.playback_distribution.map((item) => ({
-                      ...item,
-                      label: t(`jellyfin.catalog.${item.label}`),
-                    })),
-                  ],
-                ].map(([title, items]) => (
-                  <section key={String(title)}>
-                    <h3>{String(title)}</h3>
-                    <DistributionList items={items as DistributionListEntry[]} maxVisibleRows={6} scrollable />
-                  </section>
-                ))}
-              </div>
-            </AsyncPanel>
-          </div>
-        ) : null}
         {(() => {
           let collapsedPanelsBefore = 0;
 

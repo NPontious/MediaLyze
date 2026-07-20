@@ -6,11 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### 🐛 Fixed
 
+* Route manual and scheduled Jellyfin synchronizations through one persisted background job so concurrent triggers share the active run and manual requests return immediately.
 * Paginate Jellyfin item synchronization and retry transient read failures on large media collections.
 * Stop the Jellyfin settings panel from repeatedly reloading and flickering after navigation-state refreshes.
+* Keep Jellyfin settings visible after action or validation errors and show each error beside the affected section or library.
+* Apply Jellyfin path mappings and library associations immediately, while coalescing path and asset-match recalculation into a visible background job that no longer blocks the settings UI.
 
 ### ✨ Enhancements
 
+* Replace the large linked-Jellyfin banner on library pages with a compact, unframed Jellyfin icon and last-sync tooltip beside the library title.
+* Avoid duplicating MediaLyze library statistics with a separate Jellyfin catalog overview panel in linked libraries.
+* Allow running manual or scheduled Jellyfin synchronizations to be canceled from Settings without replacing the previously cached catalog with partial data.
 * Show live Jellyfin synchronization phases, item progress, and an animated running state in Settings.
 * Allow path mappings to be created or corrected directly from each Jellyfin library diagnostic.
 * Disable scheduled Jellyfin synchronization by setting its interval to `0`, without disabling manual sync.
