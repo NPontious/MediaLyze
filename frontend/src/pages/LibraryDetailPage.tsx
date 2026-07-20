@@ -12,6 +12,7 @@ import {
   PanelTopClose,
   Plus,
   Search,
+  Server,
   Trash2,
   X,
 } from "lucide-react";
@@ -59,6 +60,8 @@ import {
   type GroupedMediaTablePage,
   type GroupedSeriesTableRow,
   type LibraryHistoryResponse,
+  type JellyfinLibrary,
+  type JellyfinLibraryOverview,
   type LibraryStatistics,
   type LibrarySummary,
   type MediaFileQualityScoreDetail,
@@ -877,6 +880,16 @@ export function buildFileColumns(
                 {row.filename}
               </Link>
               {row.root_name ? <span className="media-tree-subtitle">{row.root_name}</span> : null}
+              {row.jellyfin_title ? (
+                <span className="media-tree-subtitle media-file-jellyfin-metadata">
+                  <Server aria-hidden="true" />
+                  <span>{row.jellyfin_title}</span>
+                  {row.jellyfin_production_year ? <span>{row.jellyfin_production_year}</span> : null}
+                  {row.jellyfin_play_count !== null && row.jellyfin_play_count !== undefined ? (
+                    <span>{t("jellyfin.catalog.plays")}: {row.jellyfin_play_count}</span>
+                  ) : null}
+                </span>
+              ) : null}
             </span>
           </div>
         ),
@@ -1571,6 +1584,8 @@ export function LibraryDetailPage() {
   const [libraryStatistics, setLibraryStatistics] = useState<LibraryStatistics | null>(null);
   const [knownHasVideoMetadata, setKnownHasVideoMetadata] = useState<boolean | undefined>(undefined);
   const [libraryHistory, setLibraryHistory] = useState<LibraryHistoryResponse | null>(null);
+  const [linkedJellyfinLibrary, setLinkedJellyfinLibrary] = useState<JellyfinLibrary | null>(null);
+  const [jellyfinOverview, setJellyfinOverview] = useState<JellyfinLibraryOverview | null>(null);
   const [expandedGroupedSeriesIds, setExpandedGroupedSeriesIds] = useState<Record<number, boolean>>({});
   const [expandedGroupedSeasonKeys, setExpandedGroupedSeasonKeys] = useState<Record<string, boolean>>({});
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroupPage | null>(null);
@@ -2660,6 +2675,29 @@ export function LibraryDetailPage() {
   }, [fileQueryKey]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    setLinkedJellyfinLibrary(null);
+    setJellyfinOverview(null);
+    api.jellyfinLibraries()
+      .then(async (items) => {
+        const linked = items.find((item) => String(item.linked_library_id) === libraryId) ?? null;
+        if (controller.signal.aborted) return;
+        setLinkedJellyfinLibrary(linked);
+        if (linked) {
+          const overview = await api.jellyfinLibraryOverview(linked.id, null, controller.signal);
+          if (!controller.signal.aborted) setJellyfinOverview(overview);
+        }
+      })
+      .catch((reason: Error) => {
+        if (reason.name !== "AbortError") {
+          setLinkedJellyfinLibrary(null);
+          setJellyfinOverview(null);
+        }
+      });
+    return () => controller.abort();
+  }, [libraryId]);
+
+  useEffect(() => {
     const nextTableState = readLibraryDetailTableState(libraryId);
     initialTableStateRef.current = nextTableState;
     skipNextTableStateSaveRef.current = true;
@@ -3468,6 +3506,20 @@ export function LibraryDetailPage() {
           </div>
         </div>
         {quickScanError ? <div className="alert">{t("libraryDetail.quickScanError", { message: quickScanError })}</div> : null}
+        {linkedJellyfinLibrary ? (
+          <div className="library-jellyfin-source">
+            <Server aria-hidden="true" />
+            <div>
+              <strong>{t("jellyfin.linkedSource")}</strong>
+              <span>
+                {linkedJellyfinLibrary.name}
+                {jellyfinOverview ? ` · ${t("jellyfin.catalog.resultCount", { count: jellyfinOverview.item_count })}` : ""}
+                {linkedJellyfinLibrary.last_synced_at ? ` · ${t("jellyfin.catalog.lastSync", { date: formatDate(linkedJellyfinLibrary.last_synced_at) })}` : ""}
+              </span>
+            </div>
+            <span className="jellyfin-status-badge status-linked">{t("jellyfin.libraryStatus.linked")}</span>
+          </div>
+        ) : null}
         <div className="card-grid grid">
           <StatCard label={t("libraryDetail.files")} value={String(displayLibrary?.file_count ?? filesTotal ?? 0)} />
           <StatCard
@@ -3493,6 +3545,31 @@ export function LibraryDetailPage() {
       </section>
 
       <div className={`media-grid statistic-layout-grid${isEditingStatisticLayout ? " is-editing" : ""}`}>
+        {jellyfinOverview ? (
+          <div className="statistic-layout-panel-shell span-x-4 span-y-2 library-jellyfin-metadata-panel">
+            <AsyncPanel title={t("jellyfin.catalog.overview")} bodyClassName="async-panel-body-scroll">
+              <div className="library-jellyfin-distributions">
+                {[
+                  [t("jellyfin.catalog.itemTypes"), jellyfinOverview.item_type_distribution],
+                  [t("jellyfin.catalog.productionYears"), jellyfinOverview.production_year_distribution.slice(0, 8)],
+                  [t("jellyfin.catalog.addedTimeline"), jellyfinOverview.added_month_distribution.slice(-8)],
+                  [
+                    t("jellyfin.catalog.playback"),
+                    jellyfinOverview.playback_distribution.map((item) => ({
+                      ...item,
+                      label: t(`jellyfin.catalog.${item.label}`),
+                    })),
+                  ],
+                ].map(([title, items]) => (
+                  <section key={String(title)}>
+                    <h3>{String(title)}</h3>
+                    <DistributionList items={items as DistributionListEntry[]} maxVisibleRows={6} scrollable />
+                  </section>
+                ))}
+              </div>
+            </AsyncPanel>
+          </div>
+        ) : null}
         {(() => {
           let collapsedPanelsBefore = 0;
 

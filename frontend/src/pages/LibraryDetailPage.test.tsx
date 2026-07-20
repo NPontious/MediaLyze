@@ -590,6 +590,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.spyOn(api, "activeScanJobs").mockResolvedValue([]);
+  vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
   vi.spyOn(api, "libraryComparison").mockResolvedValue(createComparisonResponse());
   vi.spyOn(api, "libraryHistory").mockResolvedValue(createLibraryHistoryResponse());
   vi.spyOn(api, "libraryDuplicates").mockResolvedValue(createDuplicateGroupPage());
@@ -614,6 +615,58 @@ beforeEach(() => {
 });
 
 describe("LibraryDetailPage", () => {
+  it("adds matched Jellyfin metadata to the normal MediaLyze library without a separate layout", async () => {
+    const libraryId = 100;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, { name: "Movies" }));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const filesPage = createFilesPage(libraryId);
+    filesPage.items[0] = {
+      ...filesPage.items[0],
+      jellyfin_title: "Catalog episode title",
+      jellyfin_production_year: 2024,
+      jellyfin_play_count: 4,
+      jellyfin_played_user_count: 2,
+    };
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(filesPage);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([{
+      id: 7,
+      name: "Movies",
+      collection_type: "movies",
+      locations: ["/media/movies"],
+      mapped_locations: ["/media/movies"],
+      mapped_status: "linked",
+      linked_library_id: libraryId,
+      linked_library_name: "Movies",
+      can_create_medialyze_library: false,
+      data_scope: "linked",
+      item_count: 2,
+      last_synced_at: "2026-07-17T10:00:00Z",
+    }]);
+    vi.spyOn(api, "jellyfinLibraryOverview").mockResolvedValue({
+      library: (await api.jellyfinLibraries())[0],
+      item_count: 2,
+      known_size_bytes: 2048,
+      size_known_count: 2,
+      known_duration_seconds: 7200,
+      duration_known_count: 2,
+      earliest_date_created: "2024-01-01T00:00:00Z",
+      latest_date_created: "2026-01-01T00:00:00Z",
+      item_type_distribution: [{ label: "Movie", value: 2 }],
+      production_year_distribution: [{ label: "2024", value: 2 }],
+      added_month_distribution: [{ label: "2026-01", value: 2 }],
+      playback_distribution: [{ label: "played", value: 1 }, { label: "unplayed", value: 1 }],
+      users: [],
+    });
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("Jellyfin catalog overview")).toBeInTheDocument();
+    expect(await screen.findByText("Catalog episode title")).toBeInTheDocument();
+    expect(await screen.findByText("Plays: 4")).toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin metadata only")).not.toBeInTheDocument();
+  });
+
   it("loads summary, statistics, and files separately", async () => {
     const libraryId = 101;
     mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });

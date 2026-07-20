@@ -16,7 +16,15 @@ from watchdog.observers import Observer
 
 from backend.app.core.config import Settings
 from backend.app.db.session import SessionLocal
-from backend.app.models.entities import JobStatus, Library, ScanJob, ScanMode, ScanTriggerSource
+from backend.app.models.entities import (
+    JellyfinConnection,
+    JobStatus,
+    Library,
+    MediaFile,
+    ScanJob,
+    ScanMode,
+    ScanTriggerSource,
+)
 from backend.app.services.app_settings import get_app_settings
 from backend.app.services.history_retention import (
     HistoryRetentionResult,
@@ -27,6 +35,8 @@ from backend.app.services.history_storage import get_history_storage
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.library_history_service import get_dashboard_history, get_library_history
 from backend.app.services.library_service import get_library_statistics, get_library_summary, list_libraries
+from backend.app.services.jellyfin_matching import recompute_jellyfin_matches
+from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.path_access import is_watch_supported_for_library
 from backend.app.services.stats import build_dashboard
 from backend.app.services.telemetry import (
@@ -106,6 +116,7 @@ class ScanRuntimeManager:
         self.stats_warmup_timer: Timer | None = None
         self.telemetry_send_timer: Timer | None = None
         self.history_reconstruction_status = HistoryReconstructionStatusRead()
+        self.jellyfin_sync_submitted = False
         self.started = False
 
     def start(self) -> None:
@@ -118,6 +129,7 @@ class ScanRuntimeManager:
         self._ensure_history_maintenance_job()
         self._ensure_telemetry_job()
         self._ensure_update_check_jobs()
+        self.refresh_jellyfin_schedule()
         self._recover_orphaned_jobs()
         self.request_update_check()
         self.sync_all_libraries()
@@ -311,6 +323,54 @@ class ScanRuntimeManager:
             return
         self.maintenance_executor.submit(self._run_update_check)
 
+    def request_jellyfin_sync(self) -> bool:
+        with self.lock:
+            if not self.started or self.jellyfin_sync_submitted:
+                return False
+            self.jellyfin_sync_submitted = True
+        self.maintenance_executor.submit(self._run_jellyfin_sync)
+        return True
+
+    def refresh_jellyfin_schedule(self) -> None:
+        job_id = "jellyfin-sync"
+        db = SessionLocal()
+        try:
+            connection = db.get(JellyfinConnection, 1)
+            enabled = bool(
+                connection
+                and connection.enabled
+                and connection.base_url
+                and connection.api_key
+                and connection.sync_interval_minutes > 0
+            )
+            interval = max(5, int(connection.sync_interval_minutes)) if connection else 60
+        finally:
+            db.close()
+        if not enabled:
+            if self.scheduler.get_job(job_id):
+                self.scheduler.remove_job(job_id)
+            return
+        self.scheduler.add_job(
+            self.request_jellyfin_sync,
+            trigger="interval",
+            minutes=interval,
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+    def _run_jellyfin_sync(self) -> None:
+        db = SessionLocal()
+        try:
+            run_jellyfin_sync(db)
+        except Exception:
+            logger.exception("Scheduled Jellyfin sync failed")
+        finally:
+            db.close()
+            with self.lock:
+                self.jellyfin_sync_submitted = False
+
     def request_initial_telemetry_send(self) -> None:
         with self.lock:
             if not self.started:
@@ -362,6 +422,25 @@ class ScanRuntimeManager:
         try:
             execute_scan_job(job_id, self.settings, is_cancel_requested=self.is_job_cancel_requested)
         finally:
+            match_db = SessionLocal()
+            try:
+                job = match_db.get(ScanJob, job_id)
+                changed_ids = set(
+                    match_db.scalars(
+                        select(MediaFile.id).where(
+                            MediaFile.library_id == library_id,
+                            MediaFile.last_analyzed_at.is_not(None),
+                            MediaFile.last_analyzed_at >= job.started_at,
+                        )
+                    )
+                ) if job and job.started_at else set()
+                if changed_ids:
+                    recompute_jellyfin_matches(match_db, media_file_ids=changed_ids)
+            except Exception:
+                match_db.rollback()
+                logger.exception("Failed to refresh Jellyfin matches after scan %s", job_id)
+            finally:
+                match_db.close()
             should_attempt_compaction = False
             with self.lock:
                 self.submitted_job_ids.discard(job_id)

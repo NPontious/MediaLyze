@@ -57,6 +57,8 @@ class HistoryReconstructionRead(BaseModel):
     updated_library_history_entries: int = 0
     oldest_reconstructed_snapshot_day: str | None = None
     newest_reconstructed_snapshot_day: str | None = None
+    jellyfin_added_dates_used: int = 0
+    jellyfin_added_date_fallbacks: int = 0
 
 
 class HistoryReconstructionStatusRead(BaseModel):

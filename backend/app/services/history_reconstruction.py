@@ -10,6 +10,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models.entities import (
+    HistoryAddedDateSource,
+    JellyfinItem,
+    JellyfinMediaMatch,
     Library,
     LibraryHistory,
     MediaFile,
@@ -186,8 +189,15 @@ def _infer_added_at(media_file: MediaFile, now: datetime) -> datetime:
     return resolved
 
 
-def _build_prepared_media_file(media_file: MediaFile, resolution_categories, now: datetime) -> _PreparedMediaFile:
-    inferred_added_at = _infer_added_at(media_file, now)
+def _build_prepared_media_file(
+    media_file: MediaFile,
+    resolution_categories,
+    now: datetime,
+    added_at_override: datetime | None = None,
+) -> _PreparedMediaFile:
+    inferred_added_at = added_at_override or _infer_added_at(media_file, now)
+    if inferred_added_at > now:
+        inferred_added_at = now
     primary_video = min(media_file.video_streams, key=lambda stream: stream.stream_index, default=None)
     media_format = media_file.media_format
     duration_seconds = float(media_format.duration or 0.0) if media_format else 0.0
@@ -438,6 +448,8 @@ def reconstruct_history_from_media_files(
     created_file_history_entries = 0
     oldest_snapshot_day: str | None = None
     newest_snapshot_day: str | None = None
+    jellyfin_added_dates_used = 0
+    jellyfin_added_date_fallbacks = 0
 
     libraries = db.scalars(select(Library).order_by(Library.id.asc())).all()
     libraries_with_media = 0
@@ -503,10 +515,37 @@ def reconstruct_history_from_media_files(
             continue
 
         libraries_with_media += 1
+        jellyfin_added_dates: dict[int, datetime] = {}
+        if library.history_added_date_source == HistoryAddedDateSource.jellyfin:
+            jellyfin_added_dates = {
+                media_file_id: date_created
+                for media_file_id, date_created in db.execute(
+                    select(JellyfinMediaMatch.media_file_id, JellyfinItem.date_created)
+                    .join(JellyfinItem, JellyfinItem.id == JellyfinMediaMatch.jellyfin_item_id)
+                    .where(
+                        JellyfinMediaMatch.status == "matched",
+                        JellyfinItem.date_created.is_not(None),
+                    )
+                ).all()
+                if date_created is not None
+            }
         prepared_files: list[_PreparedMediaFile] = []
         prepared_step = _progress_update_step(len(media_files))
         for prepared_index, media_file in enumerate(media_files, start=1):
-            prepared_files.append(_build_prepared_media_file(media_file, resolution_categories, now))
+            added_at_override = jellyfin_added_dates.get(media_file.id)
+            prepared_files.append(
+                _build_prepared_media_file(
+                    media_file,
+                    resolution_categories,
+                    now,
+                    added_at_override=added_at_override,
+                )
+            )
+            if library.history_added_date_source == HistoryAddedDateSource.jellyfin:
+                if added_at_override is None:
+                    jellyfin_added_date_fallbacks += 1
+                else:
+                    jellyfin_added_dates_used += 1
             if prepared_index % prepared_step == 0 or prepared_index == len(media_files):
                 _emit_progress(
                     progress_callback,
@@ -754,4 +793,6 @@ def reconstruct_history_from_media_files(
         updated_library_history_entries=updated_library_history_entries,
         oldest_reconstructed_snapshot_day=oldest_snapshot_day,
         newest_reconstructed_snapshot_day=newest_snapshot_day,
+        jellyfin_added_dates_used=jellyfin_added_dates_used,
+        jellyfin_added_date_fallbacks=jellyfin_added_date_fallbacks,
     )

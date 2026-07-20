@@ -412,6 +412,7 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
         quality_profile=normalize_quality_profile(payload.quality_profile, app_settings.resolution_categories),
         quality_profile_id=selected_profile.id if selected_profile else None,
         show_on_dashboard=payload.show_on_dashboard,
+        history_added_date_source=payload.history_added_date_source,
     )
     db.add(library)
     db.flush()
@@ -505,6 +506,8 @@ def update_library_settings(
             quality_profile_changed = True
     if payload.show_on_dashboard is not None:
         library.show_on_dashboard = payload.show_on_dashboard
+    if payload.history_added_date_source is not None:
+        library.history_added_date_source = payload.history_added_date_source
     db.commit()
     db.refresh(library)
     stats_cache.invalidate(cache_key, library.id)

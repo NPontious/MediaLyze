@@ -1944,12 +1944,14 @@ describe("LibrariesPage settings panels", () => {
     });
   });
 
-  it("moves library details into a title tooltip and keeps badges in the title area", async () => {
+  it("shows editable library sources while keeping summary details in the title tooltip", async () => {
     vi.spyOn(api, "libraries").mockResolvedValue([createLibrarySummary()]);
 
     renderPage();
 
-    expect(screen.queryByText("/media/movies")).not.toBeInTheDocument();
+    expect(await screen.findByText("/media/movies")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change path" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Associated Jellyfin library" })).toBeInTheDocument();
 
     const detailsButton = await screen.findByRole("button", { name: "Show library details for Movies" });
     const titleMain = screen.getByRole("link", { name: "Movies" }).closest(".library-title-main") as HTMLElement | null;
@@ -1964,7 +1966,7 @@ describe("LibrariesPage settings panels", () => {
 
     fireEvent.focus(detailsButton);
 
-    expect(await screen.findByText("/media/movies")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("/media/movies")).toHaveLength(2));
     expect(screen.getByText("0 files")).toBeInTheDocument();
   });
 

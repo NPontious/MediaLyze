@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Fixed
+
+* Paginate Jellyfin item synchronization and retry transient read failures on large media collections.
+* Stop the Jellyfin settings panel from repeatedly reloading and flickering after navigation-state refreshes.
+
+### ✨ Enhancements
+
+* Show live Jellyfin synchronization phases, item progress, and an animated running state in Settings.
+* Allow path mappings to be created or corrected directly from each Jellyfin library diagnostic.
+* Disable scheduled Jellyfin synchronization by setting its interval to `0`, without disabling manual sync.
+* Save Jellyfin connection and library-specific path-mapping fields automatically and remove their explicit save actions.
+* Simplify Jellyfin library diagnostics by relying on the per-library status badge instead of repeating warning text.
+* Condense Jellyfin library diagnostics into scan-friendly rows on wider settings layouts.
+* Keep Jellyfin as an optional overlay in existing MediaLyze libraries instead of exposing a separate Jellyfin-only library UI. Linked libraries gain catalog distributions and matched rows gain titles, years, and playback counts; file details place metadata in Overview, playback in Streaming, and Jellyfin artwork beside embedded covers.
+* Align Jellyfin settings fields with the compact 36-pixel input style used by newer settings controls.
+* Allow Jellyfin libraries to create or explicitly link MediaLyze libraries, with the same path and association controls reflected in both settings sections.
+
+### ✨ New
+
+- add a read-only Jellyfin integration with scheduled catalog and multi-user playback sync, path-based asset matching, image proxying, library mount diagnostics, optional MediaLyze-library creation, and per-library Jellyfin added-date history reconstruction
+
 ## v0.16.3
 
 >2026-07-11

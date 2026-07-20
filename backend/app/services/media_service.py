@@ -18,6 +18,10 @@ from sqlalchemy.orm import Session, selectinload
 from backend.app.models.entities import (
     AudioStream,
     ExternalSubtitle,
+    JellyfinItem,
+    JellyfinMediaMatch,
+    JellyfinUser,
+    JellyfinUserItemData,
     Library,
     MediaChapter,
     MediaFile,
@@ -486,6 +490,58 @@ def _row_from_model(media_file: MediaFile, resolution_categories=None) -> MediaF
         episode_number_end=media_file.episode_number_end,
         episode_title=media_file.episode_title,
     )
+
+
+def _add_jellyfin_metadata(db: Session, rows: list[MediaFileTableRow]) -> None:
+    """Enrich the current page only; unmatched files retain no Jellyfin surface."""
+    if not rows:
+        return
+
+    media_file_ids = [row.id for row in rows]
+    playback = (
+        select(
+            JellyfinUserItemData.jellyfin_item_id.label("item_id"),
+            func.coalesce(func.sum(JellyfinUserItemData.play_count), 0).label("play_count"),
+            func.coalesce(
+                func.sum(case((JellyfinUserItemData.played.is_(True), 1), else_=0)),
+                0,
+            ).label("played_user_count"),
+        )
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
+        .where(JellyfinUser.enabled_for_sync.is_(True))
+        .group_by(JellyfinUserItemData.jellyfin_item_id)
+        .subquery("jellyfin_playback_aggregate")
+    )
+    metadata_rows = db.execute(
+        select(
+            JellyfinMediaMatch.media_file_id,
+            JellyfinItem.title,
+            JellyfinItem.production_year,
+            JellyfinItem.date_created,
+            JellyfinItem.series_name,
+            JellyfinItem.season_name,
+            func.coalesce(playback.c.play_count, 0),
+            func.coalesce(playback.c.played_user_count, 0),
+        )
+        .join(JellyfinItem, JellyfinItem.id == JellyfinMediaMatch.jellyfin_item_id)
+        .outerjoin(playback, playback.c.item_id == JellyfinItem.id)
+        .where(
+            JellyfinMediaMatch.media_file_id.in_(media_file_ids),
+            JellyfinMediaMatch.status == "matched",
+        )
+    ).all()
+    metadata_by_file_id = {entry[0]: entry for entry in metadata_rows}
+    for row in rows:
+        metadata = metadata_by_file_id.get(row.id)
+        if metadata is None:
+            continue
+        row.jellyfin_title = metadata[1]
+        row.jellyfin_production_year = metadata[2]
+        row.jellyfin_date_created = metadata[3]
+        row.jellyfin_series_name = metadata[4]
+        row.jellyfin_season_name = metadata[5]
+        row.jellyfin_play_count = int(metadata[6])
+        row.jellyfin_played_user_count = int(metadata[7])
 
 
 def _audio_aggregate_subquery(name: str = "audio_aggregates"):
@@ -1334,6 +1390,7 @@ def list_library_files(
     files = _load_media_files_by_ids(db, selected_ids)
     resolution_categories = get_app_settings(db).resolution_categories
     rows = [_row_from_model(media_file, resolution_categories) for media_file in files]
+    _add_jellyfin_metadata(db, rows)
     next_cursor = (
         _encode_cursor(_cursor_sort_value(rows[-1], sort_key), rows[-1].relative_path)
         if has_more and rows
@@ -1602,10 +1659,12 @@ def list_grouped_library_files(
     loose_file_ids = [int(row["file_id"]) for row in page_rows if row["kind"] == "file" and row["file_id"] is not None]
     series_ids = [int(row["series_id"]) for row in page_rows if row["kind"] == "series" and row["series_id"] is not None]
     resolution_categories = get_app_settings(db).resolution_categories
-    loose_files = {
-        media_file.id: _row_from_model(media_file, resolution_categories)
+    loose_file_rows = [
+        _row_from_model(media_file, resolution_categories)
         for media_file in _load_media_files_by_ids(db, loose_file_ids)
-    }
+    ]
+    _add_jellyfin_metadata(db, loose_file_rows)
+    loose_files = {row.id: row for row in loose_file_rows}
     series_metrics_by_id: dict[int, dict[str, float | int | None]] = {}
     if series_ids:
         visible_series_file_ids = list(
@@ -1702,6 +1761,7 @@ def get_library_series_detail(db: Session, library_id: int, series_id: int) -> M
             .order_by(MediaFile.episode_number.asc(), MediaFile.relative_path.asc())
         ).all()
         rows = [_row_from_model(file, resolution_categories) for file in files]
+        _add_jellyfin_metadata(db, rows)
         season_payloads.append(
             MediaSeasonDetailRead(
                 id=season.id,
@@ -1758,6 +1818,7 @@ def get_grouped_library_series_detail(
     resolution_categories = get_app_settings(db).resolution_categories
     files = _load_media_files_by_ids(db, selected_ids)
     rows = [_row_from_model(file, resolution_categories) for file in files]
+    _add_jellyfin_metadata(db, rows)
     rows_by_season_id: dict[int, list[MediaFileTableRow]] = {}
     rows_without_season: list[MediaFileTableRow] = []
     for row in rows:

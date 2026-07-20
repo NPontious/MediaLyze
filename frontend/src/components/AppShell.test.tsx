@@ -226,6 +226,7 @@ describe("AppShell", () => {
     renderShell();
 
     expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /v0\.16\.1/i }));
     expect(screen.getByRole("link", { name: "#162" })).toHaveAttribute(
       "href",
       "https://github.com/frederikemmer/MediaLyze/issues/162",

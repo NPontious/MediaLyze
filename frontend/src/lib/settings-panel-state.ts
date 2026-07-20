@@ -1,5 +1,6 @@
 export type SettingsPanelId =
   | "configuredLibraries"
+  | "jellyfin"
   | "qualityProfiles"
   | "compatibilityProfiles"
   | "appSettings"
@@ -14,6 +15,7 @@ const NAV_COLLAPSED_STORAGE_KEY = "medialyze-settings-sidebar-collapsed";
 
 export const SETTINGS_PANEL_IDS: SettingsPanelId[] = [
   "configuredLibraries",
+  "jellyfin",
   "qualityProfiles",
   "compatibilityProfiles",
   "appSettings",

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Archive,
@@ -17,6 +17,7 @@ import {
   Proportions,
   Radio,
   Save,
+  Server,
   Settings,
   SlidersHorizontal,
   SquareArrowOutUpRight,
@@ -27,6 +28,7 @@ import {
 import { AsyncPanel } from "../components/AsyncPanel";
 import { CheckIcon } from "../components/CheckIcon";
 import { CompatibilityProfilesPanel } from "../components/CompatibilityProfilesPanel";
+import { JellyfinSettingsPanel } from "../components/JellyfinSettingsPanel";
 import { CopyIcon } from "../components/CopyIcon";
 import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
@@ -45,6 +47,7 @@ import {
   type DuplicateDetectionMode,
   type HistoryReconstructionStatus,
   type HistoryReconstructionResult,
+  type HistoryAddedDateSource,
   type HistoryStorage,
   type LibraryType,
   type LibrarySummary,
@@ -730,6 +733,7 @@ const SETTINGS_NAV_ITEMS: Array<{
   icon: typeof Settings;
 }> = [
   { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
+  { id: "jellyfin", labelKey: "jellyfin.title", icon: Server },
   { id: "qualityProfiles", labelKey: "libraries.qualityProfiles.title", icon: SlidersHorizontal },
   { id: "compatibilityProfiles", labelKey: "compatibilityProfiles.navigationTitle", icon: Cpu },
   { id: "appSettings", labelKey: "libraries.appSettings", icon: Settings },
@@ -762,6 +766,7 @@ const QUALITY_METRIC_DEFAULT_WEIGHTS: Record<string, number> = {
 };
 
 export function LibrariesPage() {
+  const [searchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const desktopBridge = getDesktopBridge();
   const desktopApp = isDesktopApp();
@@ -770,9 +775,12 @@ export function LibrariesPage() {
     appSettingsLoaded,
     libraries,
     librariesLoaded,
+    jellyfinLibraries,
+    jellyfinLibrariesLoaded,
     loadAppSettings,
     loadDashboard,
     loadLibraries,
+    loadJellyfinLibraries,
     setAppSettings,
     upsertLibrary,
     removeLibrary: removeLibraryFromStore,
@@ -803,15 +811,24 @@ export function LibrariesPage() {
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [libraryIdentityForms, setLibraryIdentityForms] = useState<Record<number, LibraryIdentityForm>>({});
   const [libraryIdentityPending, setLibraryIdentityPending] = useState<Record<number, boolean>>({});
+  const [jellyfinLinkPending, setJellyfinLinkPending] = useState<Record<number, boolean>>({});
   const [isRunningFullScanAll, setIsRunningFullScanAll] = useState(false);
   const [isCreateLibraryDialogOpen, setIsCreateLibraryDialogOpen] = useState(false);
   const [libraryPendingDeletion, setLibraryPendingDeletion] = useState<LibrarySummary | null>(null);
   const [deleteConfirmationInput, setDeleteConfirmationInput] = useState("");
   const [deletingLibraryIds, setDeletingLibraryIds] = useState<Record<number, boolean>>({});
   const [dashboardVisibilityPending, setDashboardVisibilityPending] = useState<Record<number, boolean>>({});
+  const [historySourcePending, setHistorySourcePending] = useState<Record<number, boolean>>({});
   const [activeSettingsPanelId, setActiveSettingsPanelId] = useState<SettingsPanelId>(() =>
     getActiveSettingsPanel("configuredLibraries"),
   );
+  const deepLinkedJellyfinLibraryId = searchParams.get("section") === "jellyfin" ? searchParams.get("library") : null;
+
+  useEffect(() => {
+    if (searchParams.get("section") === "jellyfin") {
+      setActiveSettingsPanelId(saveActiveSettingsPanel("jellyfin"));
+    }
+  }, [searchParams]);
   const [isSettingsNavCollapsed, setIsSettingsNavCollapsed] = useState(() => getSettingsNavCollapsed());
   const [isSettingsMobileMenuOpen, setIsSettingsMobileMenuOpen] = useState(false);
   const [recentScanJobs, setRecentScanJobs] = useState<RecentScanJob[]>([]);
@@ -1380,6 +1397,12 @@ export function LibrariesPage() {
   }, [librariesLoaded]);
 
   useEffect(() => {
+    if (!jellyfinLibrariesLoaded) {
+      void loadJellyfinLibraries().catch(() => undefined);
+    }
+  }, [jellyfinLibrariesLoaded, loadJellyfinLibraries]);
+
+  useEffect(() => {
     void refreshQualityProfiles(true).catch(() => undefined);
   }, []);
 
@@ -1887,6 +1910,25 @@ export function LibrariesPage() {
     }
   }
 
+  async function updateLibraryJellyfinLink(library: LibrarySummary, jellyfinLibraryId: number | null) {
+    const current = jellyfinLibraries.find((candidate) => candidate.linked_library_id === library.id);
+    if ((current?.id ?? null) === jellyfinLibraryId) return;
+    setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: true }));
+    setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    try {
+      if (jellyfinLibraryId === null) {
+        if (current) await api.updateJellyfinLibraryLink(current.id, null);
+      } else {
+        await api.updateJellyfinLibraryLink(jellyfinLibraryId, library.id);
+      }
+      await loadJellyfinLibraries(true);
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    } finally {
+      setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: false }));
+    }
+  }
+
   function updateLibraryForm(
     libraryId: number,
     patch: Partial<LibrarySettingsForm>,
@@ -2060,6 +2102,24 @@ export function LibrariesPage() {
       setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
     } finally {
       setDashboardVisibilityPending((current) => {
+        const next = { ...current };
+        delete next[library.id];
+        return next;
+      });
+    }
+  }
+
+  async function updateLibraryHistorySource(library: LibrarySummary, source: HistoryAddedDateSource) {
+    if (historySourcePending[library.id] || source === library.history_added_date_source) return;
+    setHistorySourcePending((current) => ({ ...current, [library.id]: true }));
+    try {
+      const updated = await api.updateLibrarySettings(library.id, { history_added_date_source: source });
+      upsertLibrary(updated);
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    } finally {
+      setHistorySourcePending((current) => {
         const next = { ...current };
         delete next[library.id];
         return next;
@@ -5477,21 +5537,6 @@ export function LibrariesPage() {
                           </div>
 	                        </div>
 	                        <div className="library-title-actions">
-	                          {isEditingLibraryIdentity ? (
-	                            <button
-	                              type="button"
-	                              className="secondary small library-change-path-button"
-	                              disabled={isSavingLibraryIdentity || isDeletingLibrary || Boolean(activeLibraryScanJob)}
-	                              title={
-	                                activeLibraryScanJob
-	                                  ? t("libraries.changePathActiveScanTooltip")
-	                                  : t("libraries.changePathTooltip")
-	                              }
-	                              onClick={() => openLibraryPathDialog(library)}
-	                            >
-	                              {t("libraries.changePath")}
-	                            </button>
-	                          ) : null}
 	                          <button
                             type="button"
                             className="secondary icon-only-button library-action-tooltip-trigger"
@@ -5608,6 +5653,45 @@ export function LibrariesPage() {
                     </div>
                   ) : null}
                   <div className="library-settings-form">
+                    <div className="field library-source-field">
+                      <div className="field-label-row">
+                        <span>{t("libraries.mediaPaths")}</span>
+                        <button
+                          type="button"
+                          className="secondary small"
+                          disabled={isDeletingLibrary || Boolean(activeLibraryScanJob)}
+                          title={activeLibraryScanJob ? t("libraries.changePathActiveScanTooltip") : t("libraries.changePathTooltip")}
+                          onClick={() => openLibraryPathDialog(library)}
+                        >
+                          {t("libraries.changePath")}
+                        </button>
+                      </div>
+                      <div className="library-source-paths">
+                        {(library.roots?.length ? library.roots : [{ id: 0, path: library.path, display_name: "", path_key: library.path }]).map((root) => (
+                          <code key={`${library.id}-${root.path}`}>{root.path}</code>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="field library-source-field">
+                      <div className="field-label-row">
+                        <label htmlFor={`jellyfin-library-link-${library.id}`}>{t("jellyfin.associatedJellyfinLibrary")}</label>
+                        <TooltipTrigger ariaLabel={t("jellyfin.libraryAssociationHelpAria")} content={t("jellyfin.libraryAssociationHelp")}>?</TooltipTrigger>
+                      </div>
+                      <select
+                        id={`jellyfin-library-link-${library.id}`}
+                        className="settings-choice-input"
+                        value={jellyfinLibraries.find((candidate) => candidate.linked_library_id === library.id)?.id ?? ""}
+                        disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
+                        onChange={(event) => void updateLibraryJellyfinLink(library, event.target.value ? Number(event.target.value) : null)}
+                      >
+                        <option value="">{t("jellyfin.noAssociatedLibrary")}</option>
+                        {jellyfinLibraries.map((candidate) => (
+                          <option key={candidate.id} value={candidate.id}>
+                            {candidate.name}{candidate.linked_library_id && candidate.linked_library_id !== library.id ? ` (${candidate.linked_library_name})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <div className="field">
                       <div className="field-label-row">
                         <label htmlFor={`scan-mode-${library.id}`}>{t("libraries.scanMode")}</label>
@@ -5634,6 +5718,22 @@ export function LibrariesPage() {
                         (scanMode) => updateLibraryForm(library.id, { scan_mode: scanMode }),
                         isDeletingLibrary,
                       )}
+                    </div>
+                    <div className="field">
+                      <div className="field-label-row">
+                        <label htmlFor={`history-added-date-source-${library.id}`}>{t("jellyfin.historySource")}</label>
+                        <TooltipTrigger ariaLabel={t("jellyfin.historySourceHelpAria")} content={t("jellyfin.historySourceHelp")}>?</TooltipTrigger>
+                      </div>
+                      <select
+                        id={`history-added-date-source-${library.id}`}
+                        className="settings-choice-input"
+                        value={library.history_added_date_source || "medialyze"}
+                        disabled={isDeletingLibrary || Boolean(historySourcePending[library.id])}
+                        onChange={(event) => void updateLibraryHistorySource(library, event.target.value as HistoryAddedDateSource)}
+                      >
+                        <option value="medialyze">{t("jellyfin.historySourceMedialyze")}</option>
+                        <option value="jellyfin">{t("jellyfin.historySourceJellyfin")}</option>
+                      </select>
                     </div>
                     <div className="field">
                       <div className="field-label-row">
@@ -5769,6 +5869,17 @@ export function LibrariesPage() {
               })}
             </div>
           </AsyncPanel>
+          ) : null}
+          {activeSettingsPanelId === "jellyfin" ? (
+            <JellyfinSettingsPanel
+              highlightedLibraryId={deepLinkedJellyfinLibraryId}
+              medialyzeLibraries={libraries}
+              onLibrariesChanged={() => void loadJellyfinLibraries(true)}
+              onLibraryCreated={() => {
+                void refreshLibraries(false, true);
+                void loadJellyfinLibraries(true);
+              }}
+            />
           ) : null}
 
           {activeSettingsPanelId === "qualityProfiles" ? renderQualityProfilesPanel() : null}

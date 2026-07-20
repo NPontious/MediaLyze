@@ -54,11 +54,18 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "quality_profile": "ALTER TABLE libraries ADD COLUMN quality_profile JSON NOT NULL DEFAULT '{}'",
         "quality_profile_id": "ALTER TABLE libraries ADD COLUMN quality_profile_id INTEGER",
         "show_on_dashboard": "ALTER TABLE libraries ADD COLUMN show_on_dashboard BOOLEAN NOT NULL DEFAULT 1",
+        "history_added_date_source": (
+            "ALTER TABLE libraries ADD COLUMN history_added_date_source "
+            "VARCHAR(16) NOT NULL DEFAULT 'medialyze'"
+        ),
         "created_at": "ALTER TABLE libraries ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "updated_at": "ALTER TABLE libraries ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     },
     "quality_profiles": {
         "is_builtin": "ALTER TABLE quality_profiles ADD COLUMN is_builtin BOOLEAN NOT NULL DEFAULT 0",
+    },
+    "jellyfin_libraries": {
+        "link_method": "ALTER TABLE jellyfin_libraries ADD COLUMN link_method VARCHAR(16)",
     },
     "media_files": {
         "library_root_id": "ALTER TABLE media_files ADD COLUMN library_root_id INTEGER",
@@ -285,6 +292,7 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_scan_jobs_status ON scan_jobs (status)",
     "CREATE INDEX IF NOT EXISTS ix_scan_jobs_library_id ON scan_jobs (library_id)",
     "CREATE INDEX IF NOT EXISTS ix_libraries_quality_profile_id ON libraries (quality_profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_jellyfin_items_library_name ON jellyfin_items (library_name)",
     (
         "CREATE INDEX IF NOT EXISTS ix_media_file_history_library_path_captured_at "
         "ON media_file_history (library_id, relative_path, captured_at)"

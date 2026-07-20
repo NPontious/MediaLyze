@@ -11,6 +11,7 @@ import {
   type CompatibilityEvaluation,
   type CompatibilityProfile,
   type HardwareProfile,
+  type JellyfinFileOverlay,
   type MediaFileDetail,
   type MediaFileHistory,
   type MediaFileQualityScoreDetail,
@@ -463,6 +464,82 @@ afterEach(() => {
 });
 
 describe("FileDetailPage", () => {
+  it("places matched Jellyfin metadata in overview, streaming, and cover while hiding it without a match", async () => {
+    const file = createFileDetail();
+    const overlay: JellyfinFileOverlay = {
+      match: {
+        id: 5,
+        media_file_id: file.id,
+        jellyfin_item_id: 11,
+        match_method: "path",
+        confidence: 1,
+        status: "matched",
+        mismatch_reason: null,
+      },
+      item: {
+        id: 11,
+        jellyfin_item_id: "jf-11",
+        item_type: "Movie",
+        path: "/media/movie.mkv",
+        title: "Jellyfin title",
+        original_title: "Original title",
+        series_name: null,
+        season_name: null,
+        index_number: null,
+        parent_index_number: null,
+        date_created: "2026-01-01T00:00:00Z",
+        premiere_date: "2025-04-01T00:00:00Z",
+        production_year: 2025,
+        overview: "Jellyfin overview text.",
+        provider_ids: { Imdb: "tt123" },
+        image_tags: { Primary: "cover-tag" },
+        backdrop_image_tags: [],
+        match_status: "matched",
+        mismatch_reason: null,
+      },
+      user_data: [{
+        jellyfin_user_id: "user-1",
+        user_name: "Frederik",
+        play_count: 3,
+        played: true,
+        playback_position_ticks: 120_000_000,
+        last_played_date: "2026-07-14T12:00:00Z",
+        is_favorite: false,
+      }],
+    };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileJellyfin").mockResolvedValue(overlay);
+
+    renderPage(file.id);
+
+    expect(await screen.findByText("Jellyfin overview text.")).toBeInTheDocument();
+    expect(screen.getByText("Production year")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Jellyfin metadata" })).not.toBeInTheDocument();
+
+    await selectFileDetailPanel("Streaming");
+    expect(screen.getByText("Frederik")).toBeInTheDocument();
+    expect(screen.getByText("Played 3 times")).toBeInTheDocument();
+
+    await selectFileDetailPanel("Cover");
+    expect(screen.getByRole("img", { name: "Jellyfin cover for Jellyfin title" })).toBeInTheDocument();
+  });
+
+  it("does not expose Jellyfin-specific UI for an unmatched MediaLyze file", async () => {
+    const file = createFileDetail();
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileJellyfin").mockResolvedValue({ match: null, item: null, user_data: [] });
+
+    renderPage(file.id);
+
+    expect(await screen.findByText(file.filename)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Streaming" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Production year")).not.toBeInTheDocument();
+  });
+
   it("groups favorite compatibility results into expandable hardware, software, and combination sections", async () => {
     const file: MediaFileDetail = {
       ...createFileDetail(),

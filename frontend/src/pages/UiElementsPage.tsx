@@ -42,6 +42,7 @@ import {
   SaveOff,
   Search,
   Settings,
+  Server,
   SlidersHorizontal,
   Sparkles,
   SquareArrowOutUpRight,
@@ -1466,6 +1467,34 @@ export function UiElementsPage() {
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />
               </VariantCard>
+              <VariantCard title="Jellyfin connection and sync status" source={`${settings} > Jellyfin`} classes={["jellyfin-form-grid", "jellyfin-sync-progress", "jellyfin-sync-summary"]} wide>
+                <div className="jellyfin-settings-section">
+                  <div className="jellyfin-section-heading"><Server aria-hidden="true" /><div><h3>Connection</h3><p>Read-only external metadata source.</p></div></div>
+                  <div className="jellyfin-form-grid"><label><span>Server URL</span><input defaultValue="http://jellyfin:8096" /></label><label><span>API key</span><input type="password" defaultValue="configured-key" /></label><div className="jellyfin-form-field"><span className="jellyfin-field-label"><label htmlFor="catalog-jellyfin-sync-interval">Sync interval</label><TooltipTrigger ariaLabel="Explain sync interval" content="Enter 0 to disable scheduled synchronization.">?</TooltipTrigger></span><input id="catalog-jellyfin-sync-interval" type="number" min="0" defaultValue="0" /></div></div>
+                  <div className="jellyfin-actions"><button type="button" className="secondary small">Test connection</button><button type="button" className="secondary small">Sync now</button><span className="jellyfin-auto-save-status status-saved"><Check aria-hidden="true" />Saved automatically</span></div>
+                  <div className="jellyfin-sync-progress"><div className="jellyfin-sync-progress-heading"><LoaderCircle className="is-spinning" aria-hidden="true" /><div><strong>Fetching Jellyfin items</strong><span>Movies</span></div><b>62%</b></div><div className="jellyfin-sync-progress-track"><span style={{ width: "62%" }} /></div><span className="jellyfin-sync-progress-count">8,734 of 13,977 items</span><ol className="jellyfin-sync-steps"><li className="is-complete"><span>✓</span>Connection</li><li className="is-complete"><span>✓</span>Catalog</li><li className="is-active"><span>3</span>Items</li><li><span>4</span>Matching</li></ol></div>
+                  <div className="jellyfin-sync-summary status-running"><LoaderCircle className="is-spinning" aria-hidden="true" /><div><strong>Synchronization running</strong><span>1842 of 1901 items matched</span></div></div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Jellyfin library diagnostics" source={`${settings} > Jellyfin`} classes={["jellyfin-library-card", "jellyfin-status-badge", "jellyfin-library-mapping-editor"]} wide>
+                <div className="jellyfin-library-list">
+                  <article className="jellyfin-library-card"><div className="jellyfin-library-card-head"><div><strong>Movies</strong><span>movies</span></div><span className="jellyfin-status-badge status-accessible">Ready to add</span></div><code>/media/movies</code><div className="jellyfin-library-association"><label htmlFor="catalog-jellyfin-library-link">Associated MediaLyze library</label><select id="catalog-jellyfin-library-link"><option>No associated library</option><option>Movies</option></select><button type="button" className="secondary small"><Plus aria-hidden="true" />Add as MediaLyze library</button></div></article>
+                  <article className="jellyfin-library-card is-mappable"><div className="jellyfin-library-card-head"><div><strong>Archive</strong><span>mixed</span></div><span className="jellyfin-status-badge status-path_not_accessible">Path inaccessible</span></div><div className="jellyfin-library-mapping-list"><div className="jellyfin-library-mapping-editor"><code>/jellyfin/archive</code><span aria-hidden="true">→</span><input defaultValue="/media/archive" aria-label="MediaLyze path for Archive" /><span className="jellyfin-library-mapping-status status-saved"><Check aria-hidden="true" />Saved automatically</span></div></div></article>
+                </div>
+              </VariantCard>
+              <VariantCard title="MediaLyze and Jellyfin library association" source={`${settings} > Libraries`} classes={["library-settings-form", "library-source-field", "library-source-paths"]} wide>
+                <div className="library-settings-form"><div className="field library-source-field"><div className="field-label-row"><span>MediaLyze paths</span><button type="button" className="secondary small">Change path</button></div><div className="library-source-paths"><code>/media/movies</code></div></div><div className="field library-source-field"><label htmlFor="catalog-associated-jellyfin">Associated Jellyfin library</label><select id="catalog-associated-jellyfin"><option>Movies</option></select></div></div>
+              </VariantCard>
+              <VariantCard title="Jellyfin metadata in a MediaLyze library" source="LibraryDetailPage" classes={["library-jellyfin-source", "library-jellyfin-distributions", "media-file-jellyfin-metadata"]} wide>
+                <div className="stack">
+                  <section className="panel stack statistic-layout-header-panel library-statistic-layout-header-panel">
+                    <div className="panel-title-row"><h2>Movies</h2></div>
+                    <div className="library-jellyfin-source"><Server aria-hidden="true" /><div><strong>Jellyfin source</strong><span>Movies · 248 items · synchronized today</span></div><span className="jellyfin-status-badge status-linked">Linked</span></div>
+                    <div className="card-grid grid"><StatCard label="Files" value="248" /><StatCard label="Storage" value="1.2 TB" tone="teal" /><StatCard label="Duration" value="19d 4h" tone="blue" /><StatCard label="Last scan" value="Today" /></div>
+                  </section>
+                  <div className="media-grid statistic-layout-grid"><div className="statistic-layout-panel-shell span-x-4 span-y-2"><AsyncPanel title="Jellyfin catalog overview"><div className="library-jellyfin-distributions"><section><h3>Production years</h3><DistributionList items={[{ label: "2024", value: 24 }, { label: "2023", value: 18 }]} /></section><section><h3>Playback status</h3><DistributionList items={[{ label: "Played", value: 137 }, { label: "Unplayed", value: 111 }]} /></section></div></AsyncPanel></div></div>
+                </div>
+              </VariantCard>
             </VariantGroup>
           </CatalogSection>
 
@@ -1708,6 +1737,13 @@ export function UiElementsPage() {
                     <strong>Audio codec</strong>
                     <ScoreMeter value={76} />
                   </div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Jellyfin metadata in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-cover-comparison"]} wide>
+                <div className="file-detail-overview">
+                  <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
+                  <div className="file-detail-jellyfin-overview"><div className="jellyfin-overview-details"><div className="meta-tags"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div><div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Production year</span><strong className="format-details-value">2016</strong></div></div></div><p className="jellyfin-overview">Jellyfin catalog metadata is shown alongside the technical analysis.</p></div></div>
+                  <div className="jellyfin-file-panel jellyfin-streaming-panel"><div className="jellyfin-playback-list"><div className="jellyfin-playback-row"><strong>Frederik</strong><span>Played 2 times</span><span>Yesterday</span></div></div></div>
                 </div>
               </VariantCard>
               <VariantCard title="Favorite compatibility groups" source={`${fileDetail} > Compatibility`} classes={["compatibility-favorite-sections", "compatibility-favorite-section", "compatibility-profile-report"]} wide>

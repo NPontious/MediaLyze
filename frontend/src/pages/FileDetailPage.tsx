@@ -13,6 +13,7 @@ import {
   ListVideo,
   Play,
   Search,
+  Radio,
   X,
 } from "lucide-react";
 import {
@@ -33,6 +34,11 @@ import { CopyIcon } from "../components/CopyIcon";
 import { DownloadIcon, type DownloadIconHandle } from "../components/DownloadIcon";
 import { DuplicatePanelEmptyState } from "../components/DuplicatePanelEmptyState";
 import { LoaderCircleIcon } from "../components/LoaderCircleIcon";
+import {
+  JellyfinCoverDetails,
+  JellyfinOverviewDetails,
+  JellyfinStreamingDetails,
+} from "../components/JellyfinMetadataDetails";
 import { PanelLeftToggleIcon } from "../components/PanelLeftToggleIcon";
 import { ProfileFavoriteButton } from "../components/ProfileFavoriteButton";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
@@ -44,6 +50,7 @@ import {
   type CompatibilityProfile,
   type CompatibilityStatus,
   type HardwareProfile,
+  type JellyfinFileOverlay,
   type MediaFileDetail,
   type MediaFileHistory,
   type MediaFileQualityScoreDetail,
@@ -73,6 +80,7 @@ type FileDetailPanelId =
   | "preview"
   | "qualityBreakdown"
   | "compatibility"
+  | "jellyfin"
   | "videoStreams"
   | "audioStreams"
   | "subtitles"
@@ -99,6 +107,7 @@ const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "preview", labelKey: "fileDetail.preview", icon: Play },
   { id: "qualityBreakdown", labelKey: "fileDetail.qualityBreakdown", icon: Gauge },
   { id: "compatibility", labelKey: "fileDetail.compatibility.title", icon: Cpu },
+  { id: "jellyfin", labelKey: "jellyfin.streaming", icon: Radio },
   { id: "videoStreams", labelKey: "fileDetail.videoStreams", icon: Film },
   { id: "audioStreams", labelKey: "fileDetail.audioStreams", icon: AudioLines },
   { id: "subtitles", labelKey: "fileDetail.subtitles", icon: Captions },
@@ -418,9 +427,11 @@ function ChaptersList({
 
 function CoverDetailsList({
   detail,
+  jellyfinItem,
   t,
 }: {
   detail: MediaFileDetail | null;
+  jellyfinItem?: JellyfinFileOverlay["item"];
   t: (key: string, options?: Record<string, unknown>) => string;
 }): ReactNode {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
@@ -450,17 +461,17 @@ function CoverDetailsList({
     };
   }, [coverUrl]);
 
-  if (!detail) {
+  if (!detail && !jellyfinItem) {
     return t("streamDetails.unavailable");
   }
-  if (!detail.has_embedded_cover) {
+  if (!detail?.has_embedded_cover && !jellyfinItem?.image_tags.Primary) {
     return t("streamDetails.none");
   }
   const dimensions =
-    detail.embedded_cover_width && detail.embedded_cover_height
+    detail?.embedded_cover_width && detail?.embedded_cover_height
       ? `${detail.embedded_cover_width}x${detail.embedded_cover_height}`
       : "n/a";
-  const rows = [
+  const rows = detail?.has_embedded_cover ? [
     { key: "codec", label: t("fileDetail.coverCodec"), value: detail.embedded_cover_codec ?? "n/a" },
     { key: "dimensions", label: t("fileDetail.coverDimensions"), value: dimensions },
     {
@@ -470,11 +481,11 @@ function CoverDetailsList({
         ? String(detail.embedded_cover_stream_index)
         : "n/a",
     },
-  ];
-  const fallbackCoverFilename = `${detail.filename.replace(/\.[^.]+$/, "") || "cover"}-cover.png`;
+  ] : [];
+  const fallbackCoverFilename = `${detail?.filename.replace(/\.[^.]+$/, "") || "cover"}-cover.png`;
 
   async function loadCover() {
-    if (!detail) {
+    if (!detail?.has_embedded_cover) {
       return;
     }
     setIsCoverLoading(true);
@@ -509,7 +520,7 @@ function CoverDetailsList({
 
   return (
     <div className="stream-tooltip-content stream-tooltip-content-panel file-detail-cover-panel">
-      <div className="file-detail-cover-actions">
+      {detail?.has_embedded_cover ? <div className="file-detail-cover-actions">
         <button type="button" className="secondary small file-detail-cover-button" onClick={() => void loadCover()} disabled={isCoverLoading}>
           {isCoverLoading ? (
             <LoaderCircleIcon size={16} aria-hidden="true" />
@@ -532,13 +543,17 @@ function CoverDetailsList({
             {t("fileDetail.downloadCover")}
           </button>
         ) : null}
-      </div>
+      </div> : null}
       {coverError ? <div className="notice compact file-detail-cover-error">{coverError}</div> : null}
-      {coverUrl ? (
-        <figure className="file-detail-cover-preview">
-          <img src={coverUrl} alt={t("fileDetail.coverPreviewAlt", { filename: detail.filename })} />
-        </figure>
-      ) : null}
+      <div className="file-detail-cover-comparison">
+        {coverUrl && detail ? (
+          <figure className="file-detail-cover-preview">
+            <figcaption><ImageIcon aria-hidden="true" />{t("jellyfin.embeddedCoverSource")}</figcaption>
+            <img src={coverUrl} alt={t("fileDetail.coverPreviewAlt", { filename: detail.filename })} />
+          </figure>
+        ) : null}
+        {jellyfinItem ? <JellyfinCoverDetails item={jellyfinItem} t={t} /> : null}
+      </div>
       {rows.map((row) => (
         <div className="stream-tooltip-row" key={row.key}>
           <div className="stream-tooltip-head format-details-row">
@@ -665,6 +680,8 @@ function buildAvailableFileDetailPanelIds(
   file: MediaFileDetail | null,
   qualityDetail: MediaFileQualityScoreDetail | null,
   compatibilityCount = 0,
+  hasJellyfinMatch = false,
+  hasJellyfinCover = false,
 ): FileDetailPanelId[] {
   const ids: FileDetailPanelId[] = ["overview"];
   if (hasPreviewMetadata(file)) {
@@ -676,6 +693,9 @@ function buildAvailableFileDetailPanelIds(
   if (compatibilityCount > 0) {
     ids.push("compatibility");
   }
+  if (hasJellyfinMatch) {
+    ids.push("jellyfin");
+  }
   if (hasVideoMetadata(file)) {
     ids.push("videoStreams");
   }
@@ -685,7 +705,7 @@ function buildAvailableFileDetailPanelIds(
   if (hasSubtitleMetadata(file)) {
     ids.push("subtitles");
   }
-  if (hasCoverMetadata(file)) {
+  if (hasCoverMetadata(file) || hasJellyfinCover) {
     ids.push("cover");
   }
   if ((file?.chapters ?? []).length > 0) {
@@ -1066,10 +1086,12 @@ type OverviewRow = {
 
 function OverviewPanel({
   file,
+  jellyfinItem,
   t,
   inDepthDolbyVisionProfiles = false,
 }: {
   file: MediaFileDetail | null;
+  jellyfinItem?: JellyfinFileOverlay["item"];
   t: (key: string, options?: Record<string, unknown>) => string;
   inDepthDolbyVisionProfiles?: boolean;
 }): ReactNode {
@@ -1161,6 +1183,11 @@ function OverviewPanel({
         <div className="notice file-detail-analysis-warning">
           <strong>{t("fileDetail.analysisFailure")}</strong>
           <span>{file.analysis_failure_reason}</span>
+        </div>
+      ) : null}
+      {jellyfinItem ? (
+        <div className="file-detail-jellyfin-overview">
+          <JellyfinOverviewDetails item={jellyfinItem} showTitle={false} t={t} />
         </div>
       ) : null}
     </div>
@@ -1592,6 +1619,8 @@ export function FileDetailPage() {
   const [compatibilityError, setCompatibilityError] = useState<string | null>(null);
   const [fileHistory, setFileHistory] = useState<MediaFileHistory | null>(null);
   const [fileHistoryError, setFileHistoryError] = useState<string | null>(null);
+  const [jellyfinOverlay, setJellyfinOverlay] = useState<JellyfinFileOverlay | null>(null);
+  const [jellyfinError, setJellyfinError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activePanelId, setActivePanelId] = useState<FileDetailPanelId>(() => readStoredFileDetailPanelId());
   const [isNavCollapsed, setIsNavCollapsed] = useState(() => readStoredFileDetailNavCollapsed());
@@ -1642,6 +1671,13 @@ export function FileDetailPage() {
         setFileHistoryError(null);
       })
       .catch((reason: Error) => setFileHistoryError(reason.message));
+    api
+      .fileJellyfin(fileId)
+      .then((payload) => {
+        setJellyfinOverlay(payload);
+        setJellyfinError(null);
+      })
+      .catch((reason: Error) => setJellyfinError(reason.message));
     Promise.all([
       api.hardwareProfiles(),
       api.softwareProfiles(),
@@ -1763,7 +1799,7 @@ export function FileDetailPage() {
       title: t("fileDetail.navigation.overview"),
       loading: !file && !error,
       error,
-      body: <OverviewPanel file={file} t={t} inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles} />,
+      body: <OverviewPanel file={file} jellyfinItem={jellyfinOverlay?.item} t={t} inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles} />,
     },
     preview: {
       title: t("fileDetail.preview"),
@@ -1849,11 +1885,29 @@ export function FileDetailPage() {
         />
       ),
     },
+    jellyfin: {
+      title: t("jellyfin.streaming"),
+      loading: !jellyfinOverlay && !jellyfinError,
+      error: jellyfinError,
+      body: (
+        <JellyfinStreamingDetails
+          userData={jellyfinOverlay?.user_data ?? []}
+          matchMethod={jellyfinOverlay?.match?.match_method}
+          t={t}
+          onRejectMatch={jellyfinOverlay?.match ? () => {
+            if (!jellyfinOverlay?.match) return;
+            void api.deleteJellyfinMatch(jellyfinOverlay.match.id)
+              .then(() => setJellyfinOverlay(null))
+              .catch((reason: Error) => setJellyfinError(reason.message));
+          } : undefined}
+        />
+      ),
+    },
     cover: {
       title: t("fileDetail.cover"),
       loading: !file && !error,
       error,
-      body: <CoverDetailsList detail={file} t={t} />,
+      body: <CoverDetailsList detail={file} jellyfinItem={jellyfinOverlay?.item} t={t} />,
     },
     fileHistory: {
       title: t("fileDetail.history.title"),
@@ -1944,8 +1998,10 @@ export function FileDetailPage() {
       file,
       qualityDetail,
       hardwareProfiles.length + softwareProfiles.length + combinationProfiles.length,
+      Boolean(jellyfinOverlay?.item),
+      Boolean(jellyfinOverlay?.item?.image_tags.Primary),
     ),
-    [combinationProfiles.length, file, hardwareProfiles.length, qualityDetail, softwareProfiles.length],
+    [combinationProfiles.length, file, hardwareProfiles.length, jellyfinOverlay?.item, qualityDetail, softwareProfiles.length],
   );
   const navItems = FILE_DETAIL_NAV_ITEMS.filter((item) => availablePanelIds.includes(item.id));
   const normalizedActivePanelId = normalizeFileDetailPanelId(activePanelId, availablePanelIds);

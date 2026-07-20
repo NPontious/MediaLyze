@@ -83,6 +83,11 @@ class MediaContentCategory(str, Enum):
     bonus = "bonus"
 
 
+class HistoryAddedDateSource(str, Enum):
+    medialyze = "medialyze"
+    jellyfin = "jellyfin"
+
+
 class Library(TimestampMixin, Base):
     __tablename__ = "libraries"
 
@@ -108,6 +113,11 @@ class Library(TimestampMixin, Base):
         nullable=True,
     )
     show_on_dashboard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    history_added_date_source: Mapped[HistoryAddedDateSource] = mapped_column(
+        SqlEnum(HistoryAddedDateSource, native_enum=False),
+        default=HistoryAddedDateSource.medialyze,
+        nullable=False,
+    )
 
     media_files: Mapped[list[MediaFile]] = relationship(
         back_populates="library",
@@ -173,6 +183,140 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class JellyfinConnection(TimestampMixin, Base):
+    __tablename__ = "jellyfin_connection"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    base_url: Mapped[str] = mapped_column(String(2048), default="", nullable=False)
+    api_key: Mapped[str] = mapped_column(String(2048), default="", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    server_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    server_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_status: Mapped[str] = mapped_column(String(32), default="never", nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    last_sync_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_sync_finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_successful_sync_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class JellyfinUser(TimestampMixin, Base):
+    __tablename__ = "jellyfin_users"
+
+    jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class JellyfinPathMapping(TimestampMixin, Base):
+    __tablename__ = "jellyfin_path_mappings"
+    __table_args__ = (Index("ix_jellyfin_path_mappings_enabled", "enabled"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    jellyfin_path_prefix: Mapped[str] = mapped_column(String(2048), nullable=False)
+    medialyze_path_prefix: Mapped[str] = mapped_column(String(2048), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class JellyfinLibrary(TimestampMixin, Base):
+    __tablename__ = "jellyfin_libraries"
+    __table_args__ = (Index("ix_jellyfin_libraries_name", "name", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    collection_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    locations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    mapped_locations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    mapped_status: Mapped[str] = mapped_column(String(32), default="path_unmapped", nullable=False)
+    linked_library_id: Mapped[int | None] = mapped_column(
+        ForeignKey("libraries.id", ondelete="SET NULL"), nullable=True
+    )
+    link_method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class JellyfinItem(TimestampMixin, Base):
+    __tablename__ = "jellyfin_items"
+    __table_args__ = (
+        Index("ix_jellyfin_items_jellyfin_item_id", "jellyfin_item_id", unique=True),
+        Index("ix_jellyfin_items_path", "path"),
+        Index("ix_jellyfin_items_library_name", "library_name"),
+        Index("ix_jellyfin_items_match_status", "match_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    jellyfin_item_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    library_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    series_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    season_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    original_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    series_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    season_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_created: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    premiere_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    production_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overview: Mapped[str | None] = mapped_column(String(12000), nullable=True)
+    provider_ids: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    image_tags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    backdrop_image_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    raw_limited_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    match_status: Mapped[str] = mapped_column(String(32), default="unmatched", nullable=False)
+    mismatch_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    suggested_media_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class JellyfinMediaMatch(TimestampMixin, Base):
+    __tablename__ = "jellyfin_media_matches"
+    __table_args__ = (
+        Index("ix_jellyfin_media_matches_media_file", "media_file_id", unique=True),
+        Index("ix_jellyfin_media_matches_item", "jellyfin_item_id", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    media_file_id: Mapped[int] = mapped_column(
+        ForeignKey("media_files.id", ondelete="CASCADE"), nullable=False
+    )
+    jellyfin_item_id: Mapped[int] = mapped_column(
+        ForeignKey("jellyfin_items.id", ondelete="CASCADE"), nullable=False
+    )
+    match_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="matched", nullable=False)
+    mismatch_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class JellyfinUserItemData(Base):
+    __tablename__ = "jellyfin_user_item_data"
+    __table_args__ = (
+        UniqueConstraint("jellyfin_item_id", "jellyfin_user_id", name="uq_jellyfin_user_item_data"),
+        Index("ix_jellyfin_user_item_data_user", "jellyfin_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    jellyfin_item_id: Mapped[int] = mapped_column(
+        ForeignKey("jellyfin_items.id", ondelete="CASCADE"), nullable=False
+    )
+    jellyfin_user_id: Mapped[str] = mapped_column(
+        ForeignKey("jellyfin_users.jellyfin_user_id", ondelete="CASCADE"), nullable=False
+    )
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    played: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
 
 
 class QualityProfileDefinition(TimestampMixin, Base):
