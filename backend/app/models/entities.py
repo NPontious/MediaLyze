@@ -258,9 +258,13 @@ class JellyfinPathMapping(TimestampMixin, Base):
 
 class JellyfinLibrary(TimestampMixin, Base):
     __tablename__ = "jellyfin_libraries"
-    __table_args__ = (Index("ix_jellyfin_libraries_name", "name", unique=True),)
+    __table_args__ = (
+        Index("ix_jellyfin_libraries_remote_item_id", "remote_item_id", unique=True),
+        Index("ix_jellyfin_libraries_name", "name"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    remote_item_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     collection_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     locations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
@@ -278,12 +282,16 @@ class JellyfinItem(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_jellyfin_items_jellyfin_item_id", "jellyfin_item_id", unique=True),
         Index("ix_jellyfin_items_path", "path"),
+        Index("ix_jellyfin_items_library_id", "library_id"),
         Index("ix_jellyfin_items_library_name", "library_name"),
         Index("ix_jellyfin_items_match_status", "match_status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     jellyfin_item_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    library_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jellyfin_libraries.id", ondelete="SET NULL"), nullable=True
+    )
     library_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_type: Mapped[str] = mapped_column(String(64), nullable=False)
     path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
@@ -304,6 +312,8 @@ class JellyfinItem(TimestampMixin, Base):
     image_tags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     backdrop_image_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     raw_limited_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     match_status: Mapped[str] = mapped_column(String(32), default="unmatched", nullable=False)
     mismatch_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     suggested_media_file_id: Mapped[int | None] = mapped_column(

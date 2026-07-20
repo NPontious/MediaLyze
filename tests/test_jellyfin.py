@@ -41,7 +41,15 @@ from backend.app.models.entities import (
     ScanStatus,
 )
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
-from backend.app.services.jellyfin_client import JellyfinClient, JellyfinConfigurationError
+from backend.app.services.jellyfin_client import (
+    JellyfinClient,
+    JellyfinConfigurationError,
+    JellyfinItemPage,
+    JellyfinImage,
+    JellyfinConnectionError,
+    JellyfinResponseError,
+)
+from backend.app.services.jellyfin_images import JellyfinImageCache
 from backend.app.services.jellyfin_matching import apply_path_mappings, recompute_jellyfin_matches
 from backend.app.services.jellyfin_progress import (
     clear_jellyfin_progress,
@@ -216,26 +224,31 @@ def test_client_rejects_malformed_url() -> None:
         JellyfinClient("jellyfin.local:8096", "secret")
 
 
-def test_client_sends_api_key_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_client_sends_api_key_and_timeout() -> None:
     captured: dict = {}
 
-    def fake_get(url, **kwargs):
-        captured.update(url=url, **kwargs)
-        return httpx.Response(200, json={"ServerName": "Test"}, request=httpx.Request("GET", url))
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(url=str(request.url), headers=request.headers)
+        return httpx.Response(200, json={"ServerName": "Test"})
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    JellyfinClient("http://jellyfin:8096", "secret", timeout_seconds=7).get_system_info()
+    client = JellyfinClient(
+        "http://jellyfin:8096",
+        "secret",
+        timeout_seconds=7,
+        transport=httpx.MockTransport(handler),
+    )
+    client.get_system_info()
     assert captured["headers"]["X-Emby-Token"] == "secret"
-    assert captured["timeout"] == 7
+    assert client._client.timeout.read == 7
 
 
-def test_client_paginates_items(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_client_paginates_items() -> None:
     requests: list[dict] = []
 
-    def fake_get(url, **kwargs):
-        params = kwargs["params"]
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
         requests.append(params)
-        start_index = params["StartIndex"]
+        start_index = int(params["StartIndex"])
         item_count = JellyfinClient.ITEM_PAGE_SIZE if start_index == 0 else 2
         return httpx.Response(
             200,
@@ -246,23 +259,23 @@ def test_client_paginates_items(monkeypatch: pytest.MonkeyPatch) -> None:
                 ],
                 "TotalRecordCount": JellyfinClient.ITEM_PAGE_SIZE + 2,
             },
-            request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    items = JellyfinClient("http://jellyfin:8096", "secret").get_items(user_id="user-1")
+    items = JellyfinClient(
+        "http://jellyfin:8096", "secret", transport=httpx.MockTransport(handler)
+    ).get_items(user_id="user-1")
 
     assert len(items) == JellyfinClient.ITEM_PAGE_SIZE + 2
-    assert [request["StartIndex"] for request in requests] == [0, JellyfinClient.ITEM_PAGE_SIZE]
-    assert all(request["Limit"] == JellyfinClient.ITEM_PAGE_SIZE for request in requests)
+    assert [int(request["StartIndex"]) for request in requests] == [0, JellyfinClient.ITEM_PAGE_SIZE]
+    assert all(int(request["Limit"]) == JellyfinClient.ITEM_PAGE_SIZE for request in requests)
     assert all(request["UserId"] == "user-1" for request in requests)
 
 
-def test_client_reports_item_page_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_client_reports_item_page_progress() -> None:
     progress: list[tuple[int, int | None]] = []
 
-    def fake_get(url, **kwargs):
-        start_index = kwargs["params"]["StartIndex"]
+    def handler(request: httpx.Request) -> httpx.Response:
+        start_index = int(request.url.params["StartIndex"])
         count = JellyfinClient.ITEM_PAGE_SIZE if start_index == 0 else 1
         return httpx.Response(
             200,
@@ -270,11 +283,11 @@ def test_client_reports_item_page_progress(monkeypatch: pytest.MonkeyPatch) -> N
                 "Items": [{"Id": str(start_index + offset)} for offset in range(count)],
                 "TotalRecordCount": JellyfinClient.ITEM_PAGE_SIZE + 1,
             },
-            request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    JellyfinClient("http://jellyfin:8096", "secret").get_items(
+    JellyfinClient(
+        "http://jellyfin:8096", "secret", transport=httpx.MockTransport(handler)
+    ).get_items(
         progress_callback=lambda current, total: progress.append((current, total))
     )
 
@@ -287,18 +300,121 @@ def test_client_reports_item_page_progress(monkeypatch: pytest.MonkeyPatch) -> N
 def test_client_retries_transient_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
 
-    def fake_get(url, **_kwargs):
+    def handler(_request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
         if attempts < 3:
             raise httpx.ReadTimeout("slow response")
-        return httpx.Response(200, json={"Version": "10.11"}, request=httpx.Request("GET", url))
+        return httpx.Response(200, json={"Version": "10.11"})
 
-    monkeypatch.setattr(httpx, "get", fake_get)
     monkeypatch.setattr("backend.app.services.jellyfin_client.sleep", lambda _seconds: None)
 
-    assert JellyfinClient("http://jellyfin:8096", "secret").get_system_info()["Version"] == "10.11"
+    assert JellyfinClient(
+        "http://jellyfin:8096", "secret", transport=httpx.MockTransport(handler)
+    ).get_system_info()["Version"] == "10.11"
     assert attempts == 3
+
+
+def test_client_rejects_cross_origin_redirect_without_forwarding_key() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": "https://attacker.example/collect"})
+
+    client = JellyfinClient(
+        "https://jellyfin.example",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(JellyfinConnectionError, match="different origin"):
+        client.get_system_info()
+
+    assert len(requests) == 1
+    assert requests[0].headers["X-Emby-Token"] == "secret"
+    assert requests[0].url.host == "jellyfin.example"
+
+
+def test_client_follows_only_same_origin_redirects() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/System/Info":
+            return httpx.Response(307, headers={"Location": "/api/System/Info"})
+        return httpx.Response(200, json={"Version": "10.11"})
+
+    result = JellyfinClient(
+        "https://jellyfin.example",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    ).get_system_info()
+
+    assert result["Version"] == "10.11"
+    assert [request.url.host for request in requests] == ["jellyfin.example", "jellyfin.example"]
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "method"),
+    [
+        ("/Users", {"Users": []}, "get_users"),
+        ("/Library/VirtualFolders", {}, "get_virtual_folders"),
+        ("/Items", {"Items": []}, "get_items"),
+    ],
+)
+def test_client_rejects_malformed_success_payloads(path: str, payload: object, method: str) -> None:
+    client = JellyfinClient(
+        "https://jellyfin.example",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=payload)
+            if request.url.path == path
+            else httpx.Response(404)
+        ),
+    )
+    with pytest.raises(JellyfinResponseError):
+        getattr(client, method)()
+
+
+def test_client_retries_transient_http_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(503, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"Version": "10.11"})
+
+    monkeypatch.setattr("backend.app.services.jellyfin_client.sleep", lambda _seconds: None)
+    result = JellyfinClient(
+        "https://jellyfin.example",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    ).get_system_info()
+    assert result["Version"] == "10.11"
+    assert attempts == 3
+
+
+def test_image_cache_is_server_scoped_and_byte_bounded() -> None:
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, base_url: str):
+            self.base_url = base_url
+
+        def get_image(self, *_args, **_kwargs):
+            calls.append(self.base_url)
+            return JellyfinImage(content=self.base_url.encode().ljust(16, b"x"), content_type="image/jpeg")
+
+    cache = JellyfinImageCache(max_entries=10, max_bytes=20, max_item_bytes=20)
+    first = cache.get(FakeClient("https://one.example"), "item", "Primary", "tag")
+    second = cache.get(FakeClient("https://two.example"), "item", "Primary", "tag")
+
+    assert first.content != second.content
+    assert calls == ["https://one.example", "https://two.example"]
+    assert len(cache._entries) == 1
+    assert cache._size_bytes <= 20
 
 
 def test_path_mapping_and_exact_match(db: Session, tmp_path: Path) -> None:
@@ -771,15 +887,15 @@ def test_sync_normalizes_size_from_primary_media_source(db: Session, monkeypatch
     )
     monkeypatch.setattr(
         JellyfinClient,
-        "get_items",
-        lambda _self, **_kwargs: [{
+        "iter_item_pages",
+        lambda _self, **_kwargs: iter([JellyfinItemPage(items=[{
             "Id": "movie-with-source-size",
             "Type": "Movie",
             "Name": "Movie",
             "Path": "/media/Movie.mkv",
             "RunTimeTicks": 600_000_000,
             "MediaSources": [{"Size": 4_096}],
-        }],
+        }], start_index=0, total_record_count=1)]),
     )
 
     run_jellyfin_sync(db)
@@ -989,7 +1105,11 @@ def test_manual_jellyfin_library_link_survives_sync(db: Session, tmp_path: Path,
         "get_virtual_folders",
         lambda _self: [{"Name": "Movies", "CollectionType": "movies", "Locations": ["/different/path"]}],
     )
-    monkeypatch.setattr(JellyfinClient, "get_items", lambda _self, **_kwargs: [])
+    monkeypatch.setattr(
+        JellyfinClient,
+        "iter_item_pages",
+        lambda _self, **_kwargs: iter([JellyfinItemPage(items=[], start_index=0, total_record_count=0)]),
+    )
 
     run_jellyfin_sync(db)
 
@@ -998,3 +1118,209 @@ def test_manual_jellyfin_library_link_survives_sync(db: Session, tmp_path: Path,
     assert remote.linked_library_id == media.library_id
     assert remote.link_method == "manual"
     assert remote.mapped_status == "linked"
+
+
+def test_jellyfin_library_rename_preserves_identity_and_manual_link(
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media = _add_media(db, tmp_path / "renamed")
+    folder_name = "Movies"
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_system_info(self):
+            return {"ServerName": "Test", "Version": "10.11"}
+
+        def get_users(self):
+            return []
+
+        def get_virtual_folders(self):
+            return [{
+                "ItemId": "library-remote-id",
+                "Name": folder_name,
+                "CollectionType": "movies",
+                "Locations": ["/remote/movies"],
+            }]
+
+        def get_items(self, **_kwargs):
+            return [{
+                "Id": "movie-1",
+                "Name": "Movie",
+                "Type": "Movie",
+                "Path": "/remote/movies/Movie.mkv",
+            }]
+
+    db.add(JellyfinConnection(base_url="https://jellyfin.example", api_key="secret", enabled=True))
+    db.commit()
+    monkeypatch.setattr("backend.app.services.jellyfin_sync.JellyfinClient", FakeClient)
+
+    run_jellyfin_sync(db)
+    library = db.scalar(
+        select(JellyfinLibrary).where(JellyfinLibrary.remote_item_id == "library-remote-id")
+    )
+    assert library is not None
+    original_id = library.id
+    library.linked_library_id = media.library_id
+    library.link_method = "manual"
+    db.commit()
+
+    folder_name = "Films"
+    run_jellyfin_sync(db)
+
+    renamed = db.scalar(
+        select(JellyfinLibrary).where(JellyfinLibrary.remote_item_id == "library-remote-id")
+    )
+    item = db.scalar(select(JellyfinItem).where(JellyfinItem.jellyfin_item_id == "movie-1"))
+    assert renamed is not None
+    assert renamed.id == original_id
+    assert renamed.name == "Films"
+    assert renamed.linked_library_id == media.library_id
+    assert item is not None and item.library_id == renamed.id and item.library_name == "Films"
+
+
+def test_disabling_jellyfin_user_removes_cached_playback_data(db: Session) -> None:
+    item = JellyfinItem(jellyfin_item_id="item", item_type="Movie", title="Movie")
+    user = JellyfinUser(jellyfin_user_id="user", name="User", enabled_for_sync=True)
+    db.add_all([item, user])
+    db.flush()
+    db.add(JellyfinUserItemData(
+        jellyfin_item_id=item.id,
+        jellyfin_user_id=user.jellyfin_user_id,
+        play_count=4,
+        played=True,
+    ))
+    db.commit()
+
+    response = _client(db).patch("/api/jellyfin/users", json={"enabled_user_ids": []})
+
+    assert response.status_code == 200
+    assert db.scalar(select(JellyfinUserItemData)) is None
+
+
+def test_completed_user_sync_removes_items_missing_for_that_user(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = JellyfinItem(jellyfin_item_id="first", item_type="Movie", title="First")
+    second = JellyfinItem(jellyfin_item_id="second", item_type="Movie", title="Second")
+    user = JellyfinUser(jellyfin_user_id="user", name="User", enabled_for_sync=True)
+    db.add_all([
+        JellyfinConnection(base_url="https://jellyfin.example", api_key="secret", enabled=True),
+        first,
+        second,
+        user,
+    ])
+    db.flush()
+    db.add_all([
+        JellyfinUserItemData(jellyfin_item_id=first.id, jellyfin_user_id="user", play_count=1),
+        JellyfinUserItemData(jellyfin_item_id=second.id, jellyfin_user_id="user", play_count=2),
+    ])
+    db.commit()
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_system_info(self):
+            return {"ServerName": "Test", "Version": "10.11"}
+
+        def get_users(self):
+            return [{"Id": "user", "Name": "User"}]
+
+        def get_virtual_folders(self):
+            return []
+
+        def get_items(self, *, user_id=None, progress_callback=None):
+            items = [
+                {"Id": "first", "Type": "Movie", "Name": "First"},
+                {"Id": "second", "Type": "Movie", "Name": "Second"},
+            ]
+            if user_id:
+                items = [{**items[0], "UserData": {"PlayCount": 3}}]
+            if progress_callback:
+                progress_callback(len(items), len(items))
+            return items
+
+    monkeypatch.setattr("backend.app.services.jellyfin_sync.JellyfinClient", FakeClient)
+    run_jellyfin_sync(db)
+
+    rows = list(db.scalars(select(JellyfinUserItemData)))
+    assert [(row.jellyfin_item_id, row.play_count) for row in rows] == [(first.id, 3)]
+
+
+def test_manual_match_reassignment_updates_displaced_item_status(db: Session, tmp_path: Path) -> None:
+    media = _add_media(db, tmp_path / "manual-reassign")
+    first = JellyfinItem(jellyfin_item_id="first", item_type="Movie", title="First")
+    second = JellyfinItem(jellyfin_item_id="second", item_type="Movie", title="Second")
+    db.add_all([first, second])
+    db.commit()
+    client = _client(db)
+
+    assert client.post(
+        "/api/jellyfin/matches",
+        json={"jellyfin_item_id": first.id, "media_file_id": media.id},
+    ).status_code == 201
+    assert client.post(
+        "/api/jellyfin/matches",
+        json={"jellyfin_item_id": second.id, "media_file_id": media.id},
+    ).status_code == 201
+
+    db.refresh(first)
+    db.refresh(second)
+    assert first.match_status == "unmatched"
+    assert first.mismatch_reason == "manual_match_reassigned"
+    assert second.match_status == "matched"
+
+
+def test_path_matching_marks_duplicate_remote_path_as_conflict(db: Session, tmp_path: Path) -> None:
+    media_root = tmp_path / "duplicate-path"
+    media_root.mkdir()
+    _add_media(db, media_root)
+    db.add(JellyfinPathMapping(
+        jellyfin_path_prefix="/remote",
+        medialyze_path_prefix=str(media_root),
+        enabled=True,
+    ))
+    first = JellyfinItem(
+        jellyfin_item_id="first", item_type="Movie", title="First", path="/remote/Movie.mkv"
+    )
+    second = JellyfinItem(
+        jellyfin_item_id="second", item_type="Movie", title="Second", path="/remote/Movie.mkv"
+    )
+    db.add_all([first, second])
+    db.commit()
+
+    recompute_jellyfin_matches(db)
+
+    db.refresh(first)
+    db.refresh(second)
+    assert {first.match_status, second.match_status} == {"matched", "ambiguous"}
+    conflicted = first if first.match_status == "ambiguous" else second
+    assert conflicted.mismatch_reason == "media_file_already_matched"
+    assert len(list(db.scalars(select(JellyfinMediaMatch)))) == 1
+
+
+def test_disconnect_removes_jellyfin_connection_and_cached_data(db: Session) -> None:
+    db.add_all([
+        JellyfinConnection(base_url="https://jellyfin.example", api_key="secret", enabled=True),
+        JellyfinUser(jellyfin_user_id="user", name="User", enabled_for_sync=True),
+        JellyfinLibrary(remote_item_id="library", name="Movies"),
+        JellyfinItem(jellyfin_item_id="item", item_type="Movie", title="Movie"),
+        JellyfinPathMapping(jellyfin_path_prefix="/remote", medialyze_path_prefix="/media"),
+    ])
+    db.commit()
+
+    response = _client(db).delete("/api/jellyfin/connection")
+
+    assert response.status_code == 204
+    connection = db.get(JellyfinConnection, 1)
+    assert connection is not None
+    assert connection.enabled is False and connection.api_key == "" and connection.base_url == ""
+    assert db.scalar(select(JellyfinItem)) is None
+    assert db.scalar(select(JellyfinLibrary)) is None
+    assert db.scalar(select(JellyfinUser)) is None
+    assert db.scalar(select(JellyfinPathMapping)) is None

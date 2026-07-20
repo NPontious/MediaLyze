@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     database_filename: str = "medialyze.db"
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"
+    jellyfin_api_key_file: Path | None = Field(default=None, validation_alias="JELLYFIN_API_KEY_FILE")
     scan_discovery_batch_size: int = 500
     scan_commit_batch_size: int = 5
     sqlite_busy_timeout_seconds: float = Field(default=30.0, ge=0.0)

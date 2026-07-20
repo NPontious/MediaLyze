@@ -11,6 +11,9 @@ All notable changes to this project will be documented in this file.
 * Stop the Jellyfin settings panel from repeatedly reloading and flickering after navigation-state refreshes.
 * Keep Jellyfin settings visible after action or validation errors and show each error beside the affected section or library.
 * Apply Jellyfin path mappings and library associations immediately, while coalescing path and asset-match recalculation into a visible background job that no longer blocks the settings UI.
+* Prevent Jellyfin API keys from crossing redirect origins, validate successful API responses before cleanup, and retry transient `429`/gateway failures through a pooled HTTP client.
+* Preserve Jellyfin library links across remote renames, keep match state consistent during reassignment and path conflicts, and remove stale or disabled-user playback data.
+* Add the missing upgrade migration for persisted Jellyfin sync-job cancellation state so existing development databases start successfully.
 
 ### ✨ Enhancements
 
@@ -26,6 +29,8 @@ All notable changes to this project will be documented in this file.
 * Keep Jellyfin as an optional overlay in existing MediaLyze libraries instead of exposing a separate Jellyfin-only library UI. Linked libraries gain catalog distributions and matched rows gain titles, years, and playback counts; file details place metadata in Overview, playback in Streaming, and Jellyfin artwork beside embedded covers.
 * Align Jellyfin settings fields with the compact 36-pixel input style used by newer settings controls.
 * Allow Jellyfin libraries to create or explicitly link MediaLyze libraries, with the same path and association controls reflected in both settings sections.
+* Stream validated Jellyfin catalog pages into batched database writes, paginate catalog browsing in SQL, and bind the byte-limited image cache to the configured Jellyfin server.
+* Separate Jellyfin configuration from activation, add an explicit connection-removal action, support `JELLYFIN_API_KEY_FILE`, and reduce redundant Settings requests while isolating sync polling in a reusable hook.
 
 ### ✨ New
 

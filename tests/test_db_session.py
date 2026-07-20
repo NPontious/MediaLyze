@@ -107,6 +107,23 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE jellyfin_sync_jobs (
+                    id INTEGER PRIMARY KEY,
+                    status VARCHAR(9) NOT NULL,
+                    trigger_source VARCHAR(9) NOT NULL,
+                    active_lock INTEGER,
+                    queued_at DATETIME NOT NULL,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    error VARCHAR(2048),
+                    sync_summary JSON NOT NULL
+                )
+                """
+            )
+        )
 
     init_db(engine)
 
@@ -119,6 +136,9 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
     scan_job_columns = {column["name"] for column in inspector.get_columns("scan_jobs")}
     media_file_history_columns = {column["name"] for column in inspector.get_columns("media_file_history")}
     library_history_columns = {column["name"] for column in inspector.get_columns("library_history")}
+    jellyfin_sync_job_columns = {
+        column["name"] for column in inspector.get_columns("jellyfin_sync_jobs")
+    }
 
     assert "app_settings" in inspector.get_table_names()
     assert "media_file_history" in inspector.get_table_names()
@@ -153,6 +173,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
     assert {"library_id", "snapshot_day", "captured_at", "source_scan_job_id", "snapshot"}.issubset(
         library_history_columns
     )
+    assert "cancellation_requested" in jellyfin_sync_job_columns
 
 
 def test_init_db_adds_missing_indexes_for_existing_sqlite_schema() -> None:

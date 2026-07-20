@@ -260,7 +260,6 @@ describe("JellyfinSettingsPanel", () => {
     fireEvent.change(interval, { target: { value: "0" } });
 
     await waitFor(() => expect(updateConnection).toHaveBeenCalledWith(expect.objectContaining({
-      enabled: true,
       sync_interval_minutes: 0,
     })), { timeout: 2000 });
     expect(await screen.findByText("Saved automatically")).toBeInTheDocument();
@@ -356,7 +355,7 @@ describe("JellyfinSettingsPanel", () => {
     expect(await screen.findByText("Updating Jellyfin data in the background")).toBeInTheDocument();
     expect(screen.getByText(/changes are already saved/i)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Enable this path mapping" })).toBeEnabled();
-    expect(connectionRequest).toHaveBeenCalledTimes(1);
+    expect(connectionRequest).not.toHaveBeenCalled();
 
     await waitFor(() => expect(resolveBackground).toBeDefined());
     await act(async () => resolveBackground?.({ ...IDLE_MATCH_RECOMPUTE, status: "success" }));
@@ -419,5 +418,29 @@ describe("JellyfinSettingsPanel", () => {
 
     await act(async () => resolveLink?.(linkedRemote));
     await waitFor(() => expect(screen.getByText("Updating Jellyfin data in the background")).toBeInTheDocument());
+  });
+
+  it("keeps activation explicit and can remove the connection", async () => {
+    const idleConnection = { ...CONNECTION, last_status: "success" };
+    vi.spyOn(api, "jellyfinSyncStatus").mockResolvedValue(idleSyncStatus(idleConnection));
+    vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
+    vi.spyOn(api, "jellyfinPathMappings").mockResolvedValue([]);
+    vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
+    const updateConnection = vi.spyOn(api, "updateJellyfinConnection").mockResolvedValue({
+      ...idleConnection,
+      enabled: false,
+    });
+    const disconnect = vi.spyOn(api, "disconnectJellyfin").mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<JellyfinSettingsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Disable integration" }));
+    await waitFor(() => expect(updateConnection).toHaveBeenCalledWith({ enabled: false }));
+    expect(await screen.findByRole("button", { name: "Enable integration" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove connection" }));
+    await waitFor(() => expect(disconnect).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/connection and its cached data were removed/i)).toBeInTheDocument();
   });
 });

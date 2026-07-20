@@ -1865,6 +1865,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  disconnectJellyfin: () =>
+    request<void>("/jellyfin/connection", { method: "DELETE" }),
   testJellyfinConnection: (payload: { base_url?: string; api_key?: string }) =>
     request<{ ok: boolean; server_name: string | null; server_version: string | null; error: string | null }>(
       "/jellyfin/test",

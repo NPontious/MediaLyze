@@ -99,6 +99,7 @@ def recompute_jellyfin_matches(
     )
     manual_item_ids = {match.jellyfin_item_id for match in manual_matches}
     manual_media_file_ids = {match.media_file_id for match in manual_matches}
+    claimed_media_file_ids = set(manual_media_file_ids)
     media_query = select(MediaFile).options(selectinload(MediaFile.library), selectinload(MediaFile.library_root))
     if media_file_ids is not None:
         media_query = media_query.where(MediaFile.id.in_(media_file_ids))
@@ -189,6 +190,11 @@ def recompute_jellyfin_matches(
             unmatched += 1
             continue
         if len(candidates) == 1:
+            if candidates[0].id in claimed_media_file_ids:
+                item.match_status = "ambiguous"
+                item.mismatch_reason = "media_file_already_matched"
+                unmatched += 1
+                continue
             match = JellyfinMediaMatch(
                 media_file_id=candidates[0].id,
                 jellyfin_item_id=item.id,
@@ -199,6 +205,7 @@ def recompute_jellyfin_matches(
             db.add(match)
             item.match_status = "matched"
             item.mismatch_reason = None
+            claimed_media_file_ids.add(candidates[0].id)
             created += 1
             continue
 

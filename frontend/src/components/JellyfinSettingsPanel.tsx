@@ -24,6 +24,7 @@ import {
   type LibrarySummary,
 } from "../lib/api";
 import { formatDate } from "../lib/format";
+import { useJellyfinSyncPolling } from "../hooks/useJellyfinSyncPolling";
 
 const EMPTY_CONNECTION: JellyfinConnection = {
   base_url: "",
@@ -228,21 +229,20 @@ export function JellyfinSettingsPanel({
   onLibrariesChangedRef.current = onLibrariesChanged;
 
   const load = useCallback(async () => {
-    const [nextConnection, nextStatus, nextUsers, nextMappings, nextLibraries] = await Promise.all([
-      api.jellyfinConnection(),
+    const [nextStatus, nextUsers, nextMappings, nextLibraries] = await Promise.all([
       api.jellyfinSyncStatus(),
       api.jellyfinUsers(),
       api.jellyfinPathMappings(),
       api.jellyfinLibraries(),
     ]);
-    setConnection(nextConnection);
+    setConnection(nextStatus);
     setStatus(nextStatus);
     activeSyncJobIdRef.current = nextStatus.sync_job_active ? nextStatus.sync_job_id : null;
     setUsers(nextUsers);
     setMappings(nextMappings);
     setLibraries(nextLibraries);
-    setBaseUrl(nextConnection.base_url);
-    setSyncInterval(String(nextConnection.sync_interval_minutes));
+    setBaseUrl(nextStatus.base_url);
+    setSyncInterval(String(nextStatus.sync_interval_minutes));
   }, []);
 
   const reloadAfterLibraryChange = useCallback(async () => {
@@ -375,7 +375,6 @@ export function JellyfinSettingsPanel({
         const updated = await api.updateJellyfinConnection({
           base_url: nextBaseUrl,
           ...(nextApiKey ? { api_key: nextApiKey } : {}),
-          enabled: Boolean(nextBaseUrl && (connection.api_key_configured || nextApiKey)),
           sync_interval_minutes: nextInterval,
         });
         setConnection(updated);
@@ -401,44 +400,32 @@ export function JellyfinSettingsPanel({
     if (saveFeedbackTimerRef.current !== null) window.clearTimeout(saveFeedbackTimerRef.current);
   }, []);
 
-  useEffect(() => {
-    if (!syncRunning) return;
-    let active = true;
-    const refreshStatus = async () => {
-      try {
-        const nextStatus = await api.jellyfinSyncStatus();
-        if (!active) return;
-        setStatus(nextStatus);
-        setConnection(nextStatus);
-        const trackedJobId = activeSyncJobIdRef.current;
-        if (
-          trackedJobId !== null
-          && nextStatus.sync_job_id === trackedJobId
-          && !nextStatus.sync_job_active
-        ) {
-          activeSyncJobIdRef.current = null;
-          if (nextStatus.sync_job_status === "completed") {
-            const items = Number(nextStatus.sync_summary.items_synced || 0);
-            const libraries = Number(nextStatus.sync_summary.libraries_synced || 0);
-            setNotice(t("jellyfin.syncSucceeded", { items, libraries }));
-            await reloadAfterLibraryChange();
-          } else if (nextStatus.sync_job_status === "canceled") {
-            setCancelNotice(t("jellyfin.syncCanceled"));
-          } else if (nextStatus.sync_job_status === "failed") {
-            setConnectionActionError(nextStatus.sync_job_error || nextStatus.last_error || t("jellyfin.testFailed"));
-          }
-        }
-      } catch {
-        // Keep the last known state; the next polling attempt may recover.
-      }
-    };
-    void refreshStatus();
-    const timer = window.setInterval(() => void refreshStatus(), 750);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [reloadAfterLibraryChange, syncRunning, t]);
+  const handleSyncStatus = useCallback((nextStatus: JellyfinSyncStatus) => {
+    setStatus(nextStatus);
+    setConnection(nextStatus);
+  }, []);
+  const handleSyncCompleted = useCallback(async (nextStatus: JellyfinSyncStatus) => {
+    const items = Number(nextStatus.sync_summary.items_synced || 0);
+    const syncedLibraries = Number(nextStatus.sync_summary.libraries_synced || 0);
+    setNotice(t("jellyfin.syncSucceeded", { items, libraries: syncedLibraries }));
+    await reloadAfterLibraryChange();
+  }, [reloadAfterLibraryChange, t]);
+  const handleSyncCanceled = useCallback(() => {
+    setCancelNotice(t("jellyfin.syncCanceled"));
+  }, [t]);
+  const handleSyncFailed = useCallback((nextStatus: JellyfinSyncStatus) => {
+    setConnectionActionError(
+      nextStatus.sync_job_error || nextStatus.last_error || t("jellyfin.testFailed"),
+    );
+  }, [t]);
+  useJellyfinSyncPolling({
+    active: syncRunning,
+    trackedJobId: activeSyncJobIdRef,
+    onStatus: handleSyncStatus,
+    onCompleted: handleSyncCompleted,
+    onCanceled: handleSyncCanceled,
+    onFailed: handleSyncFailed,
+  });
 
   async function testConnection() {
     setPending("test");
@@ -454,6 +441,42 @@ export function JellyfinSettingsPanel({
       } else {
         setNotice(t("jellyfin.testSucceeded", { name: result.server_name || "Jellyfin", version: result.server_version || "" }));
       }
+    } catch (reason) {
+      setConnectionActionError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function toggleIntegration() {
+    setPending("connection-toggle");
+    setConnectionActionError(null);
+    try {
+      const updated = await api.updateJellyfinConnection({ enabled: !connection.enabled });
+      setConnection(updated);
+      setStatus((current) => current ? { ...current, ...updated } : current);
+    } catch (reason) {
+      setConnectionActionError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function disconnectIntegration() {
+    if (!window.confirm(t("jellyfin.disconnectConfirm"))) return;
+    setPending("connection-disconnect");
+    setConnectionActionError(null);
+    try {
+      await api.disconnectJellyfin();
+      setConnection(EMPTY_CONNECTION);
+      setStatus(null);
+      setUsers([]);
+      setMappings([]);
+      setLibraries([]);
+      setBaseUrl("");
+      setApiKey("");
+      setSyncInterval("60");
+      setNotice(t("jellyfin.disconnected"));
     } catch (reason) {
       setConnectionActionError((reason as Error).message);
     } finally {
@@ -674,6 +697,14 @@ export function JellyfinSettingsPanel({
             </div>
           </div>
           <div className="jellyfin-actions">
+            <button
+              className="secondary small"
+              type="button"
+              disabled={connectionBusy || syncRunning || autoSaving || connectionDirty || !connection.api_key_configured || !connection.base_url}
+              onClick={() => void toggleIntegration()}
+            >
+              {connection.enabled ? t("jellyfin.disableIntegration") : t("jellyfin.enableIntegration")}
+            </button>
             <button className="secondary small" type="button" disabled={connectionBusy || syncRunning || autoSaving} onClick={() => void testConnection()}>
               {pending === "test" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <Link2 aria-hidden="true" />} {t("jellyfin.testConnection")}
             </button>
@@ -685,6 +716,14 @@ export function JellyfinSettingsPanel({
                 <CircleStop aria-hidden="true" /> {cancellationRequested ? t("jellyfin.cancelingSync") : t("jellyfin.cancelSync")}
               </button>
             ) : null}
+            <button
+              className="secondary small danger"
+              type="button"
+              disabled={connectionBusy || syncRunning || autoSaving || (!connection.api_key_configured && !connection.base_url)}
+              onClick={() => void disconnectIntegration()}
+            >
+              <Trash2 aria-hidden="true" /> {t("jellyfin.disconnect")}
+            </button>
             {connectionSaveState !== "idle" ? (
               <span className={`jellyfin-auto-save-status status-${connectionSaveState}`} role="status" aria-live="polite">
                 {connectionSaveState === "saving" ? <RefreshCw className="is-spinning" aria-hidden="true" /> : connectionSaveState === "error" ? <AlertTriangle aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}

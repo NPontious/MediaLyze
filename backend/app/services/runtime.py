@@ -53,6 +53,7 @@ from backend.app.services.jellyfin_progress import (
     request_jellyfin_cancellation,
     reset_jellyfin_cancellation,
 )
+from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.path_access import is_watch_supported_for_library
 from backend.app.services.stats import build_dashboard
@@ -357,7 +358,10 @@ class ScanRuntimeManager:
             connection = db.get(JellyfinConnection, 1)
             if connection is None or not connection.enabled:
                 raise ValueError("Jellyfin integration is disabled")
-            if not connection.base_url or not connection.api_key:
+            if not connection.base_url or not read_jellyfin_api_key(
+                connection,
+                getattr(getattr(self, "settings", None), "jellyfin_api_key_file", None),
+            ):
                 raise ValueError("Jellyfin URL and API key are required before synchronization")
             job, accepted = create_or_get_jellyfin_sync_job(db, trigger_source)
             result: dict[str, int | str | bool] = {
@@ -475,7 +479,10 @@ class ScanRuntimeManager:
                 connection
                 and connection.enabled
                 and connection.base_url
-                and connection.api_key
+                and read_jellyfin_api_key(
+                    connection,
+                    getattr(getattr(self, "settings", None), "jellyfin_api_key_file", None),
+                )
                 and connection.sync_interval_minutes > 0
             )
             interval = max(5, int(connection.sync_interval_minutes)) if connection else 60

@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -138,6 +138,7 @@ from backend.app.services.jellyfin_catalog import (
     item_size as get_jellyfin_item_size,
 )
 from backend.app.services.jellyfin_images import JELLYFIN_IMAGE_CACHE
+from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_jobs import (
     get_active_jellyfin_sync_job,
     get_latest_jellyfin_sync_job,
@@ -585,6 +586,7 @@ def cancel_active_scan_jobs(
 def _jellyfin_connection_read(
     connection: JellyfinConnection | None,
     runtime: ScanRuntimeManager | None = None,
+    settings: Settings | None = None,
 ) -> JellyfinConnectionRead:
     if connection is None:
         return JellyfinConnectionRead()
@@ -596,7 +598,9 @@ def _jellyfin_connection_read(
         base_url=connection.base_url,
         enabled=connection.enabled,
         sync_interval_minutes=connection.sync_interval_minutes,
-        api_key_configured=bool(connection.api_key),
+        api_key_configured=bool(
+            read_jellyfin_api_key(connection, settings.jellyfin_api_key_file if settings else None)
+        ),
         server_name=connection.server_name,
         server_version=connection.server_version,
         last_status=connection.last_status,
@@ -636,8 +640,9 @@ def _jellyfin_item_read(item: JellyfinItem) -> JellyfinItemRead:
 def jellyfin_connection_get(
     db: Session = Depends(get_db_session),
     runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
 ) -> JellyfinConnectionRead:
-    return _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime)
+    return _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime, settings)
 
 
 @router.patch("/jellyfin/connection", response_model=JellyfinConnectionRead)
@@ -645,8 +650,11 @@ def jellyfin_connection_update(
     payload: JellyfinConnectionUpdate,
     db: Session = Depends(get_db_session),
     runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
 ) -> JellyfinConnectionRead:
     connection = get_or_create_jellyfin_connection(db)
+    previous_base_url = connection.base_url
+    previous_api_key = connection.api_key
     if payload.base_url is not None:
         connection.base_url = payload.base_url
     if payload.clear_api_key:
@@ -657,25 +665,62 @@ def jellyfin_connection_update(
         connection.enabled = payload.enabled
     if payload.sync_interval_minutes is not None:
         connection.sync_interval_minutes = payload.sync_interval_minutes
-    if connection.enabled and (not connection.base_url or not connection.api_key):
+    if connection.enabled and (
+        not connection.base_url
+        or not read_jellyfin_api_key(connection, settings.jellyfin_api_key_file)
+    ):
         db.rollback()
         raise HTTPException(status_code=400, detail="Jellyfin URL and API key are required before enabling sync")
     db.commit()
     db.refresh(connection)
+    if connection.base_url != previous_base_url or connection.api_key != previous_api_key:
+        JELLYFIN_IMAGE_CACHE.clear()
     runtime.refresh_jellyfin_schedule()
-    return _jellyfin_connection_read(connection, runtime)
+    return _jellyfin_connection_read(connection, runtime, settings)
+
+
+@router.delete("/jellyfin/connection", status_code=204)
+def jellyfin_connection_delete(
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> None:
+    if get_active_jellyfin_sync_job(db) is not None:
+        raise HTTPException(status_code=409, detail="Cancel the active Jellyfin sync before disconnecting")
+    db.execute(delete(JellyfinMediaMatch))
+    db.execute(delete(JellyfinUserItemData))
+    db.execute(delete(JellyfinItem))
+    db.execute(delete(JellyfinLibrary))
+    db.execute(delete(JellyfinPathMapping))
+    db.execute(delete(JellyfinUser))
+    connection = db.get(JellyfinConnection, 1)
+    if connection is not None:
+        connection.base_url = ""
+        connection.api_key = ""
+        connection.enabled = False
+        connection.server_name = None
+        connection.server_version = None
+        connection.last_status = "never"
+        connection.last_error = None
+        connection.last_sync_started_at = None
+        connection.last_sync_finished_at = None
+        connection.last_successful_sync_at = None
+    db.commit()
+    JELLYFIN_IMAGE_CACHE.clear()
+    runtime.refresh_jellyfin_schedule()
 
 
 @router.post("/jellyfin/test", response_model=JellyfinTestRead)
 def jellyfin_test(
     payload: JellyfinTestRequest,
     db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
 ) -> JellyfinTestRead:
     stored = db.get(JellyfinConnection, 1)
     base_url = payload.base_url or (stored.base_url if stored else "")
-    api_key = payload.api_key or (stored.api_key if stored else "")
+    api_key = payload.api_key or read_jellyfin_api_key(stored, settings.jellyfin_api_key_file)
     try:
-        info = JellyfinClient(base_url, api_key).get_system_info()
+        with JellyfinClient(base_url, api_key) as jellyfin_client:
+            info = jellyfin_client.get_system_info()
     except JellyfinError as exc:
         return JellyfinTestRead(ok=False, error=str(exc))
     return JellyfinTestRead(
@@ -709,8 +754,9 @@ def jellyfin_sync_cancel(
 def jellyfin_sync_status(
     db: Session = Depends(get_db_session),
     runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
 ) -> JellyfinSyncStatusRead:
-    connection = _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime)
+    connection = _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime, settings)
     progress = get_jellyfin_progress()
     job = get_active_jellyfin_sync_job(db) or get_latest_jellyfin_sync_job(db)
     job_active = bool(job and job.active_lock == 1 and job.status in {JobStatus.queued, JobStatus.running})
@@ -759,6 +805,13 @@ def jellyfin_users_update(
         raise HTTPException(status_code=400, detail="Unknown Jellyfin user id")
     for user in users:
         user.enabled_for_sync = user.jellyfin_user_id in enabled_ids
+    disabled_ids = [user.jellyfin_user_id for user in users if not user.enabled_for_sync]
+    if disabled_ids:
+        db.execute(
+            delete(JellyfinUserItemData).where(
+                JellyfinUserItemData.jellyfin_user_id.in_(disabled_ids)
+            )
+        )
     db.commit()
     return users
 
@@ -1047,6 +1100,17 @@ def jellyfin_match_create(
     media_file = db.get(MediaFile, payload.media_file_id)
     if item is None or media_file is None:
         raise HTTPException(status_code=404, detail="Jellyfin item or media file not found")
+    displaced_matches = list(
+        db.scalars(
+            select(JellyfinMediaMatch).where(
+                (JellyfinMediaMatch.jellyfin_item_id == item.id)
+                | (JellyfinMediaMatch.media_file_id == media_file.id)
+            )
+        )
+    )
+    displaced_item_ids = {
+        match.jellyfin_item_id for match in displaced_matches if match.jellyfin_item_id != item.id
+    }
     db.execute(
         delete(JellyfinMediaMatch).where(
             (JellyfinMediaMatch.jellyfin_item_id == item.id)
@@ -1064,6 +1128,13 @@ def jellyfin_match_create(
     item.match_status = "matched"
     item.mismatch_reason = None
     item.suggested_media_file_id = None
+    if displaced_item_ids:
+        for displaced_item in db.scalars(
+            select(JellyfinItem).where(JellyfinItem.id.in_(displaced_item_ids))
+        ):
+            displaced_item.match_status = "unmatched"
+            displaced_item.mismatch_reason = "manual_match_reassigned"
+            displaced_item.suggested_media_file_id = None
     db.commit()
     db.refresh(match)
     return match
@@ -1974,7 +2045,10 @@ def file_jellyfin_overlay(
     user_rows = db.execute(
         select(JellyfinUserItemData, JellyfinUser.name)
         .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
-        .where(JellyfinUserItemData.jellyfin_item_id == item.id)
+        .where(
+            JellyfinUserItemData.jellyfin_item_id == item.id,
+            JellyfinUser.enabled_for_sync.is_(True),
+        )
         .order_by(JellyfinUser.name.asc())
     ).all()
     return JellyfinFileOverlayRead(
@@ -2011,7 +2085,11 @@ def jellyfin_item_detail(
     item = db.get(JellyfinItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Jellyfin item not found")
-    library = db.scalar(select(JellyfinLibrary).where(JellyfinLibrary.name == item.library_name))
+    library = (
+        db.get(JellyfinLibrary, item.library_id)
+        if item.library_id is not None
+        else db.scalar(select(JellyfinLibrary).where(JellyfinLibrary.name == item.library_name))
+    )
     match = db.scalar(
         select(JellyfinMediaMatch).where(JellyfinMediaMatch.jellyfin_item_id == item.id)
     )
@@ -2064,13 +2142,16 @@ def jellyfin_item_detail(
 def jellyfin_image(
     item_id: int,
     image_type: Literal["Primary", "Backdrop", "Thumb"],
+    request: Request,
     db: Session = Depends(get_db_session),
-) -> StreamingResponse:
+    settings: Settings = Depends(get_app_settings),
+) -> Response:
     item = db.get(JellyfinItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Jellyfin item not found")
     connection = db.get(JellyfinConnection, 1)
-    if connection is None or not connection.base_url or not connection.api_key:
+    api_key = read_jellyfin_api_key(connection, settings.jellyfin_api_key_file)
+    if connection is None or not connection.base_url or not api_key:
         raise HTTPException(status_code=503, detail="Jellyfin connection is not configured")
     if image_type == "Backdrop":
         tag = next(iter(item.backdrop_image_tags or []), None)
@@ -2078,19 +2159,30 @@ def jellyfin_image(
         tag = (item.image_tags or {}).get(image_type)
     if not tag:
         raise HTTPException(status_code=404, detail="Jellyfin image is not available")
-    try:
-        image = JELLYFIN_IMAGE_CACHE.get(
-            JellyfinClient(connection.base_url, connection.api_key),
-            item.jellyfin_item_id,
-            image_type,
-            tag,
+    etag = f'"{tag}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(
+            status_code=304,
+            headers={"ETag": etag, "Cache-Control": "private, max-age=3600"},
         )
+    try:
+        with JellyfinClient(connection.base_url, api_key) as jellyfin_client:
+            image = JELLYFIN_IMAGE_CACHE.get(
+                jellyfin_client,
+                item.jellyfin_item_id,
+                image_type,
+                tag,
+            )
     except JellyfinError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return StreamingResponse(
         io.BytesIO(image.content),
         media_type=image.content_type,
-        headers={"Cache-Control": "private, max-age=3600"},
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
