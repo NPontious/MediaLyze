@@ -14,6 +14,8 @@ import {
   type DashboardResponse,
   type HistoryReconstructionResult,
   type HistoryStorage,
+  type JellyfinLibrary,
+  type JellyfinPathMapping,
   type LibrarySummary,
   type PathInspection,
   type QualityProfileDefinition,
@@ -231,6 +233,25 @@ function createLibrarySummary(overrides: Partial<LibrarySummary> = {}): LibraryS
   };
 }
 
+function createJellyfinLibrary(overrides: Partial<JellyfinLibrary> = {}): JellyfinLibrary {
+  return {
+    id: 7,
+    name: "Anime",
+    collection_type: "tvshows",
+    locations: ["/jellyfin/anime"],
+    mapped_locations: [],
+    mapped_status: "path_unmapped",
+    linked_library_id: null,
+    linked_library_name: null,
+    link_method: null,
+    can_create_medialyze_library: false,
+    data_scope: "jellyfin_only",
+    item_count: 12,
+    last_synced_at: "2026-07-15T10:00:00Z",
+    ...overrides,
+  };
+}
+
 function createQualityProfileDefinition(overrides: Partial<QualityProfileDefinition> = {}): QualityProfileDefinition {
   return {
     id: 1,
@@ -419,8 +440,15 @@ function renderPage({
   );
 }
 
+async function expandLibrarySettings() {
+  const expandButton = await screen.findByRole("button", { name: "Show settings for Movies" });
+  fireEvent.click(expandButton);
+}
+
 beforeEach(() => {
   vi.spyOn(api, "libraries").mockResolvedValue([]);
+  vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
+  vi.spyOn(api, "jellyfinPathMappings").mockResolvedValue([]);
   vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
   vi.spyOn(api, "dashboard").mockResolvedValue(createDashboard());
   vi.spyOn(api, "historyStorage").mockResolvedValue(createHistoryStorage());
@@ -1472,6 +1500,126 @@ describe("LibrariesPage media type selection", () => {
   });
 });
 
+describe("LibrariesPage Jellyfin library assignments", () => {
+  it("manages detected Jellyfin library assignments only in the Libraries panel", async () => {
+    const medialyzeLibrary = createLibrarySummary();
+    const jellyfinLibrary = createJellyfinLibrary();
+    vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
+    const updateLink = vi.spyOn(api, "updateJellyfinLibraryLink").mockResolvedValue({
+      ...jellyfinLibrary,
+      linked_library_id: medialyzeLibrary.id,
+      linked_library_name: medialyzeLibrary.name,
+      link_method: "manual",
+      mapped_status: "linked",
+      data_scope: "linked",
+    });
+
+    renderPage({ activePanel: "configuredLibraries" });
+
+    await expandLibrarySettings();
+    const assignment = await screen.findByRole("combobox", { name: "Associated Jellyfin library" });
+    fireEvent.change(assignment, { target: { value: String(jellyfinLibrary.id) } });
+
+    await waitFor(() => expect(updateLink).toHaveBeenCalledWith(jellyfinLibrary.id, medialyzeLibrary.id));
+    expect(screen.getByRole("heading", { name: "Jellyfin association" })).toBeInTheDocument();
+  });
+
+  it("prefills and automatically links a new library from an unassigned Jellyfin library", async () => {
+    const jellyfinLibrary = createJellyfinLibrary();
+    vi.spyOn(api, "libraries").mockResolvedValue([createLibrarySummary()]);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
+    const created = createLibrarySummary({ id: 2, name: "Anime", type: "series", path: "media" });
+    const createLibrary = vi.spyOn(api, "createLibrary").mockResolvedValue(created);
+    const updateLink = vi.spyOn(api, "updateJellyfinLibraryLink").mockResolvedValue({
+      ...jellyfinLibrary,
+      linked_library_id: created.id,
+      linked_library_name: created.name,
+      link_method: "manual",
+      mapped_status: "linked",
+      data_scope: "linked",
+    });
+
+    renderPage({ activePanel: "configuredLibraries" });
+
+    await expandLibrarySettings();
+    expect(await screen.findByRole("option", { name: "Anime" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Add library" }));
+    const detectedLibraryOption = (await screen.findByText("12 Jellyfin items")).closest("button");
+    expect(detectedLibraryOption).not.toBeNull();
+    fireEvent.click(detectedLibraryOption as HTMLButtonElement);
+    expect(await screen.findByRole("heading", { name: "Add a detected Jellyfin library" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("Anime");
+    expect(screen.getByRole("combobox", { name: "Media type" })).toHaveValue("series");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create library" }));
+
+    await waitFor(() => expect(createLibrary).toHaveBeenCalledWith(expect.objectContaining({ name: "Anime", type: "series" })));
+    await waitFor(() => expect(updateLink).toHaveBeenCalledWith(jellyfinLibrary.id, created.id));
+  });
+
+  it("activates, edits, and deactivates path mapping inside the associated MediaLyze library", async () => {
+    const medialyzeLibrary = createLibrarySummary();
+    const jellyfinLibrary = createJellyfinLibrary({
+      linked_library_id: medialyzeLibrary.id,
+      linked_library_name: medialyzeLibrary.name,
+      mapped_status: "linked",
+      data_scope: "linked",
+    });
+    vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
+    let persistedMapping: JellyfinPathMapping = {
+      id: 9,
+      jellyfin_path_prefix: "/jellyfin/anime",
+      medialyze_path_prefix: "/media/movies",
+      enabled: true,
+    };
+    const createMapping = vi.spyOn(api, "createJellyfinPathMapping").mockResolvedValue(persistedMapping);
+    const updateMapping = vi.spyOn(api, "updateJellyfinPathMapping").mockImplementation(async (_id, payload) => {
+      persistedMapping = { ...persistedMapping, ...payload };
+      return persistedMapping;
+    });
+
+    renderPage({ activePanel: "configuredLibraries" });
+
+    await expandLibrarySettings();
+    expect(await screen.findByRole("heading", { name: "Path mapping (optional)" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Explain path mapping" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("different mount points");
+    expect(screen.queryByRole("textbox", { name: "MediaLyze path" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Enable path mapping" }));
+    await waitFor(() => expect(createMapping).toHaveBeenCalledWith({
+      jellyfin_path_prefix: "/jellyfin/anime",
+      medialyze_path_prefix: "/media/movies",
+      enabled: true,
+    }));
+
+    expect(await screen.findByText("/jellyfin/anime")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Disable path mapping" })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "MediaLyze path" }))
+      .toHaveClass("settings-choice-input");
+    expect(screen.getByRole("textbox", { name: "MediaLyze path" })).toHaveValue("/media/movies");
+    fireEvent.change(screen.getByRole("textbox", { name: "MediaLyze path" }), {
+      target: { value: "/media/films" },
+    });
+    const saveMappingButton = screen.getByRole("button", { name: "Save mapping" });
+    expect(saveMappingButton).toHaveClass("is-dirty");
+    fireEvent.click(saveMappingButton);
+
+    await waitFor(() => expect(updateMapping).toHaveBeenCalledWith(9, {
+      jellyfin_path_prefix: "/jellyfin/anime",
+      medialyze_path_prefix: "/media/films",
+      enabled: true,
+    }));
+
+    fireEvent.click(screen.getByRole("switch", { name: "Disable path mapping" }));
+    await waitFor(() => expect(updateMapping).toHaveBeenCalledWith(9, { enabled: false }));
+    expect(await screen.findByRole("switch", { name: "Enable path mapping" })).not.toBeChecked();
+    expect(screen.queryByRole("textbox", { name: "MediaLyze path" })).not.toBeInTheDocument();
+  });
+});
+
 describe("LibrariesPage desktop mode", () => {
   it("shows the desktop folder picker instead of the MEDIA_ROOT browser", async () => {
     window.medialyzeDesktop = {
@@ -1506,6 +1654,7 @@ describe("LibrariesPage desktop mode", () => {
     renderPage({ activePanel: "configuredLibraries" });
 
     await screen.findByRole("link", { name: "Movies" });
+    await expandLibrarySettings();
 
     await waitFor(() => expect(screen.getByLabelText("Scan mode")).toHaveTextContent("Time Interval"));
     expect(
@@ -1524,6 +1673,7 @@ describe("LibrariesPage desktop mode", () => {
     renderPage({ activePanel: "configuredLibraries" });
 
     await screen.findByRole("link", { name: "Movies" });
+    await expandLibrarySettings();
     fireEvent.click(screen.getByLabelText("Duplicate detection"));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Both" }));
 
@@ -1543,6 +1693,7 @@ describe("LibrariesPage desktop mode", () => {
     renderPage({ activePanel: "configuredLibraries" });
 
     await screen.findByRole("link", { name: "Movies" });
+    await expandLibrarySettings();
     expect(
       screen.queryByText("Off disables duplicate detection. Filename is fast and approximate. File hash is exact but significantly more expensive during scans. Both stores and shows both duplicate views."),
     ).not.toBeInTheDocument();
@@ -1949,6 +2100,16 @@ describe("LibrariesPage settings panels", () => {
 
     renderPage();
 
+    const settingsChevron = await screen.findByRole("button", { name: "Show settings for Movies" });
+    expect(settingsChevron).toHaveAttribute("aria-expanded", "false");
+    expect(settingsChevron.closest(".library-title-actions")).toBeNull();
+    const libraryHeading = settingsChevron.closest(".library-title-heading");
+    expect(libraryHeading).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Movies", level: 3 })).toBeInTheDocument();
+    expect(settingsChevron.compareDocumentPosition(screen.getByRole("link", { name: "Movies" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("/media/movies")).not.toBeInTheDocument();
+    await expandLibrarySettings();
+    expect(screen.getByRole("button", { name: "Hide settings for Movies" })).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("/media/movies")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change path" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Associated Jellyfin library" })).toBeInTheDocument();

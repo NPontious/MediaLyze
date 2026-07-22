@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from threading import Event, Lock
+from time import monotonic
+from collections.abc import Callable
 
 
 @dataclass(slots=True)
@@ -17,9 +19,16 @@ class JellyfinSyncProgress:
 _lock = Lock()
 _progress = JellyfinSyncProgress()
 _cancel_event = Event()
+_persist_callback: Callable[..., None] | None = None
+_last_persisted_at = 0.0
+_last_persisted_phase: str | None = None
 
 
-def begin_jellyfin_progress(job_id: int | None) -> None:
+def begin_jellyfin_progress(
+    job_id: int | None,
+    persist_callback: Callable[..., None] | None = None,
+) -> None:
+    global _persist_callback, _last_persisted_at, _last_persisted_phase
     with _lock:
         _progress.job_id = job_id
         _progress.phase = None
@@ -27,6 +36,9 @@ def begin_jellyfin_progress(job_id: int | None) -> None:
         _progress.current = 0
         _progress.total = None
         _progress.cancellation_requested = _cancel_event.is_set()
+        _persist_callback = persist_callback
+        _last_persisted_at = 0.0
+        _last_persisted_phase = None
 
 
 def update_jellyfin_progress(
@@ -36,14 +48,26 @@ def update_jellyfin_progress(
     current: int = 0,
     total: int | None = None,
 ) -> None:
+    global _last_persisted_at, _last_persisted_phase
+    callback = None
     with _lock:
         _progress.phase = phase
         _progress.detail = detail
         _progress.current = current
         _progress.total = total
+        now = monotonic()
+        if _persist_callback is not None and (
+            phase != _last_persisted_phase or now - _last_persisted_at >= 0.5
+        ):
+            callback = _persist_callback
+            _last_persisted_at = now
+            _last_persisted_phase = phase
+    if callback is not None:
+        callback(phase=phase, detail=detail, current=current, total=total)
 
 
 def clear_jellyfin_progress() -> None:
+    global _persist_callback, _last_persisted_at, _last_persisted_phase
     with _lock:
         _progress.job_id = None
         _progress.phase = None
@@ -51,6 +75,9 @@ def clear_jellyfin_progress() -> None:
         _progress.current = 0
         _progress.total = None
         _progress.cancellation_requested = False
+        _persist_callback = None
+        _last_persisted_at = 0.0
+        _last_persisted_phase = None
 
 
 def reset_jellyfin_cancellation() -> None:

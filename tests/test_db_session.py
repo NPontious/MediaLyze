@@ -173,7 +173,20 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
     assert {"library_id", "snapshot_day", "captured_at", "source_scan_job_id", "snapshot"}.issubset(
         library_history_columns
     )
-    assert "cancellation_requested" in jellyfin_sync_job_columns
+    assert {
+        "cancellation_requested",
+        "heartbeat_at",
+        "progress_phase",
+        "progress_detail",
+        "progress_current",
+        "progress_total",
+    }.issubset(jellyfin_sync_job_columns)
+    assert {
+        "jellyfin_sync_stage_libraries",
+        "jellyfin_sync_stage_users",
+        "jellyfin_sync_stage_items",
+        "jellyfin_sync_stage_user_data",
+    }.issubset(inspector.get_table_names())
 
 
 def test_init_db_adds_missing_indexes_for_existing_sqlite_schema() -> None:

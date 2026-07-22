@@ -10,6 +10,7 @@ from backend.app.models.entities import (
     JellyfinSyncTriggerSource,
     JobStatus,
 )
+from backend.app.services.jellyfin_staging import cleanup_all_staging
 from backend.app.utils.time import utc_now
 
 
@@ -64,9 +65,35 @@ def mark_jellyfin_sync_job_running(db: Session, job_id: int) -> JellyfinSyncJob 
         return None
     job.status = JobStatus.running
     job.started_at = utc_now()
+    job.heartbeat_at = job.started_at
+    job.progress_phase = "starting"
+    job.progress_detail = None
+    job.progress_current = 0
+    job.progress_total = None
     db.commit()
     db.refresh(job)
     return job
+
+
+def update_jellyfin_sync_job_progress(
+    db: Session,
+    job_id: int,
+    *,
+    phase: str | None,
+    detail: str | None,
+    current: int,
+    total: int | None,
+) -> bool:
+    job = db.get(JellyfinSyncJob, job_id)
+    if job is None or job.status != JobStatus.running or job.active_lock != 1:
+        return False
+    job.heartbeat_at = utc_now()
+    job.progress_phase = phase
+    job.progress_detail = detail
+    job.progress_current = max(0, int(current))
+    job.progress_total = max(0, int(total)) if total is not None else None
+    db.commit()
+    return True
 
 
 def finish_jellyfin_sync_job(
@@ -83,6 +110,7 @@ def finish_jellyfin_sync_job(
     job.status = status
     job.active_lock = None
     job.finished_at = utc_now()
+    job.heartbeat_at = job.finished_at
     job.sync_summary = summary or {}
     job.error = error[:2048] if error else None
     db.commit()
@@ -125,7 +153,9 @@ def recover_orphaned_jellyfin_sync_jobs(db: Session) -> int:
             )
         )
     )
+    cleanup_all_staging(db, commit=False)
     if not jobs:
+        db.commit()
         return 0
     finished_at = utc_now()
     for job in jobs:

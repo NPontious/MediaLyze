@@ -17,18 +17,23 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ Enhancements
 
+* Stage Jellyfin pages with native SQLite bulk UPSERTs and atomically promote only complete snapshots, with a reproducible 100,000-item benchmark.
+* Persist Jellyfin sync heartbeat, phase, detail, and item counters on the sync job for multi-process status polling.
+* Aggregate Jellyfin catalog and library overview metrics directly in SQL instead of materializing the full catalog in Python.
+* Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle.
 * Replace the large linked-Jellyfin banner on library pages with a compact, unframed Jellyfin icon and last-sync tooltip beside the library title.
 * Avoid duplicating MediaLyze library statistics with a separate Jellyfin catalog overview panel in linked libraries.
 * Allow running manual or scheduled Jellyfin synchronizations to be canceled from Settings without replacing the previously cached catalog with partial data.
 * Show live Jellyfin synchronization phases, item progress, and an animated running state in Settings.
-* Allow path mappings to be created or corrected directly from each Jellyfin library diagnostic.
 * Disable scheduled Jellyfin synchronization by setting its interval to `0`, without disabling manual sync.
-* Save Jellyfin connection and library-specific path-mapping fields automatically and remove their explicit save actions.
-* Simplify Jellyfin library diagnostics by relying on the per-library status badge instead of repeating warning text.
-* Condense Jellyfin library diagnostics into scan-friendly rows on wider settings layouts.
+* Save Jellyfin connection fields automatically and remove their explicit save action.
+* Keep Jellyfin Settings focused on connection, synchronization, and playback-user selection; select the associated Jellyfin catalog directly inside each MediaLyze library without exposing path mappings there.
+* Let the Add Library dialog use any unassigned Jellyfin library as a name and media-type template, then link it automatically after the local MediaLyze path is created.
+* Collapse MediaLyze library cards by default, expand them from a compact chevron before the library name, and organize their settings into described Jellyfin association, media source, and scanning/analysis sections with responsive field layouts.
+* Configure optional Jellyfin-to-MediaLyze mount-point mappings in a compact inline row beside each MediaLyze library's Jellyfin association, with a persisted activation switch, contextual help tooltip, and an emphasized icon action while changes are unsaved.
 * Keep Jellyfin as an optional overlay in existing MediaLyze libraries instead of exposing a separate Jellyfin-only library UI. Linked libraries gain catalog distributions and matched rows gain titles, years, and playback counts; file details place metadata in Overview, playback in Streaming, and Jellyfin artwork beside embedded covers.
 * Align Jellyfin settings fields with the compact 36-pixel input style used by newer settings controls.
-* Allow Jellyfin libraries to create or explicitly link MediaLyze libraries, with the same path and association controls reflected in both settings sections.
+* Allow detected Jellyfin libraries to create MediaLyze libraries from the Add Library dialog or be selected from a dropdown in an existing MediaLyze library.
 * Stream validated Jellyfin catalog pages into batched database writes, paginate catalog browsing in SQL, and bind the byte-limited image cache to the configured Jellyfin server.
 * Separate Jellyfin configuration from activation, add an explicit connection-removal action, support `JELLYFIN_API_KEY_FILE`, and reduce redundant Settings requests while isolating sync polling in a reusable hook.
 

@@ -666,10 +666,16 @@ def test_sync_status_exposes_live_progress(db: Session) -> None:
 
 
 def test_sync_status_exposes_persisted_active_job(db: Session) -> None:
+    heartbeat = datetime(2026, 7, 21, 8, 0, tzinfo=UTC)
     job = JellyfinSyncJob(
         status=JobStatus.running,
         trigger_source=JellyfinSyncTriggerSource.scheduled,
         active_lock=1,
+        heartbeat_at=heartbeat,
+        progress_phase="saving",
+        progress_detail="Alice",
+        progress_current=750,
+        progress_total=1200,
     )
     db.add(job)
     db.commit()
@@ -680,6 +686,11 @@ def test_sync_status_exposes_persisted_active_job(db: Session) -> None:
     assert payload["sync_job_status"] == "running"
     assert payload["sync_trigger_source"] == "scheduled"
     assert payload["sync_job_active"] is True
+    assert payload["sync_heartbeat_at"] == "2026-07-21T08:00:00Z"
+    assert payload["sync_phase"] == "saving"
+    assert payload["sync_phase_detail"] == "Alice"
+    assert payload["sync_current"] == 750
+    assert payload["sync_total"] == 1200
 
 
 def test_manual_sync_returns_accepted_job_without_running_inline(db: Session) -> None:

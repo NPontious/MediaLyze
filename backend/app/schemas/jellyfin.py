@@ -170,6 +170,7 @@ class JellyfinSyncStatusRead(JellyfinConnectionRead):
     sync_trigger_source: str | None = None
     sync_job_active: bool = False
     sync_job_error: str | None = None
+    sync_heartbeat_at: datetime | None = None
     sync_summary: dict = Field(default_factory=dict)
     sync_phase: str | None = None
     sync_phase_detail: str | None = None

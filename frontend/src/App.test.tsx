@@ -96,7 +96,9 @@ describe("App routing", () => {
   it("renders the UI elements catalog in development builds", async () => {
     const { container } = renderApp("/ui-elements");
 
-    expect(await screen.findByRole("heading", { name: "UI elements" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "UI elements" }, { timeout: 5_000 }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Theme preview")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Header & navigation" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Settings variants" })).toBeInTheDocument();

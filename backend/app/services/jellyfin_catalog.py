@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import Float, Integer, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.models.entities import (
@@ -72,45 +71,30 @@ def library_read(db: Session, library: JellyfinLibrary) -> JellyfinLibraryRead:
     )
 
 
-def _items(db: Session, library: JellyfinLibrary) -> list[JellyfinItem]:
-    return list(
-        db.scalars(
-            select(JellyfinItem)
-            .where(
-                or_(
-                    JellyfinItem.library_id == library.id,
-                    (JellyfinItem.library_id.is_(None)) & (JellyfinItem.library_name == library.name),
-                )
-            )
-            .order_by(JellyfinItem.title.asc())
-        )
+def _distribution_rows(rows) -> list[JellyfinDistributionRead]:
+    return [JellyfinDistributionRead(label=str(label), value=int(value)) for label, value in rows]
+
+
+def _library_item_filter(library: JellyfinLibrary):
+    return or_(
+        JellyfinItem.library_id == library.id,
+        (JellyfinItem.library_id.is_(None)) & (JellyfinItem.library_name == library.name),
     )
 
 
-def _user_data(
-    db: Session, item_ids: list[int], user_id: str | None
-) -> dict[int, list[JellyfinUserItemData]]:
-    if not item_ids:
-        return {}
-    query = (
-        select(JellyfinUserItemData)
-        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
-        .where(
-            JellyfinUserItemData.jellyfin_item_id.in_(item_ids),
-            JellyfinUser.enabled_for_sync.is_(True),
-        )
+def _size_expression():
+    return func.coalesce(
+        JellyfinItem.size_bytes,
+        cast(func.json_extract(JellyfinItem.raw_limited_payload, "$.Size"), Integer),
     )
-    if user_id:
-        query = query.where(JellyfinUserItemData.jellyfin_user_id == user_id)
-    result: dict[int, list[JellyfinUserItemData]] = defaultdict(list)
-    for row in db.scalars(query):
-        result[row.jellyfin_item_id].append(row)
-    return result
 
 
-def _distribution(counter: Counter[str], *, descending_label: bool = False) -> list[JellyfinDistributionRead]:
-    pairs = sorted(counter.items(), key=lambda pair: pair[0], reverse=descending_label)
-    return [JellyfinDistributionRead(label=label, value=value) for label, value in pairs]
+def _duration_expression():
+    return func.coalesce(
+        JellyfinItem.duration_seconds,
+        cast(func.json_extract(JellyfinItem.raw_limited_payload, "$.RunTimeTicks"), Float)
+        / TICKS_PER_SECOND,
+    )
 
 
 def catalog_summary(db: Session) -> JellyfinCatalogSummaryRead:
@@ -119,39 +103,80 @@ def catalog_summary(db: Session) -> JellyfinCatalogSummaryRead:
     )
     library_ids = [library.id for library in libraries]
     names = [library.name for library in libraries]
-    items = list(
-        db.scalars(
-            select(JellyfinItem).where(
-                or_(
-                    JellyfinItem.library_id.in_(library_ids),
-                    (JellyfinItem.library_id.is_(None)) & JellyfinItem.library_name.in_(names),
-                )
-            )
-        )
-    ) if names else []
-    sizes = [value for item in items if (value := item_size(item)) is not None]
-    durations = [value for item in items if (value := item_duration(item)) is not None]
+    item_filter = or_(
+        JellyfinItem.library_id.in_(library_ids),
+        (JellyfinItem.library_id.is_(None)) & JellyfinItem.library_name.in_(names),
+    )
+    size_expr = _size_expression()
+    duration_expr = _duration_expression()
+    aggregates = db.execute(
+        select(
+            func.count(JellyfinItem.id),
+            func.coalesce(func.sum(size_expr), 0),
+            func.count(size_expr),
+            func.coalesce(func.sum(duration_expr), 0.0),
+            func.count(duration_expr),
+        ).where(item_filter)
+    ).one() if libraries else (0, 0, 0, 0.0, 0)
     return JellyfinCatalogSummaryRead(
         library_count=len(libraries),
-        item_count=len(items),
-        known_size_bytes=sum(sizes),
-        size_known_count=len(sizes),
-        known_duration_seconds=sum(durations),
-        duration_known_count=len(durations),
+        item_count=int(aggregates[0]),
+        known_size_bytes=int(aggregates[1]),
+        size_known_count=int(aggregates[2]),
+        known_duration_seconds=float(aggregates[3]),
+        duration_known_count=int(aggregates[4]),
         last_synced_at=max((library.last_synced_at for library in libraries), default=None),
     )
 
 
 def library_overview(db: Session, library: JellyfinLibrary, user_id: str | None) -> JellyfinLibraryOverviewRead:
-    items = _items(db, library)
-    data = _user_data(db, [item.id for item in items], user_id)
-    sizes = [value for item in items if (value := item_size(item)) is not None]
-    durations = [value for item in items if (value := item_duration(item)) is not None]
-    dates = [item.date_created for item in items if item.date_created is not None]
-    types = Counter(item.item_type for item in items)
-    years = Counter(str(item.production_year) for item in items if item.production_year is not None)
-    months = Counter(item.date_created.strftime("%Y-%m") for item in items if item.date_created)
-    played = sum(1 for item in items if any(row.played for row in data.get(item.id, [])))
+    item_filter = _library_item_filter(library)
+    size_expr = _size_expression()
+    duration_expr = _duration_expression()
+    aggregates = db.execute(
+        select(
+            func.count(JellyfinItem.id),
+            func.coalesce(func.sum(size_expr), 0),
+            func.count(size_expr),
+            func.coalesce(func.sum(duration_expr), 0.0),
+            func.count(duration_expr),
+            func.min(JellyfinItem.date_created),
+            func.max(JellyfinItem.date_created),
+        ).where(item_filter)
+    ).one()
+    item_count = int(aggregates[0])
+    type_rows = db.execute(
+        select(JellyfinItem.item_type, func.count(JellyfinItem.id))
+        .where(item_filter)
+        .group_by(JellyfinItem.item_type)
+        .order_by(JellyfinItem.item_type.asc())
+    ).all()
+    year_rows = db.execute(
+        select(cast(JellyfinItem.production_year, Integer), func.count(JellyfinItem.id))
+        .where(item_filter, JellyfinItem.production_year.is_not(None))
+        .group_by(JellyfinItem.production_year)
+        .order_by(JellyfinItem.production_year.desc())
+    ).all()
+    month_label = func.strftime("%Y-%m", JellyfinItem.date_created)
+    month_rows = db.execute(
+        select(month_label, func.count(JellyfinItem.id))
+        .where(item_filter, JellyfinItem.date_created.is_not(None))
+        .group_by(month_label)
+        .order_by(month_label.asc())
+    ).all()
+    played_query = (
+        select(func.count(func.distinct(JellyfinUserItemData.jellyfin_item_id)))
+        .join(JellyfinItem, JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id)
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
+        .where(
+            item_filter,
+            JellyfinUser.enabled_for_sync.is_(True),
+            JellyfinUserItemData.played.is_(True),
+        )
+    )
+    if user_id:
+        played_query = played_query.where(JellyfinUserItemData.jellyfin_user_id == user_id)
+    played = int(db.scalar(played_query) or 0)
     users = list(
         db.scalars(
             select(JellyfinUser)
@@ -161,19 +186,19 @@ def library_overview(db: Session, library: JellyfinLibrary, user_id: str | None)
     )
     return JellyfinLibraryOverviewRead(
         library=library_read(db, library),
-        item_count=len(items),
-        known_size_bytes=sum(sizes),
-        size_known_count=len(sizes),
-        known_duration_seconds=sum(durations),
-        duration_known_count=len(durations),
-        earliest_date_created=min(dates, default=None),
-        latest_date_created=max(dates, default=None),
-        item_type_distribution=_distribution(types),
-        production_year_distribution=_distribution(years, descending_label=True),
-        added_month_distribution=_distribution(months),
+        item_count=item_count,
+        known_size_bytes=int(aggregates[1]),
+        size_known_count=int(aggregates[2]),
+        known_duration_seconds=float(aggregates[3]),
+        duration_known_count=int(aggregates[4]),
+        earliest_date_created=aggregates[5],
+        latest_date_created=aggregates[6],
+        item_type_distribution=_distribution_rows(type_rows),
+        production_year_distribution=_distribution_rows(year_rows),
+        added_month_distribution=_distribution_rows(month_rows),
         playback_distribution=[
             JellyfinDistributionRead(label="played", value=played),
-            JellyfinDistributionRead(label="unplayed", value=len(items) - played),
+            JellyfinDistributionRead(label="unplayed", value=item_count - played),
         ],
         users=[JellyfinUserRead.model_validate(user) for user in users],
     )

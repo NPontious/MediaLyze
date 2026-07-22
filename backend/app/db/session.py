@@ -83,6 +83,13 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
             "ALTER TABLE jellyfin_sync_jobs ADD COLUMN cancellation_requested "
             "BOOLEAN NOT NULL DEFAULT 0"
         ),
+        "heartbeat_at": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN heartbeat_at DATETIME",
+        "progress_phase": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_phase VARCHAR(64)",
+        "progress_detail": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_detail VARCHAR(512)",
+        "progress_current": (
+            "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_current INTEGER NOT NULL DEFAULT 0"
+        ),
+        "progress_total": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_total INTEGER",
         "started_at": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN started_at DATETIME",
         "finished_at": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN finished_at DATETIME",
         "error": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN error VARCHAR(2048)",

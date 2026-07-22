@@ -267,6 +267,7 @@ export type JellyfinSyncStatus = JellyfinConnection & {
   sync_trigger_source: "manual" | "scheduled" | null;
   sync_job_active: boolean;
   sync_job_error: string | null;
+  sync_heartbeat_at?: string | null;
   sync_summary: Record<string, unknown>;
   sync_phase: string | null;
   sync_phase_detail: string | null;

@@ -760,6 +760,7 @@ def jellyfin_sync_status(
     progress = get_jellyfin_progress()
     job = get_active_jellyfin_sync_job(db) or get_latest_jellyfin_sync_job(db)
     job_active = bool(job and job.active_lock == 1 and job.status in {JobStatus.queued, JobStatus.running})
+    persisted_progress = bool(job and job.progress_phase is not None)
     return JellyfinSyncStatusRead(
         **connection.model_dump(),
         sync_job_id=job.id if job else None,
@@ -767,11 +768,16 @@ def jellyfin_sync_status(
         sync_trigger_source=job.trigger_source.value if job else None,
         sync_job_active=job_active,
         sync_job_error=job.error if job else None,
+        sync_heartbeat_at=job.heartbeat_at if job else None,
         sync_summary=dict(job.sync_summary or {}) if job else {},
-        sync_phase=progress["phase"],
-        sync_phase_detail=progress["detail"],
-        sync_current=int(progress["current"] or 0),
-        sync_total=int(progress["total"]) if progress["total"] is not None else None,
+        sync_phase=job.progress_phase if persisted_progress else progress["phase"],
+        sync_phase_detail=job.progress_detail if persisted_progress else progress["detail"],
+        sync_current=int(job.progress_current or 0) if persisted_progress else int(progress["current"] or 0),
+        sync_total=(
+            int(job.progress_total) if persisted_progress and job.progress_total is not None
+            else int(progress["total"]) if not persisted_progress and progress["total"] is not None
+            else None
+        ),
         cancellation_requested=bool(
             (job.cancellation_requested if job else False)
             or progress["cancellation_requested"]

@@ -30,19 +30,20 @@ Disabling a user removes that user's locally cached playback state. A completed
 sync also removes per-user rows that Jellyfin no longer returns. Removing the
 connection deletes all locally cached Jellyfin user data.
 
-## Container path mappings
+## Library assignments
 
-Jellyfin paths describe Jellyfin's filesystem view and commonly differ from the
-paths mounted into MediaLyze. For example:
+Jellyfin Settings contains only the server connection, synchronization controls,
+and playback-user selection. In Libraries settings, expand a MediaLyze library
+and select the corresponding Jellyfin library from its association dropdown.
+Each Jellyfin library can be combined with one existing MediaLyze library, or
+used as the name and media-type template when creating a new MediaLyze library.
+The Add Library dialog still asks for the local media path that MediaLyze should
+scan and links the Jellyfin catalog after creation.
 
-```text
-Jellyfin item path:  /data/movies/Example.mkv
-MediaLyze mount:     /media/movies/Example.mkv
-Mapping:             /data/movies -> /media/movies
-```
-
-Use the diagnostic rows in Settings to add mappings. Mapping changes are saved
-immediately and trigger one deduplicated background rematch.
+If Jellyfin and MediaLyze see the same files below different mount points, the
+expanded association section also exposes an optional path mapping for every
+source location reported by Jellyfin. These mappings use the existing global
+prefix rules and queue asset matching again after they are saved or removed.
 
 ## Synchronization and compatibility
 
@@ -51,6 +52,22 @@ marks an interrupted job as canceled; the next sync starts from the last
 successfully committed cache. Catalog pages are validated before stale data is
 removed, so malformed or incomplete successful HTTP responses fail the import
 without promoting partial state.
+
+Each validated page is written with a native SQLite bulk UPSERT into sync-run
+staging tables and committed independently. The visible catalog is changed only
+after all catalog and user pages completed, in one short atomic promote. Failed
+or canceled runs discard their staging rows and leave the previous live snapshot
+untouched. Sync jobs persist their current phase, counters, detail, and heartbeat,
+so status polling remains useful when requests and workers run in different
+processes. Jellyfin overview totals and distributions are aggregated in SQL
+instead of loading the complete item collection into Python memory.
+
+For local performance checks, the repository includes a 100,000-item SQLite
+benchmark:
+
+```bash
+.venv/bin/python benchmarks/benchmark_jellyfin_bulk_promote.py
+```
 
 The automated contract tests cover the API shapes used by Jellyfin 10.10 and
 10.11. The running Jellyfin instance exposes its exact API documentation under

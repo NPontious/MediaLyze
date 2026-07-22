@@ -1478,14 +1478,40 @@ export function UiElementsPage() {
                   <div className="jellyfin-sync-summary status-running"><LoaderCircle className="is-spinning" aria-hidden="true" /><div><strong>Synchronization running</strong><span>1842 of 1901 items matched</span></div></div>
                 </div>
               </VariantCard>
-              <VariantCard title="Jellyfin library diagnostics" source={`${settings} > Jellyfin`} classes={["jellyfin-library-card", "jellyfin-status-badge", "jellyfin-library-mapping-editor"]} wide>
-                <div className="jellyfin-library-list">
-                  <article className="jellyfin-library-card"><div className="jellyfin-library-card-head"><div><strong>Movies</strong><span>movies</span></div><span className="jellyfin-status-badge status-updating">Updating</span></div><code>/media/movies</code><div className="jellyfin-library-association"><label htmlFor="catalog-jellyfin-library-link">Associated MediaLyze library</label><select id="catalog-jellyfin-library-link" defaultValue="movies"><option>No associated library</option><option value="movies">Movies</option></select></div><div className="jellyfin-operation-status jellyfin-operation-status-prominent"><LoaderCircle className="is-spinning" aria-hidden="true" /><span><strong>Updating Jellyfin data in the background</strong>Your changes are already saved. You can continue editing while paths and matches are refreshed.</span></div></article>
-                  <article className="jellyfin-library-card is-mappable"><div className="jellyfin-library-card-head"><div><strong>Archive</strong><span>mixed</span></div><span className="jellyfin-status-badge status-path_not_accessible">Path inaccessible</span></div><div className="jellyfin-library-mapping-list"><div className="jellyfin-library-mapping-editor"><code>/jellyfin/archive</code><span aria-hidden="true">→</span><input defaultValue="/media/archive" aria-label="MediaLyze path for Archive" /><span className="jellyfin-library-mapping-status status-saved"><Check aria-hidden="true" />Saved automatically</span></div></div><div className="alert jellyfin-inline-error">This path is not accessible to MediaLyze.</div></article>
-                </div>
+              <VariantCard title="Collapsed MediaLyze library settings" source={`${settings} > Libraries`} classes={["library-settings-card", "is-collapsed", "library-settings-chevron"]} wide>
+                <article className="media-card library-settings-card is-collapsed">
+                  <div className="library-settings-header">
+                    <div className="item-meta">
+                      <div className="library-title-row">
+                        <div className="library-title-meta">
+                          <div className="library-title-main">
+                            <div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Show settings for Movies" aria-expanded="false"><ChevronRight aria-hidden="true" className="nav-icon" /></button><h3>Movies</h3></div>
+                            <div className="meta-tags library-title-tags"><span className="badge">Movies</span><span className="badge">Manual</span></div>
+                          </div>
+                        </div>
+                        <div className="library-title-actions">
+                          <button type="button" className="secondary icon-only-button" aria-label="Delete Movies"><Trash2 aria-hidden="true" /></button>
+                          <button type="button" className="small library-scan-button">Manual scan</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </article>
               </VariantCard>
-              <VariantCard title="MediaLyze and Jellyfin library association" source={`${settings} > Libraries`} classes={["library-settings-form", "library-source-field", "library-source-paths"]} wide>
-                <div className="library-settings-form"><div className="field library-source-field"><div className="field-label-row"><span>MediaLyze paths</span><button type="button" className="secondary small">Change path</button></div><div className="library-source-paths"><code>/media/movies</code></div></div><div className="field library-source-field"><label htmlFor="catalog-associated-jellyfin">Associated Jellyfin library</label><select id="catalog-associated-jellyfin"><option>Movies</option></select></div></div>
+              <VariantCard title="Expanded MediaLyze library settings" source={`${settings} > Libraries`} classes={["library-settings-card", "is-expanded", "library-settings-body", "library-settings-section"]} wide>
+                <article className="media-card library-settings-card is-expanded">
+                  <div className="library-settings-header">
+                    <div className="item-meta"><div className="library-title-row"><div className="library-title-meta"><div className="library-title-main"><div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Hide settings for Movies" aria-expanded="true"><ChevronDown aria-hidden="true" className="nav-icon" /></button><h3>Movies</h3></div><div className="meta-tags library-title-tags"><span className="badge">Movies</span><span className="badge">Manual</span></div></div></div><div className="library-title-actions"><button type="button" className="small library-scan-button">Manual scan</button></div></div></div>
+                  </div>
+                  <div className="library-settings-body">
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Jellyfin association</h4><p>Choose the Jellyfin catalog that enriches this MediaLyze library.</p></div><div className="library-settings-section-grid is-single-column"><div className="field"><label htmlFor="catalog-medialyze-jellyfin-link">Associated Jellyfin library</label><select id="catalog-medialyze-jellyfin-link" defaultValue="movies"><option value="">No associated library</option><option value="movies">Movies</option><option value="archive">Archive (Archive library)</option></select></div><div className="library-jellyfin-path-mappings"><div className="library-jellyfin-path-mappings-heading"><div className="library-jellyfin-path-mappings-title"><h5>Path mapping (optional)</h5><TooltipTrigger ariaLabel="Explain path mapping" content="Use this when Jellyfin and MediaLyze see the same files under different mount points.">?</TooltipTrigger></div><label className="library-jellyfin-path-mapping-switch" title="Disable path mapping"><input type="checkbox" role="switch" aria-label="Disable path mapping" defaultChecked /><span className="library-jellyfin-path-mapping-switch-track" aria-hidden="true"><span className="library-jellyfin-path-mapping-switch-thumb" /></span></label></div><div className="library-jellyfin-path-mapping-row"><div className="field library-jellyfin-path-source"><span className="field-label">Jellyfin path</span><code>/jellyfin/movies</code></div><span className="library-jellyfin-path-arrow" aria-hidden="true">→</span><div className="field library-jellyfin-path-target"><label htmlFor="catalog-jellyfin-path-target">MediaLyze path</label><input id="catalog-jellyfin-path-target" className="settings-choice-input" defaultValue="/media/movies" /></div><div className="library-jellyfin-path-mapping-actions"><button type="button" className="secondary icon-only-button library-jellyfin-path-save-button is-dirty" aria-label="Save mapping" title="Save mapping"><Save aria-hidden="true" /></button></div></div></div></div></section>
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Media source</h4><p>Review or change the local folders scanned by MediaLyze.</p></div><div className="library-settings-section-grid is-single-column"><div className="field library-source-field"><div className="field-label-row"><span>MediaLyze paths</span><button type="button" className="secondary small">Change path</button></div><div className="library-source-paths"><code>/media/movies</code></div></div></div></section>
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Scanning and analysis</h4><p>Configure when this library is scanned and how its files are evaluated.</p></div><div className="library-settings-form"><div className="field"><label htmlFor="catalog-library-scan-mode">Scan mode</label><select id="catalog-library-scan-mode" defaultValue="manual"><option value="manual">Manual</option></select></div><div className="field"><label htmlFor="catalog-library-duplicates">Duplicate detection</label><select id="catalog-library-duplicates" defaultValue="off"><option value="off">Off</option></select></div></div></section>
+                  </div>
+                </article>
+              </VariantCard>
+              <VariantCard title="Create library from detected Jellyfin catalog" source={`${settings} > Libraries > Add library`} classes={["jellyfin-create-library-options", "jellyfin-create-library-option"]} wide>
+                <section className="jellyfin-create-library-options"><div><h3>Add a detected Jellyfin library</h3><p className="field-hint">Select a catalog, then choose its local media path.</p></div><div className="jellyfin-create-library-option-list"><button type="button" className="jellyfin-create-library-option is-selected" aria-pressed="true"><strong>Archive</strong><span>420 Jellyfin items</span></button><button type="button" className="jellyfin-create-library-option" aria-pressed="false"><strong>Concerts</strong><span>88 Jellyfin items</span></button></div><div className="notice success">The Jellyfin library will be linked automatically after creation.</div></section>
               </VariantCard>
               <VariantCard title="Jellyfin metadata in a MediaLyze library" source="LibraryDetailPage" classes={["library-jellyfin-icon-trigger", "media-file-jellyfin-metadata"]} wide>
                 <div className="stack">
@@ -2055,7 +2081,7 @@ export function UiElementsPage() {
                     <div className="library-title-row">
                       <div className="library-title-meta">
                         <div className="library-title-main">
-                          <h3><span className="file-link">Movies</span></h3>
+                          <div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Show settings for Movies" aria-expanded="false" disabled><ChevronRight aria-hidden="true" className="nav-icon" /></button><h3><span className="file-link">Movies</span></h3></div>
                           <div className="meta-tags library-title-tags">
                             <span className="badge">Movies</span>
                             <span className="badge">Manual</span>

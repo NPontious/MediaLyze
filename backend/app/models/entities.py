@@ -230,11 +230,93 @@ class JellyfinSyncJob(Base):
     # single-flight lock across request and scheduler threads.
     active_lock: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     cancellation_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    progress_phase: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    progress_detail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     queued_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     sync_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class JellyfinSyncStageLibrary(Base):
+    __tablename__ = "jellyfin_sync_stage_libraries"
+    __table_args__ = (Index("ix_jellyfin_sync_stage_libraries_run", "sync_run_id"),)
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    remote_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    collection_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    locations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    mapped_locations: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    mapped_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    linked_library_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    link_method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class JellyfinSyncStageUser(Base):
+    __tablename__ = "jellyfin_sync_stage_users"
+    __table_args__ = (Index("ix_jellyfin_sync_stage_users_run", "sync_run_id"),)
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class JellyfinSyncStageItem(Base):
+    __tablename__ = "jellyfin_sync_stage_items"
+    __table_args__ = (
+        Index("ix_jellyfin_sync_stage_items_run", "sync_run_id"),
+        Index("ix_jellyfin_sync_stage_items_library", "sync_run_id", "library_remote_item_id"),
+    )
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    jellyfin_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    library_remote_item_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    library_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    series_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    season_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    original_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    series_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    season_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_created: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    premiere_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    production_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overview: Mapped[str | None] = mapped_column(String(12000), nullable=True)
+    provider_ids: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    image_tags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    backdrop_image_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    raw_limited_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class JellyfinSyncStageUserData(Base):
+    __tablename__ = "jellyfin_sync_stage_user_data"
+    __table_args__ = (Index("ix_jellyfin_sync_stage_user_data_run", "sync_run_id"),)
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    jellyfin_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    played: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 
 class JellyfinUser(TimestampMixin, Base):
