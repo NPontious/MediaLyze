@@ -1,5 +1,5 @@
 import { Check, LoaderCircle, Save, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api, type JellyfinLibrary, type JellyfinPathMapping } from "../lib/api";
@@ -160,6 +160,9 @@ export function JellyfinLibraryPathMappings({
   disabled = false,
   loadError,
   onChanged,
+  onBatchChanged,
+  sectionId,
+  focused = false,
 }: {
   jellyfinLibrary: JellyfinLibrary;
   mappings: JellyfinPathMapping[];
@@ -167,39 +170,55 @@ export function JellyfinLibraryPathMappings({
   disabled?: boolean;
   loadError?: string | null;
   onChanged: (mapping: JellyfinPathMapping | null, removedId?: number) => void;
+  onBatchChanged: (mappings: JellyfinPathMapping[]) => Promise<void>;
+  sectionId?: string;
+  focused?: boolean;
 }) {
   const { t } = useTranslation();
   const [togglePending, setTogglePending] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const switchRef = useRef<HTMLInputElement | null>(null);
   const locationMappings = jellyfinLibrary.locations.map((location) => mappings.find(
     (candidate) => normalizedPath(candidate.jellyfin_path_prefix) === normalizedPath(location),
   ));
-  const isEnabled = Boolean(
+  const enabledMappingCount = locationMappings.filter((mapping) => mapping?.enabled).length;
+  const isFullyEnabled = Boolean(
     jellyfinLibrary.locations.length
       && locationMappings.every((mapping) => mapping?.enabled),
   );
+  const isPartiallyEnabled = enabledMappingCount > 0 && !isFullyEnabled;
+
+  useEffect(() => {
+    if (switchRef.current) switchRef.current.indeterminate = isPartiallyEnabled;
+  }, [isPartiallyEnabled]);
 
   async function togglePathMapping(nextEnabled: boolean) {
-    if (nextEnabled === isEnabled) return;
+    if (nextEnabled === isFullyEnabled && !isPartiallyEnabled) return;
     setTogglePending(true);
     setToggleError(null);
     try {
-      for (const [index, location] of jellyfinLibrary.locations.entries()) {
+      const batch = jellyfinLibrary.locations.flatMap((location, index) => {
         const mapping = locationMappings[index];
         if (mapping) {
-          const updated = await api.updateJellyfinPathMapping(mapping.id, { enabled: nextEnabled });
-          onChanged(updated);
-          continue;
+          return [{
+            id: mapping.id,
+            jellyfin_path_prefix: mapping.jellyfin_path_prefix,
+            medialyze_path_prefix: mapping.medialyze_path_prefix,
+            enabled: nextEnabled,
+          }];
         }
-        if (!nextEnabled) continue;
+        if (!nextEnabled) return [];
         const target = (suggestedTargets[index] ?? suggestedTargets[0] ?? "").trim();
         if (!target) throw new Error(t("libraries.sections.jellyfin.pathMappingTargetRequired"));
-        const created = await api.createJellyfinPathMapping({
+        return [{
           jellyfin_path_prefix: location,
           medialyze_path_prefix: target,
           enabled: true,
-        });
-        onChanged(created);
+        }];
+      });
+      if (batch.length) {
+        const updated = await api.updateJellyfinPathMappingsBatch(batch);
+        await onBatchChanged(updated);
       }
     } catch (reason) {
       setToggleError((reason as Error).message);
@@ -209,7 +228,10 @@ export function JellyfinLibraryPathMappings({
   }
 
   return (
-    <div className="library-jellyfin-path-mappings">
+    <div
+      id={sectionId}
+      className={`library-jellyfin-path-mappings${focused ? " is-focused" : ""}`}
+    >
       <div className="library-jellyfin-path-mappings-heading">
         <div className="library-jellyfin-path-mappings-title">
           <h5>{t("libraries.sections.jellyfin.pathMappingTitle")}</h5>
@@ -222,16 +244,25 @@ export function JellyfinLibraryPathMappings({
         </div>
         <label
           className="library-jellyfin-path-mapping-switch"
-          title={t(isEnabled
+          title={t(isFullyEnabled
             ? "libraries.sections.jellyfin.disablePathMapping"
             : "libraries.sections.jellyfin.enablePathMapping")}
         >
+          <span className={`library-jellyfin-path-mapping-state${isPartiallyEnabled ? " is-partial" : ""}`}>
+            {t(isPartiallyEnabled
+              ? "libraries.sections.jellyfin.pathMappingStatePartial"
+              : isFullyEnabled
+                ? "libraries.sections.jellyfin.pathMappingStateEnabled"
+                : "libraries.sections.jellyfin.pathMappingStateDisabled")}
+          </span>
           <input
+            ref={switchRef}
             type="checkbox"
             role="switch"
-            checked={isEnabled}
+            checked={isFullyEnabled}
             disabled={disabled || togglePending || !jellyfinLibrary.locations.length}
-            aria-label={t(isEnabled
+            aria-checked={isPartiallyEnabled ? "mixed" : isFullyEnabled}
+            aria-label={t(isFullyEnabled
               ? "libraries.sections.jellyfin.disablePathMapping"
               : "libraries.sections.jellyfin.enablePathMapping")}
             aria-busy={togglePending}
@@ -247,7 +278,7 @@ export function JellyfinLibraryPathMappings({
       ) : null}
       {!jellyfinLibrary.locations.length ? (
         <div className="notice">{t("libraries.sections.jellyfin.noJellyfinPaths")}</div>
-      ) : isEnabled ? (
+      ) : isFullyEnabled || isPartiallyEnabled ? (
         <div className="library-jellyfin-path-mapping-list">
           {jellyfinLibrary.locations.map((location, index) => {
             const mapping = mappings.find(

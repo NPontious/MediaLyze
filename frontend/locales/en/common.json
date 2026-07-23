@@ -82,6 +82,7 @@
     "collapseAria": "Collapse {{title}}",
     "expandAria": "Expand {{title}}",
     "loading": "Loading...",
+    "refreshing": "Updating...",
     "noDataYet": "No data yet"
   },
   "releaseNotes": {
@@ -110,6 +111,10 @@
     "settingsNavigationLibraries": "Libraries",
     "settingsNavigationAddLibrary": "Add library",
     "settingsNavigationPatternRecognition": "Pattern recognition",
+    "settingsGroups": { "librariesSources": "Libraries & Sources", "analysis": "Analysis", "application": "Application", "maintenanceDiagnostics": "Maintenance & Diagnostics" },
+    "settingsSearchLabel": "Search settings",
+    "settingsSearchPlaceholder": "Search settings…",
+    "settingsSearchEmpty": "No settings match this search.",
     "quickActions": "Quickactions",
     "collapseSettingsNavigation": "Collapse settings menu",
     "expandSettingsNavigation": "Expand settings menu",
@@ -121,7 +126,7 @@
     "expandLibrarySettings": "Show settings for {{name}}",
     "collapseLibrarySettings": "Hide settings for {{name}}",
     "sections": {
-      "jellyfin": { "title": "Jellyfin association", "description": "Select the Jellyfin catalog that belongs to this MediaLyze library. Choosing a catalog already assigned elsewhere moves that association here.", "pathMappingTitle": "Path mapping (optional)", "pathMappingDescription": "Configure this only when Jellyfin and MediaLyze see the same files under different mount points. Map each Jellyfin source prefix to the corresponding MediaLyze path.", "pathMappingDescriptionAria": "Explain path mapping", "enablePathMapping": "Enable path mapping", "disablePathMapping": "Disable path mapping", "pathMappingTargetRequired": "A MediaLyze path is required before path mapping can be enabled.", "useMediaLyzePath": "Use {{path}}", "savePathMapping": "Save mapping", "removePathMapping": "Remove mapping", "noJellyfinPaths": "Jellyfin has not reported a source path for this library." },
+      "jellyfin": { "title": "Jellyfin association", "description": "Select the Jellyfin catalog that belongs to this MediaLyze library. Choosing a catalog already assigned elsewhere moves that association here.", "pathMappingTitle": "Path mapping (optional)", "pathMappingDescription": "Configure this only when Jellyfin and MediaLyze see the same files under different mount points. Map each Jellyfin source prefix to the corresponding MediaLyze path.", "pathMappingDescriptionAria": "Explain path mapping", "enablePathMapping": "Enable path mapping", "disablePathMapping": "Disable path mapping", "pathMappingStateEnabled": "Enabled", "pathMappingStateDisabled": "Disabled", "pathMappingStatePartial": "Partially enabled", "pathMappingTargetRequired": "A MediaLyze path is required before path mapping can be enabled.", "useMediaLyzePath": "Use {{path}}", "savePathMapping": "Save mapping", "removePathMapping": "Remove mapping", "noJellyfinPaths": "Jellyfin has not reported a source path for this library." },
       "source": { "title": "Media source", "description": "Manage the local folders MediaLyze scans. Changing paths keeps existing library configuration and history." },
       "analysis": { "title": "Scanning and analysis", "description": "Configure scan scheduling, duplicate detection, historical dates, and the quality profile used for this library." }
     },
@@ -600,6 +605,11 @@
     "tableView": {
       "edit": "Edit table view"
     },
+    "fileNameSource": {
+      "label": "Displayed file name",
+      "file": "Show file names",
+      "jellyfin": "Show Jellyfin names"
+    },
     "export": {
       "aria": "Export analyzed files as CSV",
       "tooltip": "Export the full filtered analyzed-files result set as CSV",
@@ -620,6 +630,10 @@
       "file": {
         "label": "File and path",
         "placeholder": "Search file and path"
+      },
+      "jellyfinName": {
+        "label": "Jellyfin name",
+        "placeholder": "Search Jellyfin name"
       },
       "size": {
         "placeholder": "e.g. >4GB",
@@ -799,6 +813,7 @@
       "title": "Media library history",
       "subtitle": "Daily trend snapshots from finished scans",
       "empty": "History trends will appear after the next finished scan.",
+      "metricEmpty": "No data is available for the selected metric.",
       "controls": {
         "metric": "Select history metric",
         "range": "Select history range"
@@ -1622,8 +1637,18 @@
     "matchSummary": "{{matched}} of {{total}} items matched",
     "nextSync": "Next scheduled sync: {{date}}",
     "status": { "never": "Not synchronized", "running": "Synchronization running", "success": "Synchronized", "canceled": "Synchronization canceled", "error": "Synchronization failed" },
+    "catalogStatus": { "label": "Catalog synchronization", "current": "Catalog current" },
+    "matchStatus": { "label": "Local file association", "percent": "{{percent}}% locally matched", "zeroWarning": "No Jellyfin items are associated with local MediaLyze files yet.", "openPathMapping": "Open path mapping", "openLibraries": "Open library assignments" },
     "users": "Playback users",
     "usersEmpty": "Run a synchronization to discover Jellyfin users.",
+    "usersSelected": "{{selected}} of {{total}} selected",
+    "userSearchLabel": "Search playback users",
+    "userSearchPlaceholder": "Search users…",
+    "userSearchEmpty": "No users match this search.",
+    "userBulkActions": "Playback user bulk selection",
+    "selectAllUsers": "Select all",
+    "selectNoUsers": "Select none",
+    "userGroups": { "selected": "Selected", "unselected": "Not selected" },
     "pathMappings": "Path mappings",
     "jellyfinPath": "Jellyfin path",
     "medialyzePath": "MediaLyze path",

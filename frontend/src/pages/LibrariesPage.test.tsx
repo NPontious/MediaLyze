@@ -2,7 +2,7 @@ import i18n from "../i18n";
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 
 import { AppDataProvider } from "../lib/app-data";
 import {
@@ -401,12 +401,19 @@ function createDashboard(overrides: Partial<DashboardResponse> = {}): DashboardR
   };
 }
 
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location-probe">{`${location.pathname}${location.search}`}</output>;
+}
+
 function renderPage({
   seedExpandedPanels = true,
   activePanel,
+  initialEntry = "/settings",
 }: {
   seedExpandedPanels?: boolean;
   activePanel?: SettingsPanelId;
+  initialEntry?: string;
 } = {}) {
   if (activePanel) {
     window.localStorage.setItem("medialyze-settings-active-panel", activePanel);
@@ -430,9 +437,10 @@ function renderPage({
     }
   }
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <AppDataProvider>
         <ScanJobsProvider>
+          <LocationProbe />
           <LibrariesPage />
         </ScanJobsProvider>
       </AppDataProvider>
@@ -449,6 +457,7 @@ beforeEach(() => {
   vi.spyOn(api, "libraries").mockResolvedValue([]);
   vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
   vi.spyOn(api, "jellyfinPathMappings").mockResolvedValue([]);
+  vi.spyOn(api, "updateJellyfinPathMappingsBatch").mockResolvedValue([]);
   vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
   vi.spyOn(api, "dashboard").mockResolvedValue(createDashboard());
   vi.spyOn(api, "historyStorage").mockResolvedValue(createHistoryStorage());
@@ -490,6 +499,64 @@ afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
   void i18n.changeLanguage("en");
+});
+
+describe("LibrariesPage settings navigation", () => {
+  it("opens every panel from its canonical section URL and writes navigation changes back to history", async () => {
+    renderPage({ initialEntry: "/settings?section=application" });
+
+    expect(await screen.findByRole("heading", { name: "App settings" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/settings?section=application");
+
+    fireEvent.click(screen.getByRole("button", { name: "History retention" }));
+
+    expect(await screen.findByRole("heading", { name: "History retention" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/settings?section=history-retention");
+  });
+
+  it("groups and searches the settings navigation", async () => {
+    renderPage({ initialEntry: "/settings?section=libraries" });
+
+    const settingsMenu = await screen.findByLabelText("Settings menu");
+    const desktopNavigation = settingsMenu.querySelector(".settings-navigation-list") as HTMLElement | null;
+    expect(desktopNavigation).not.toBeNull();
+    const desktopNavigationQueries = within(desktopNavigation as HTMLElement);
+
+    expect(desktopNavigationQueries.getByText("Libraries & Sources")).toBeInTheDocument();
+    expect(desktopNavigationQueries.getByText("Analysis")).toBeInTheDocument();
+    expect(desktopNavigationQueries.getByText("Application")).toBeInTheDocument();
+    expect(desktopNavigationQueries.getByText("Maintenance & Diagnostics")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), {
+      target: { value: "telemetry" },
+    });
+
+    expect(desktopNavigationQueries.getByRole("button", { name: "Telemetry" })).toBeInTheDocument();
+    expect(desktopNavigationQueries.queryByRole("button", { name: "Quality profiles" })).not.toBeInTheDocument();
+
+    fireEvent.click(desktopNavigationQueries.getByRole("button", { name: "Telemetry" }));
+    expect(screen.getByRole("searchbox", { name: "Search settings" })).toHaveValue("");
+    expect(desktopNavigationQueries.getByRole("button", { name: "Quality profiles" })).toBeInTheDocument();
+  });
+
+  it("expands and focuses a linked library from a matching-warning URL", async () => {
+    const library = createLibrarySummary({ id: 3, name: "Movies" });
+    const jellyfinLibrary = createJellyfinLibrary({
+      linked_library_id: 3,
+      linked_library_name: "Movies",
+      locations: ["/remote/movies"],
+    });
+    vi.spyOn(api, "libraries").mockResolvedValue([library]);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
+
+    renderPage({
+      initialEntry: "/settings?section=libraries&library=3&focus=path-mapping",
+    });
+
+    expect(await screen.findByRole("heading", { name: "Jellyfin association" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Path mapping (optional)" }).closest(".library-jellyfin-path-mappings"))
+      .toHaveClass("is-focused");
+  });
 });
 
 describe("LibrariesPage ignore patterns", () => {
@@ -1574,7 +1641,15 @@ describe("LibrariesPage Jellyfin library assignments", () => {
       medialyze_path_prefix: "/media/movies",
       enabled: true,
     };
-    const createMapping = vi.spyOn(api, "createJellyfinPathMapping").mockResolvedValue(persistedMapping);
+    const updateMappingsBatch = vi.spyOn(api, "updateJellyfinPathMappingsBatch").mockImplementation(async (mappings) => {
+      persistedMapping = {
+        id: mappings[0]?.id ?? persistedMapping.id,
+        jellyfin_path_prefix: mappings[0]?.jellyfin_path_prefix ?? persistedMapping.jellyfin_path_prefix,
+        medialyze_path_prefix: mappings[0]?.medialyze_path_prefix ?? persistedMapping.medialyze_path_prefix,
+        enabled: mappings[0]?.enabled ?? persistedMapping.enabled,
+      };
+      return [persistedMapping];
+    });
     const updateMapping = vi.spyOn(api, "updateJellyfinPathMapping").mockImplementation(async (_id, payload) => {
       persistedMapping = { ...persistedMapping, ...payload };
       return persistedMapping;
@@ -1589,11 +1664,13 @@ describe("LibrariesPage Jellyfin library assignments", () => {
     expect(screen.queryByRole("textbox", { name: "MediaLyze path" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch", { name: "Enable path mapping" }));
-    await waitFor(() => expect(createMapping).toHaveBeenCalledWith({
-      jellyfin_path_prefix: "/jellyfin/anime",
-      medialyze_path_prefix: "/media/movies",
-      enabled: true,
-    }));
+    await waitFor(() => expect(updateMappingsBatch).toHaveBeenCalledWith([
+      {
+        jellyfin_path_prefix: "/jellyfin/anime",
+        medialyze_path_prefix: "/media/movies",
+        enabled: true,
+      },
+    ]));
 
     expect(await screen.findByText("/jellyfin/anime")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Disable path mapping" })).toBeChecked();
@@ -1614,9 +1691,61 @@ describe("LibrariesPage Jellyfin library assignments", () => {
     }));
 
     fireEvent.click(screen.getByRole("switch", { name: "Disable path mapping" }));
-    await waitFor(() => expect(updateMapping).toHaveBeenCalledWith(9, { enabled: false }));
+    await waitFor(() => expect(updateMappingsBatch).toHaveBeenLastCalledWith([
+      {
+        id: 9,
+        jellyfin_path_prefix: "/jellyfin/anime",
+        medialyze_path_prefix: "/media/films",
+        enabled: false,
+      },
+    ]));
     expect(await screen.findByRole("switch", { name: "Enable path mapping" })).not.toBeChecked();
     expect(screen.queryByRole("textbox", { name: "MediaLyze path" })).not.toBeInTheDocument();
+  });
+
+  it("shows a partial path-mapping state and enables all locations in one batch", async () => {
+    const medialyzeLibrary = createLibrarySummary();
+    const jellyfinLibrary = createJellyfinLibrary({
+      locations: ["/jellyfin/movies", "/jellyfin/archive"],
+      linked_library_id: medialyzeLibrary.id,
+      linked_library_name: medialyzeLibrary.name,
+      mapped_status: "linked",
+      data_scope: "linked",
+    });
+    const mappings: JellyfinPathMapping[] = [
+      {
+        id: 10,
+        jellyfin_path_prefix: "/jellyfin/movies",
+        medialyze_path_prefix: "/media/movies",
+        enabled: true,
+      },
+      {
+        id: 11,
+        jellyfin_path_prefix: "/jellyfin/archive",
+        medialyze_path_prefix: "/media/archive",
+        enabled: false,
+      },
+    ];
+    vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
+    vi.mocked(api.jellyfinPathMappings).mockResolvedValue(mappings);
+    const updateBatch = vi.spyOn(api, "updateJellyfinPathMappingsBatch").mockResolvedValue(
+      mappings.map((mapping) => ({ ...mapping, enabled: true })),
+    );
+
+    renderPage({ activePanel: "configuredLibraries" });
+    await expandLibrarySettings();
+
+    expect(await screen.findByText("Partially enabled")).toBeInTheDocument();
+    const toggle = screen.getByRole("switch", { name: "Enable path mapping" });
+    expect(toggle).toHaveAttribute("aria-checked", "mixed");
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(updateBatch).toHaveBeenCalledWith([
+      { ...mappings[0], enabled: true },
+      { ...mappings[1], enabled: true },
+    ]));
+    expect(await screen.findByText("Enabled")).toBeInTheDocument();
   });
 });
 

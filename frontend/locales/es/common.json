@@ -82,6 +82,7 @@
     "collapseAria": "Contraer {{title}}",
     "expandAria": "Expandir {{title}}",
     "loading": "Cargando...",
+    "refreshing": "Actualizando...",
     "noDataYet": "Todavía no hay datos"
   },
   "releaseNotes": {
@@ -110,6 +111,10 @@
     "settingsNavigationLibraries": "Bibliotecas",
     "settingsNavigationAddLibrary": "Añadir biblioteca",
     "settingsNavigationPatternRecognition": "Reconocimiento de patrones",
+    "settingsGroups": { "librariesSources": "Bibliotecas y fuentes", "analysis": "Análisis", "application": "Aplicación", "maintenanceDiagnostics": "Mantenimiento y diagnóstico" },
+    "settingsSearchLabel": "Buscar ajustes",
+    "settingsSearchPlaceholder": "Buscar ajustes…",
+    "settingsSearchEmpty": "Ningún ajuste coincide con la búsqueda.",
     "quickActions": "Acciones rápidas",
     "collapseSettingsNavigation": "Contraer menú de ajustes",
     "expandSettingsNavigation": "Expandir menú de ajustes",
@@ -121,7 +126,7 @@
     "expandLibrarySettings": "Mostrar ajustes de {{name}}",
     "collapseLibrarySettings": "Ocultar ajustes de {{name}}",
     "sections": {
-      "jellyfin": { "title": "Asociación Jellyfin", "description": "Selecciona el catálogo Jellyfin que pertenece a esta biblioteca MediaLyze. Si ya está asignado a otra biblioteca, la asociación se moverá aquí.", "pathMappingTitle": "Mapeo de rutas (opcional)", "pathMappingDescription": "Configúralo solo si Jellyfin y MediaLyze ven los mismos archivos en puntos de montaje diferentes. Asigna cada prefijo de origen de Jellyfin a la ruta correspondiente de MediaLyze.", "pathMappingDescriptionAria": "Explicar el mapeo de rutas", "enablePathMapping": "Activar el mapeo de rutas", "disablePathMapping": "Desactivar el mapeo de rutas", "pathMappingTargetRequired": "Se necesita una ruta de MediaLyze antes de activar el mapeo de rutas.", "useMediaLyzePath": "Usar {{path}}", "savePathMapping": "Guardar mapeo", "removePathMapping": "Eliminar mapeo", "noJellyfinPaths": "Jellyfin aún no ha comunicado una ruta de origen para esta biblioteca." },
+      "jellyfin": { "title": "Asociación Jellyfin", "description": "Selecciona el catálogo Jellyfin que pertenece a esta biblioteca MediaLyze. Si ya está asignado a otra biblioteca, la asociación se moverá aquí.", "pathMappingTitle": "Mapeo de rutas (opcional)", "pathMappingDescription": "Configúralo solo si Jellyfin y MediaLyze ven los mismos archivos en puntos de montaje diferentes. Asigna cada prefijo de origen de Jellyfin a la ruta correspondiente de MediaLyze.", "pathMappingDescriptionAria": "Explicar el mapeo de rutas", "enablePathMapping": "Activar el mapeo de rutas", "disablePathMapping": "Desactivar el mapeo de rutas", "pathMappingStateEnabled": "Activado", "pathMappingStateDisabled": "Desactivado", "pathMappingStatePartial": "Activado parcialmente", "pathMappingTargetRequired": "Se necesita una ruta de MediaLyze antes de activar el mapeo de rutas.", "useMediaLyzePath": "Usar {{path}}", "savePathMapping": "Guardar mapeo", "removePathMapping": "Eliminar mapeo", "noJellyfinPaths": "Jellyfin aún no ha comunicado una ruta de origen para esta biblioteca." },
       "source": { "title": "Fuente multimedia", "description": "Gestiona las carpetas locales que analiza MediaLyze. Cambiar las rutas conserva la configuración y el historial de la biblioteca." },
       "analysis": { "title": "Análisis y escaneado", "description": "Configura la programación, la detección de duplicados, las fechas históricas y el perfil de calidad de esta biblioteca." }
     },
@@ -600,6 +605,11 @@
     "tableView": {
       "edit": "Editar vista de tabla"
     },
+    "fileNameSource": {
+      "label": "Nombre de archivo mostrado",
+      "file": "Mostrar nombres de archivo",
+      "jellyfin": "Mostrar nombres de Jellyfin"
+    },
     "export": {
       "aria": "Exportar archivos analizados como CSV",
       "tooltip": "Exportar como CSV el conjunto completo filtrado de resultados de archivos analizados",
@@ -620,6 +630,10 @@
       "file": {
         "label": "Archivo y ruta",
         "placeholder": "Buscar archivo y ruta"
+      },
+      "jellyfinName": {
+        "label": "Nombre de Jellyfin",
+        "placeholder": "Buscar nombre de Jellyfin"
       },
       "size": {
         "placeholder": "p. ej. >4GB",
@@ -799,6 +813,7 @@
       "title": "Historial de la biblioteca multimedia",
       "subtitle": "Instantáneas diarias de tendencias de escaneos finalizados",
       "empty": "Las tendencias del historial aparecerán después del próximo escaneo completado.",
+      "metricEmpty": "No hay datos disponibles para la métrica seleccionada.",
       "controls": {
         "metric": "Seleccionar métrica del historial",
         "range": "Seleccionar rango del historial"
@@ -1589,7 +1604,9 @@
     "testConnection": "Probar conexión", "syncNow": "Sincronizar ahora", "cancelSync": "Cancelar sincronización", "cancelingSync": "Cancelando sincronización", "cancelingSyncDetail": "La solicitud actual de Jellyfin se está finalizando de forma segura.", "cancelRequested": "Cancelación solicitada. La operación actual finalizará de forma segura.", "syncCanceled": "La sincronización de Jellyfin fue cancelada.", "connectionSaved": "Conexión de Jellyfin guardada.", "autoSave": { "saving": "Guardando cambios…", "saved": "Guardado automáticamente" }, "operation": { "testingConnection": "Probando la conexión con Jellyfin…", "savingUsers": "Guardando la selección de usuarios…", "updatingMapping": "Actualizando el mapeo de rutas", "updatingMappingCompact": "Actualizando el mapeo y las coincidencias…", "updatingLibrary": "Actualizando la asociación de biblioteca", "recalculatingMatches": "MediaLyze está recalculando las coincidencias. En catálogos grandes puede tardar un momento." }, "backgroundUpdate": { "title": "Actualizando datos de Jellyfin en segundo plano", "detail": "Tus cambios ya están guardados. Puedes seguir trabajando mientras MediaLyze actualiza el acceso a las rutas y las coincidencias.", "error": "La actualización en segundo plano falló: {{message}}" }, "autoSaveFailed": "Error al guardar automáticamente.", "testFailed": "La prueba de conexión falló.", "testSucceeded": "Conectado a {{name}} {{version}}.", "syncSucceeded": "Se sincronizaron {{items}} elementos de {{libraries}} bibliotecas.",
     "syncProgress": "Progreso de sincronización de Jellyfin", "syncItemsProgress": "{{current}} de {{total}} elementos", "syncSteps": "Fases de sincronización", "syncPhase": { "connecting": "Conectando con Jellyfin", "users": "Cargando usuarios de reproducción", "libraries": "Cargando bibliotecas de Jellyfin", "items": "Obteniendo elementos de Jellyfin", "saving": "Guardando elementos en MediaLyze", "cleanup": "Eliminando entradas obsoletas", "matching": "Vinculando elementos con archivos de MediaLyze" }, "syncStep": { "connection": "Conexión", "catalog": "Catálogo", "items": "Elementos", "matching": "Vinculación" },
     "lastSync": "Última sincronización correcta: {{date}}", "notSynced": "Aún no sincronizado", "matchSummary": "{{matched}} de {{total}} elementos vinculados", "nextSync": "Próxima sincronización: {{date}}", "status": { "never": "No sincronizado", "running": "Sincronizando", "success": "Sincronizado", "canceled": "Sincronización cancelada", "error": "Error de sincronización" },
-    "users": "Usuarios de reproducción", "usersEmpty": "Sincroniza Jellyfin para descubrir usuarios.", "pathMappings": "Mapeos de rutas", "jellyfinPath": "Ruta de Jellyfin", "medialyzePath": "Ruta de MediaLyze", "jellyfinPathPlaceholder": "/jellyfin/media", "medialyzePathPlaceholder": "/media", "addMapping": "Añadir mapeo", "mappingEnabled": "Activar este mapeo",
+    "catalogStatus": { "label": "Sincronización del catálogo", "current": "Catálogo actualizado" },
+    "matchStatus": { "label": "Asociación de archivos locales", "percent": "{{percent}} % asociado localmente", "zeroWarning": "Todavía no hay elementos Jellyfin asociados a archivos locales de MediaLyze.", "openPathMapping": "Abrir mapeo de rutas", "openLibraries": "Abrir asignaciones de bibliotecas" },
+    "users": "Usuarios de reproducción", "usersEmpty": "Sincroniza Jellyfin para descubrir usuarios.", "usersSelected": "{{selected}} de {{total}} seleccionados", "userSearchLabel": "Buscar usuarios de reproducción", "userSearchPlaceholder": "Buscar usuarios…", "userSearchEmpty": "Ningún usuario coincide con esta búsqueda.", "userBulkActions": "Selección múltiple de usuarios de reproducción", "selectAllUsers": "Seleccionar todos", "selectNoUsers": "No seleccionar ninguno", "userGroups": { "selected": "Seleccionados", "unselected": "No seleccionados" }, "pathMappings": "Mapeos de rutas", "jellyfinPath": "Ruta de Jellyfin", "medialyzePath": "Ruta de MediaLyze", "jellyfinPathPlaceholder": "/jellyfin/media", "medialyzePathPlaceholder": "/media", "addMapping": "Añadir mapeo", "mappingEnabled": "Activar este mapeo",
     "libraries": "Bibliotecas de Jellyfin", "librariesEmpty": "No se han sincronizado bibliotecas de Jellyfin.", "libraryAssignments": "Asignaciones de bibliotecas Jellyfin", "libraryAssignmentsDescription": "Asigna cada biblioteca Jellyfin detectada a la biblioteca MediaLyze cuyos archivos describe. Todas las asignaciones se gestionan aquí.", "addDetectedLibrary": "Añadir una biblioteca Jellyfin detectada", "addDetectedLibraryDescription": "Selecciona una biblioteca Jellyfin sin asignar para rellenar su nombre y tipo; después elige la ruta local de medios.", "detectedLibrarySelected": "La biblioteca Jellyfin se vinculará automáticamente después de crear la biblioteca MediaLyze.", "libraryItemCount_one": "{{count}} elemento Jellyfin", "libraryItemCount_other": "{{count}} elementos Jellyfin", "libraryCreatedLinkFailed": "La biblioteca MediaLyze se creó, pero falló su asignación Jellyfin: {{message}}", "libraryStatus": { "linked": "Vinculada", "unassigned": "Sin asignar", "accessible": "Lista para añadir", "path_unmapped": "Ruta sin mapear", "path_not_accessible": "Ruta inaccesible", "updating": "Actualizando" }, "libraryMappingTarget": "Ruta de MediaLyze para {{name}}",
     "linkedLibrary": "Vinculada a la biblioteca {{name}}", "associatedMedialyzeLibrary": "Biblioteca MediaLyze asociada", "associatedJellyfinLibrary": "Biblioteca Jellyfin asociada", "noAssociatedLibrary": "Ninguna biblioteca asociada", "libraryAssociationHelpAria": "Explicar la asociación de bibliotecas Jellyfin", "libraryAssociationHelp": "Selecciona qué catálogo de Jellyfin pertenece a esta biblioteca de MediaLyze. Es independiente del mapeo de rutas utilizado para relacionar archivos.", "linkMethod": { "manual": "Seleccionada manualmente", "path": "Detectada mediante el mapeo de rutas" }, "linkedSource": "Fuente Jellyfin", "linkedLibraryTooltipAria": "Conectada a la biblioteca Jellyfin {{name}}", "linkedLibraryTooltip": "Conectada a la biblioteca Jellyfin {{name}}", "addAsLibrary": "Añadir como biblioteca de MediaLyze", "addAsLibraryUnavailable": "Configura primero un mapeo de ruta accesible para añadir esta biblioteca.", "libraryCreated": "Biblioteca de MediaLyze creada desde Jellyfin.",
     "historySource": "Fecha histórica de incorporación", "historySourceHelpAria": "Explicar la fuente de fecha", "historySourceHelp": "Usa DateCreated de Jellyfin para archivos vinculados y recurre a las fechas de MediaLyze para los demás.", "historySourceMedialyze": "MediaLyze / sistema de archivos", "historySourceJellyfin": "DateCreated de Jellyfin",

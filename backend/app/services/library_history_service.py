@@ -353,21 +353,37 @@ def _parse_history_metrics(
     )
 
 
-def get_library_history(db: Session, library_id: int) -> LibraryHistoryResponse | None:
+def get_library_history(
+    db: Session,
+    library_id: int,
+    *,
+    _coalesced: bool = False,
+) -> LibraryHistoryResponse | None:
     cache_key = str(id(db.get_bind()))
-    cached = stats_cache.get_library_history(cache_key, library_id)
-    if cached is not None:
-        return cached
+    if not _coalesced:
+        cached = stats_cache.get_library_history(cache_key, library_id)
+        if cached is not None:
+            return cached
 
     library = db.get(Library, library_id)
     if library is None:
         return None
+    if not _coalesced:
+        return stats_cache.get_or_compute_library_history(
+            cache_key,
+            library_id,
+            lambda: get_library_history(db, library_id, _coalesced=True),
+        )
 
     resolution_categories = _resolution_categories(db)
     points: list[LibraryHistoryPointRead] = []
 
-    rows = db.scalars(
-        select(LibraryHistory)
+    rows = db.execute(
+        select(
+            LibraryHistory.library_id,
+            LibraryHistory.snapshot_day,
+            LibraryHistory.snapshot,
+        )
         .where(LibraryHistory.library_id == library_id)
         .order_by(LibraryHistory.snapshot_day.asc(), LibraryHistory.id.asc())
     ).all()
@@ -395,7 +411,6 @@ def get_library_history(db: Session, library_id: int) -> LibraryHistoryResponse 
         ],
         points=points,
     )
-    stats_cache.set_library_history(cache_key, library_id, payload)
     return payload
 
 
@@ -484,11 +499,20 @@ def _finalize_numeric_distributions(
     return distributions
 
 
-def get_dashboard_history(db: Session) -> DashboardHistoryResponse:
+def get_dashboard_history(
+    db: Session,
+    *,
+    _coalesced: bool = False,
+) -> DashboardHistoryResponse:
     cache_key = str(id(db.get_bind()))
-    cached = stats_cache.get_dashboard_history(cache_key)
-    if cached is not None:
-        return cached
+    if not _coalesced:
+        cached = stats_cache.get_dashboard_history(cache_key)
+        if cached is not None:
+            return cached
+        return stats_cache.get_or_compute_dashboard_history(
+            cache_key,
+            lambda: get_dashboard_history(db, _coalesced=True),
+        )
 
     resolution_categories = _resolution_categories(db)
     visible_libraries = db.execute(
@@ -499,8 +523,12 @@ def get_dashboard_history(db: Session) -> DashboardHistoryResponse:
     visible_library_ids = [int(row.id) for row in visible_libraries]
     points_by_day: OrderedDict[str, dict] = OrderedDict()
 
-    rows = db.scalars(
-        select(LibraryHistory)
+    rows = db.execute(
+        select(
+            LibraryHistory.library_id,
+            LibraryHistory.snapshot_day,
+            LibraryHistory.snapshot,
+        )
         .join(Library, Library.id == LibraryHistory.library_id)
         .where(Library.show_on_dashboard.is_(True))
         .order_by(LibraryHistory.snapshot_day.asc(), LibraryHistory.library_id.asc(), LibraryHistory.id.asc())
@@ -578,5 +606,4 @@ def get_dashboard_history(db: Session) -> DashboardHistoryResponse:
             for row in visible_libraries
         ],
     )
-    stats_cache.set_dashboard_history(cache_key, payload)
     return payload

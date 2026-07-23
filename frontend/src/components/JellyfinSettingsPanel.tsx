@@ -4,17 +4,20 @@ import {
   CircleStop,
   Link2,
   RefreshCw,
+  Search,
   Server,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { AsyncPanel } from "./AsyncPanel";
 import { TooltipTrigger } from "./TooltipTrigger";
 import {
   api,
   type JellyfinConnection,
+  type JellyfinLibrary,
   type JellyfinSyncStatus,
   type JellyfinUser,
 } from "../lib/api";
@@ -67,6 +70,8 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
   const [connection, setConnection] = useState<JellyfinConnection>(EMPTY_CONNECTION);
   const [status, setStatus] = useState<JellyfinSyncStatus | null>(null);
   const [users, setUsers] = useState<JellyfinUser[]>([]);
+  const [jellyfinLibraries, setJellyfinLibraries] = useState<JellyfinLibrary[]>([]);
+  const [userSearch, setUserSearch] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [syncInterval, setSyncInterval] = useState("60");
@@ -89,14 +94,16 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
   onCatalogChangedRef.current = onCatalogChanged;
 
   const load = useCallback(async () => {
-    const [nextStatus, nextUsers] = await Promise.all([
+    const [nextStatus, nextUsers, nextLibraries] = await Promise.all([
       api.jellyfinSyncStatus(),
       api.jellyfinUsers(),
+      api.jellyfinLibraries(),
     ]);
     setConnection(nextStatus);
     setStatus(nextStatus);
     activeSyncJobIdRef.current = nextStatus.sync_job_active ? nextStatus.sync_job_id : null;
     setUsers(nextUsers);
+    setJellyfinLibraries(nextLibraries);
     setBaseUrl(nextStatus.base_url);
     setSyncInterval(String(nextStatus.sync_interval_minutes));
   }, []);
@@ -113,6 +120,13 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
   const syncDisplayStatus = syncRunning ? "running" : connection.last_status;
   const connectionBusy = pending === "test" || pending === "sync";
   const usersBusy = pending?.startsWith("user-") ?? false;
+  const selectedUserCount = users.filter((user) => user.enabled_for_sync).length;
+  const normalizedUserSearch = userSearch.trim().toLocaleLowerCase();
+  const visibleUsers = normalizedUserSearch
+    ? users.filter((user) => user.name.toLocaleLowerCase().includes(normalizedUserSearch))
+    : users;
+  const visibleSelectedUsers = visibleUsers.filter((user) => user.enabled_for_sync);
+  const visibleUnselectedUsers = visibleUsers.filter((user) => !user.enabled_for_sync);
   const parsedSyncInterval = normalizedSyncInterval(syncInterval);
   const autoSaveSignature = JSON.stringify([baseUrl.trim(), apiKey.trim(), parsedSyncInterval]);
   const connectionDirty = (
@@ -179,6 +193,11 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
     const items = Number(nextStatus.sync_summary.items_synced || 0);
     const syncedLibraries = Number(nextStatus.sync_summary.libraries_synced || 0);
     setNotice(t("jellyfin.syncSucceeded", { items, libraries: syncedLibraries }));
+    try {
+      setJellyfinLibraries(await api.jellyfinLibraries());
+    } catch {
+      // The catalog refresh below will retry through the shared app-data loader.
+    }
     onCatalogChangedRef.current?.();
   }, [t]);
   const handleSyncCanceled = useCallback(() => {
@@ -242,6 +261,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
       setConnection(EMPTY_CONNECTION);
       setStatus(null);
       setUsers([]);
+      setJellyfinLibraries([]);
       setBaseUrl("");
       setApiKey("");
       setSyncInterval("60");
@@ -300,12 +320,19 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
     : null;
   const syncSteps = ["connection", "catalog", "items", "matching"];
   const cancellationRequested = cancelPending || Boolean(status?.cancellation_requested);
+  const matchedItemCount = status?.matched_item_count ?? 0;
+  const catalogItemCount = status?.item_count ?? 0;
+  const matchPercent = catalogItemCount > 0
+    ? Math.round((matchedItemCount / catalogItemCount) * 100)
+    : 0;
+  const hasZeroMatches = catalogItemCount > 0 && matchedItemCount === 0;
+  const matchingTargetLibrary = jellyfinLibraries.find((library) => library.linked_library_id !== null);
+  const matchingSettingsTarget = matchingTargetLibrary?.linked_library_id
+    ? `/settings?section=libraries&library=${matchingTargetLibrary.linked_library_id}&focus=path-mapping`
+    : "/settings?section=libraries&focus=jellyfin-association";
 
-  async function toggleUser(userId: string) {
-    const enabledIds = users
-      .filter((user) => user.enabled_for_sync !== (user.jellyfin_user_id === userId))
-      .map((user) => user.jellyfin_user_id);
-    setPending(`user-${userId}`);
+  async function saveEnabledUsers(enabledIds: string[], pendingKey: string) {
+    setPending(pendingKey);
     setUsersError(null);
     try {
       setUsers(await api.updateJellyfinUsers(enabledIds));
@@ -314,6 +341,46 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
     } finally {
       setPending(null);
     }
+  }
+
+  async function toggleUser(userId: string) {
+    const enabledIds = users
+      .filter((user) => user.enabled_for_sync !== (user.jellyfin_user_id === userId))
+      .map((user) => user.jellyfin_user_id);
+    await saveEnabledUsers(enabledIds, `user-${userId}`);
+  }
+
+  async function selectAllUsers() {
+    await saveEnabledUsers(users.map((user) => user.jellyfin_user_id), "user-all");
+  }
+
+  async function selectNoUsers() {
+    await saveEnabledUsers([], "user-none");
+  }
+
+  function renderUserGroup(group: "selected" | "unselected", groupUsers: JellyfinUser[]) {
+    if (!groupUsers.length) return null;
+    return (
+      <div className="jellyfin-user-group">
+        <div className="jellyfin-user-group-heading">
+          <span>{t(`jellyfin.userGroups.${group}`)}</span>
+          <span className="badge">{groupUsers.length}</span>
+        </div>
+        <div className="jellyfin-user-list">
+          {groupUsers.map((user) => (
+            <label key={user.jellyfin_user_id}>
+              <input
+                type="checkbox"
+                checked={user.enabled_for_sync}
+                disabled={usersBusy}
+                onChange={() => void toggleUser(user.jellyfin_user_id)}
+              />
+              <span>{user.name}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -429,28 +496,87 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
               </ol>
             </div>
           ) : null}
-          <div className={`jellyfin-sync-summary status-${syncDisplayStatus}`}>
-            {syncDisplayStatus === "error" ? <AlertTriangle aria-hidden="true" /> : syncDisplayStatus === "running" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : syncDisplayStatus === "canceled" ? <CircleStop aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
-            <div>
-              <strong>{t(`jellyfin.status.${syncDisplayStatus}`)}</strong>
-              <span>{connection.last_successful_sync_at ? t("jellyfin.lastSync", { date: formatDate(connection.last_successful_sync_at) }) : t("jellyfin.notSynced")}</span>
-              {connection.next_scheduled_sync_at ? <span>{t("jellyfin.nextSync", { date: formatDate(connection.next_scheduled_sync_at) })}</span> : null}
-              {status ? <span>{t("jellyfin.matchSummary", { matched: status.matched_item_count, total: status.item_count })}</span> : null}
-              {connection.last_error ? <span>{connection.last_error}</span> : null}
+          <div className="jellyfin-status-grid">
+            <div className={`jellyfin-sync-summary jellyfin-catalog-status status-${syncDisplayStatus}`}>
+              {syncDisplayStatus === "error" ? <AlertTriangle aria-hidden="true" /> : syncDisplayStatus === "running" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : syncDisplayStatus === "canceled" ? <CircleStop aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+              <div>
+                <span className="jellyfin-status-eyebrow">{t("jellyfin.catalogStatus.label")}</span>
+                <strong>{t(syncDisplayStatus === "success"
+                  ? "jellyfin.catalogStatus.current"
+                  : `jellyfin.status.${syncDisplayStatus}`)}</strong>
+                <span>{connection.last_successful_sync_at ? t("jellyfin.lastSync", { date: formatDate(connection.last_successful_sync_at) }) : t("jellyfin.notSynced")}</span>
+                {connection.next_scheduled_sync_at ? <span>{t("jellyfin.nextSync", { date: formatDate(connection.next_scheduled_sync_at) })}</span> : null}
+                {connection.last_error ? <span>{connection.last_error}</span> : null}
+              </div>
+            </div>
+            <div className={`jellyfin-sync-summary jellyfin-match-status${hasZeroMatches ? " status-warning" : ""}`}>
+              {hasZeroMatches ? <AlertTriangle aria-hidden="true" /> : <Link2 aria-hidden="true" />}
+              <div>
+                <span className="jellyfin-status-eyebrow">{t("jellyfin.matchStatus.label")}</span>
+                <strong>{t("jellyfin.matchStatus.percent", { percent: matchPercent })}</strong>
+                <span>{t("jellyfin.matchSummary", { matched: matchedItemCount, total: catalogItemCount })}</span>
+                {hasZeroMatches ? (
+                  <>
+                    <span>{t("jellyfin.matchStatus.zeroWarning")}</span>
+                    <Link className="jellyfin-match-settings-link" to={matchingSettingsTarget}>
+                      {t(matchingTargetLibrary?.linked_library_id
+                        ? "jellyfin.matchStatus.openPathMapping"
+                        : "jellyfin.matchStatus.openLibraries")}
+                    </Link>
+                  </>
+                ) : null}
+              </div>
             </div>
           </div>
         </section>
 
         <section className="jellyfin-settings-section">
-          <div className="jellyfin-section-heading"><h3>{t("jellyfin.users")}</h3></div>
+          <div className="jellyfin-section-heading jellyfin-users-heading">
+            <div>
+              <h3>{t("jellyfin.users")}</h3>
+              <p>{t("jellyfin.usersSelected", { selected: selectedUserCount, total: users.length })}</p>
+            </div>
+          </div>
           {!users.length ? <div className="notice">{t("jellyfin.usersEmpty")}</div> : (
-            <div className="jellyfin-user-list">
-              {users.map((user) => (
-                <label key={user.jellyfin_user_id}>
-                  <input type="checkbox" checked={user.enabled_for_sync} disabled={pending === `user-${user.jellyfin_user_id}`} onChange={() => void toggleUser(user.jellyfin_user_id)} />
-                  <span>{user.name}</span>
+            <div className="jellyfin-user-selection">
+              <div className="jellyfin-user-selection-toolbar">
+                <label className="jellyfin-user-search">
+                  <Search aria-hidden="true" />
+                  <span className="sr-only">{t("jellyfin.userSearchLabel")}</span>
+                  <input
+                    type="search"
+                    value={userSearch}
+                    placeholder={t("jellyfin.userSearchPlaceholder")}
+                    onChange={(event) => setUserSearch(event.target.value)}
+                  />
                 </label>
-              ))}
+                <div className="jellyfin-user-bulk-actions" role="group" aria-label={t("jellyfin.userBulkActions")}>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    disabled={usersBusy || selectedUserCount === users.length}
+                    onClick={() => void selectAllUsers()}
+                  >
+                    {t("jellyfin.selectAllUsers")}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    disabled={usersBusy || selectedUserCount === 0}
+                    onClick={() => void selectNoUsers()}
+                  >
+                    {t("jellyfin.selectNoUsers")}
+                  </button>
+                </div>
+              </div>
+              {visibleUsers.length ? (
+                <div className="jellyfin-user-groups">
+                  {renderUserGroup("selected", visibleSelectedUsers)}
+                  {renderUserGroup("unselected", visibleUnselectedUsers)}
+                </div>
+              ) : (
+                <div className="notice">{t("jellyfin.userSearchEmpty")}</div>
+              )}
             </div>
           )}
           {usersError ? <div className="alert jellyfin-inline-error" role="alert">{usersError}</div> : null}

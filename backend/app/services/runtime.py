@@ -35,7 +35,7 @@ from backend.app.services.history_retention import (
 from backend.app.services.history_storage import get_history_storage
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.library_history_service import get_dashboard_history, get_library_history
-from backend.app.services.library_service import get_library_statistics, get_library_summary, list_libraries
+from backend.app.services.library_service import get_library_summary
 from backend.app.services.jellyfin_matching import (
     recompute_jellyfin_matches,
     refresh_jellyfin_mapping_state,
@@ -56,7 +56,6 @@ from backend.app.services.jellyfin_progress import (
 from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.path_access import is_watch_supported_for_library
-from backend.app.services.stats import build_dashboard
 from backend.app.services.telemetry import (
     send_current_telemetry_snapshot,
     send_initial_telemetry_snapshot,
@@ -1104,18 +1103,16 @@ class ScanRuntimeManager:
             # Favor the just-mutated library first, then use idle time to warm the rest.
             library_ids = [library_id] if library_id is not None else []
             library_ids.extend(
-                summary.id
-                for summary in list_libraries(db)
-                if summary.id != library_id
+                candidate_library_id
+                for candidate_library_id in db.scalars(select(Library.id).order_by(Library.id.asc()))
+                if candidate_library_id != library_id
             )
             for candidate_library_id in library_ids:
                 with self.lock:
                     if self.active_library_ids:
                         return
                 get_library_summary(db, candidate_library_id)
-                get_library_statistics(db, candidate_library_id)
                 get_library_history(db, candidate_library_id)
-            build_dashboard(db)
             get_dashboard_history(db)
         except Exception:
             logger.exception("Failed to warm statistics caches")

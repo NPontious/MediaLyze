@@ -26,6 +26,8 @@ type HistoryRangeSelection = {
 type LibraryHistoryPanelProps = {
   history: HistoryResponse | null;
   loading?: boolean;
+  refreshing?: boolean;
+  refreshError?: string | null;
   error?: string | null;
   selectedMetric: LibraryHistoryMetricId;
   onChangeMetric: (metricId: LibraryHistoryMetricId) => void;
@@ -163,6 +165,25 @@ function filterHistoryPoints(points: HistoryResponse["points"], selection: Histo
   return points.filter((point) => point.snapshot_day >= bounds.start! && point.snapshot_day <= bounds.end!);
 }
 
+function hasHistoryMetricData(
+  points: HistoryResponse["points"],
+  metric: ReturnType<typeof getHistoryMetricDefinition>,
+): boolean {
+  if (metric.group === "summary") {
+    return points.some((point) => metric.value(point.trend_metrics) !== null);
+  }
+  if ("categoryKey" in metric) {
+    return points.some((point) => {
+      const counts =
+        metric.categoryKey === "resolution"
+          ? point.trend_metrics.category_counts?.resolution ?? point.trend_metrics.resolution_counts
+          : point.trend_metrics.category_counts?.[metric.categoryKey] ?? {};
+      return Object.values(counts).some((count) => count > 0);
+    });
+  }
+  return points.some((point) => (point.trend_metrics.numeric_distributions?.[metric.distributionKey]?.total ?? 0) > 0);
+}
+
 function buildCalendarDays(month: Date) {
   const firstDay = startOfUtcMonth(month);
   const gridStart = addUtcDays(firstDay, -firstDay.getUTCDay());
@@ -192,6 +213,8 @@ function formatRangeLabel(startDate: string | undefined, endDate: string | undef
 export function LibraryHistoryPanel({
   history,
   loading = false,
+  refreshing = false,
+  refreshError = null,
   error = null,
   selectedMetric,
   onChangeMetric,
@@ -200,6 +223,7 @@ export function LibraryHistoryPanel({
   currentResolutionCategoryIds,
   title,
   subtitle,
+  emptyMessage,
   metricLabel,
   rangeStorageKey = DEFAULT_HISTORY_RANGE_STORAGE_KEY,
   bodyId = "library-history-panel-body",
@@ -253,6 +277,10 @@ export function LibraryHistoryPanel({
   const filteredHistoryPoints = useMemo(
     () => filterHistoryPoints(history?.points ?? [], rangeSelection),
     [history?.points, rangeSelection],
+  );
+  const selectedMetricHasData = useMemo(
+    () => hasHistoryMetricData(filteredHistoryPoints, selectedMetricDefinition),
+    [filteredHistoryPoints, selectedMetricDefinition],
   );
   const activeRangeLabel = useMemo(
     () =>
@@ -430,6 +458,8 @@ export function LibraryHistoryPanel({
       title={title ?? t("libraryDetail.history.title")}
       subtitle={subtitle}
       loading={loading}
+      refreshing={refreshing}
+      refreshError={refreshError}
       error={error}
       className="library-history-panel"
       bodyClassName="async-panel-body-scroll"
@@ -635,9 +665,11 @@ export function LibraryHistoryPanel({
       }}
     >
       {!history || history.points.length === 0 ? (
-        <PanelEmptyState />
+        <PanelEmptyState message={emptyMessage} />
       ) : filteredHistoryPoints.length === 0 ? (
         <div className="notice">{t("libraryDetail.history.range.empty")}</div>
+      ) : !selectedMetricHasData ? (
+        <PanelEmptyState message={t("libraryDetail.history.metricEmpty")} />
       ) : (
         <div className="comparison-chart-content library-history-chart-shell">
           <HistoryTrendChart

@@ -26,6 +26,8 @@ type DistributionChartPanelProps = {
   metricId: NumericDistributionMetricId;
   resizeToken?: string;
   loading?: boolean;
+  refreshing?: boolean;
+  refreshError?: string | null;
   error?: string | null;
   interactive?: boolean;
   onSelectBin?: (bin: NumericDistributionBin) => void;
@@ -37,6 +39,8 @@ export function DistributionChartPanel({
   metricId,
   resizeToken,
   loading = false,
+  refreshing = false,
+  refreshError = null,
   error = null,
   interactive = false,
   onSelectBin,
@@ -49,6 +53,8 @@ export function DistributionChartPanel({
     <AsyncPanel
       title={title}
       loading={loading}
+      refreshing={refreshing}
+      refreshError={refreshError}
       error={error}
       bodyClassName="async-panel-body-scroll"
       headerAddon={

@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
@@ -35,6 +35,52 @@ from backend.app.services.library_service import (
     normalize_scan_config,
     update_library_settings,
 )
+
+
+def test_library_statistics_requested_panels_skip_unrelated_queries() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement.lower())
+
+    with session_factory() as db:
+        library = Library(
+            name="Panel-scoped library",
+            path="/tmp/panel-scoped-library",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        db.add(
+            MediaFile(
+                library_id=library.id,
+                relative_path="movie.mkv",
+                filename="movie.mkv",
+                extension="mkv",
+                size_bytes=100,
+                mtime=1.0,
+                scan_status=ScanStatus.ready,
+                quality_score=5,
+            )
+        )
+        db.commit()
+
+        statements.clear()
+        statistics = get_library_statistics(db, library.id, requested_panels=["container"])
+
+    assert statistics is not None
+    assert statistics.container_distribution
+    assert statistics.video_codec_distribution == []
+    assert statistics.numeric_distributions == {}
+    assert not any("video_streams" in statement for statement in statements)
+    assert not any("audio_streams" in statement for statement in statements)
+    assert not any("subtitle_streams" in statement for statement in statements)
 
 
 def test_normalize_scan_config_for_manual_mode() -> None:

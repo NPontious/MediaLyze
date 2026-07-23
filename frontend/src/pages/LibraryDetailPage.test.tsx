@@ -615,7 +615,7 @@ beforeEach(() => {
 });
 
 describe("LibraryDetailPage", () => {
-  it("adds matched Jellyfin metadata to the normal MediaLyze library without a separate layout", async () => {
+  it("switches the analyzed-file name source without exposing Jellyfin playback metadata", async () => {
     const libraryId = 100;
     mockAppSettings();
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, { name: "Movies" }));
@@ -667,9 +667,55 @@ describe("LibraryDetailPage", () => {
     expect(screen.queryByText("Jellyfin source")).not.toBeInTheDocument();
     expect(screen.queryByText("Jellyfin catalog overview")).not.toBeInTheDocument();
     expect(jellyfinOverviewSpy).not.toHaveBeenCalled();
-    expect(await screen.findByText("Catalog episode title")).toBeInTheDocument();
-    expect(await screen.findByText("Plays: 4")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "episode-01.mkv" })).toBeInTheDocument();
+    expect(screen.queryByText("Catalog episode title")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plays: 4")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Jellyfin names" }));
+
+    expect(screen.getByRole("link", { name: "Catalog episode title" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "episode-01.mkv" })).not.toBeInTheDocument();
+    expect(screen.queryByText("2024")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plays: 4")).not.toBeInTheDocument();
     expect(screen.queryByText("Jellyfin metadata only")).not.toBeInTheDocument();
+  });
+
+  it("offers Jellyfin-name search only for linked libraries", async () => {
+    const libraryId = 99;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, { name: "Movies" }));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([{
+      id: 7,
+      name: "Movies",
+      collection_type: "movies",
+      locations: ["/media/movies"],
+      mapped_locations: ["/media/movies"],
+      mapped_status: "linked",
+      linked_library_id: libraryId,
+      linked_library_name: "Movies",
+      can_create_medialyze_library: false,
+      data_scope: "linked",
+      item_count: 2,
+      last_synced_at: "2026-07-17T10:00:00Z",
+    }]);
+
+    renderPage(libraryId);
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /add metadata search field/i }));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Jellyfin name" }));
+    fireEvent.change(screen.getByPlaceholderText("Search Jellyfin name"), { target: { value: "display name" } });
+
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({ jellyfin_name: "display name" }),
+        }),
+      ),
+    );
   });
 
   it("loads summary, statistics, and files separately", async () => {
@@ -929,6 +975,38 @@ describe("LibraryDetailPage", () => {
     expect(screen.getByRole("button", { name: "Duplications" })).toBeInTheDocument();
   });
 
+  it("does not reload library history when the duplicate view changes", async () => {
+    const libraryId = 1271;
+    mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryHistorySpy = vi.spyOn(api, "libraryHistory").mockResolvedValue(createLibraryHistoryResponse());
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    vi.spyOn(api, "libraryDuplicates")
+      .mockResolvedValueOnce(
+        createDuplicateGroupPage({
+          total_groups: 0,
+          duplicate_file_count: 0,
+          suppressed_group_count: 1,
+          items: [],
+        }),
+      )
+      .mockResolvedValue(
+        createDuplicateGroupPage({
+          include_suppressed: true,
+          suppressed_group_count: 1,
+          items: [],
+        }),
+      );
+
+    renderPage(libraryId);
+
+    await waitFor(() => expect(libraryHistorySpy).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: "Show hidden duplicate groups" }));
+    await waitFor(() => expect(api.libraryDuplicates).toHaveBeenCalledTimes(2));
+    expect(libraryHistorySpy).toHaveBeenCalledTimes(1);
+  });
+
   it("renders an empty history state when no enriched points exist", async () => {
     const libraryId = 128;
     mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
@@ -940,6 +1018,35 @@ describe("LibraryDetailPage", () => {
     renderPage(libraryId);
 
     expect(await screen.findByText("No data yet")).toBeInTheDocument();
+  });
+
+  it("shows a metric-specific empty state when history points lack the selected metric", async () => {
+    const libraryId = 1281;
+    mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const history = createLibraryHistoryResponse();
+    vi.spyOn(api, "libraryHistory").mockResolvedValue({
+      ...history,
+      points: history.points.map((point) => ({
+        ...point,
+        trend_metrics: {
+          ...point.trend_metrics,
+          average_audio_bitrate: null,
+        },
+      })),
+    });
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    fireEvent.click(await screen.findByLabelText("Select history metric"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Average audio bitrate" }));
+
+    expect(
+      await screen.findByText("No data is available for the selected metric."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
   });
 
   it("renders the resolution history metric as a stacked area chart", async () => {
@@ -2014,10 +2121,14 @@ describe("LibraryDetailPage", () => {
     mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    let resolveRefreshedHistory: ((payload: LibraryHistoryResponse) => void) | null = null;
+    const refreshedHistoryPromise = new Promise<LibraryHistoryResponse>((resolve) => {
+      resolveRefreshedHistory = resolve;
+    });
     const libraryHistorySpy = vi
       .spyOn(api, "libraryHistory")
       .mockResolvedValueOnce(createLibraryHistoryResponse({ points: [] }))
-      .mockResolvedValueOnce(createLibraryHistoryResponse());
+      .mockReturnValueOnce(refreshedHistoryPromise);
     vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
     vi.spyOn(api, "activeScanJobs")
       .mockResolvedValueOnce([
@@ -2047,6 +2158,11 @@ describe("LibraryDetailPage", () => {
     fireEvent.focus(window);
 
     await waitFor(() => expect(libraryHistorySpy.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
+
+    resolveRefreshedHistory!(createLibraryHistoryResponse());
+
     await waitFor(async () => {
       const chart = (await screen.findAllByTestId("echarts-react")).find(
         (candidate) => candidate.getAttribute("data-series-count") === "3",

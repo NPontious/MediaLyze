@@ -3,9 +3,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import String, and_, case, cast, func, literal, or_
+from sqlalchemy import String, and_, case, cast, func, literal, or_, select
 
-from backend.app.models.entities import LibraryRoot, MediaFile, MediaFormat
+from backend.app.models.entities import (
+    JellyfinItem,
+    JellyfinMediaMatch,
+    LibraryRoot,
+    MediaFile,
+    MediaFormat,
+)
 from backend.app.services.languages import expand_language_search_terms
 from backend.app.services.resolution_categories import (
     ResolutionCategory,
@@ -34,6 +40,7 @@ class LibraryFileSearchFilters:
     search_audio_codecs: str = ""
     search_audio_spatial_profiles: str = ""
     search_audio_languages: str = ""
+    search_jellyfin_name: str = ""
     search_audio_title: str = ""
     search_audio_artist: str = ""
     search_audio_album: str = ""
@@ -80,6 +87,7 @@ class LibraryFileSearchFilters:
             search_audio_codecs=self.search_audio_codecs.strip(),
             search_audio_spatial_profiles=self.search_audio_spatial_profiles.strip(),
             search_audio_languages=self.search_audio_languages.strip(),
+            search_jellyfin_name=self.search_jellyfin_name.strip(),
             search_audio_title=self.search_audio_title.strip(),
             search_audio_artist=self.search_audio_artist.strip(),
             search_audio_album=self.search_audio_album.strip(),
@@ -610,6 +618,21 @@ def apply_field_search_filters(
             normalized.search_audio_languages,
             _language_token_patterns,
         )
+    if normalized.search_jellyfin_name:
+        jellyfin_title = (
+            select(JellyfinItem.title)
+            .join(
+                JellyfinMediaMatch,
+                JellyfinMediaMatch.jellyfin_item_id == JellyfinItem.id,
+            )
+            .where(
+                JellyfinMediaMatch.media_file_id == MediaFile.id,
+                JellyfinMediaMatch.status == "matched",
+            )
+            .limit(1)
+            .scalar_subquery()
+        )
+        query = _apply_text_filter(query, jellyfin_title, normalized.search_jellyfin_name)
     text_filters = (
         ("search_audio_title", MediaFile.audio_title),
         ("search_audio_artist", MediaFile.audio_artist),

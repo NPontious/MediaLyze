@@ -82,6 +82,7 @@
     "collapseAria": "Згорнути {{title}}",
     "expandAria": "Розгорнути {{title}}",
     "loading": "Завантаження…",
+    "refreshing": "Оновлення…",
     "noDataYet": "Даних ще немає"
   },
   "releaseNotes": {
@@ -110,6 +111,10 @@
     "settingsNavigationLibraries": "Бібліотеки",
     "settingsNavigationAddLibrary": "Додати бібліотеку",
     "settingsNavigationPatternRecognition": "Розпізнавання шаблонів",
+    "settingsGroups": { "librariesSources": "Бібліотеки та джерела", "analysis": "Аналіз", "application": "Застосунок", "maintenanceDiagnostics": "Обслуговування та діагностика" },
+    "settingsSearchLabel": "Пошук у налаштуваннях",
+    "settingsSearchPlaceholder": "Пошук у налаштуваннях…",
+    "settingsSearchEmpty": "Немає налаштувань, що відповідають пошуку.",
     "quickActions": "Швидкі дії",
     "collapseSettingsNavigation": "Згорнути меню налаштувань",
     "expandSettingsNavigation": "Розгорнути меню налаштувань",
@@ -121,7 +126,7 @@
     "expandLibrarySettings": "Показати налаштування для {{name}}",
     "collapseLibrarySettings": "Сховати налаштування для {{name}}",
     "sections": {
-      "jellyfin": { "title": "Призначення Jellyfin", "description": "Виберіть каталог Jellyfin для цієї бібліотеки MediaLyze. Якщо каталог уже призначено іншій бібліотеці, призначення буде перенесено сюди.", "pathMappingTitle": "Відповідність шляхів (необов’язково)", "pathMappingDescription": "Налаштовуйте лише тоді, коли Jellyfin і MediaLyze бачать ті самі файли в різних точках монтування. Зіставте кожен префікс джерела Jellyfin із відповідним шляхом MediaLyze.", "pathMappingDescriptionAria": "Пояснити відповідність шляхів", "enablePathMapping": "Увімкнути відповідність шляхів", "disablePathMapping": "Вимкнути відповідність шляхів", "pathMappingTargetRequired": "Перед увімкненням відповідності шляхів потрібно вказати шлях MediaLyze.", "useMediaLyzePath": "Використати {{path}}", "savePathMapping": "Зберегти відповідність", "removePathMapping": "Видалити відповідність", "noJellyfinPaths": "Jellyfin ще не повідомив шлях джерела для цієї бібліотеки." },
+      "jellyfin": { "title": "Призначення Jellyfin", "description": "Виберіть каталог Jellyfin для цієї бібліотеки MediaLyze. Якщо каталог уже призначено іншій бібліотеці, призначення буде перенесено сюди.", "pathMappingTitle": "Відповідність шляхів (необов’язково)", "pathMappingDescription": "Налаштовуйте лише тоді, коли Jellyfin і MediaLyze бачать ті самі файли в різних точках монтування. Зіставте кожен префікс джерела Jellyfin із відповідним шляхом MediaLyze.", "pathMappingDescriptionAria": "Пояснити відповідність шляхів", "enablePathMapping": "Увімкнути відповідність шляхів", "disablePathMapping": "Вимкнути відповідність шляхів", "pathMappingStateEnabled": "Увімкнено", "pathMappingStateDisabled": "Вимкнено", "pathMappingStatePartial": "Увімкнено частково", "pathMappingTargetRequired": "Перед увімкненням відповідності шляхів потрібно вказати шлях MediaLyze.", "useMediaLyzePath": "Використати {{path}}", "savePathMapping": "Зберегти відповідність", "removePathMapping": "Видалити відповідність", "noJellyfinPaths": "Jellyfin ще не повідомив шлях джерела для цієї бібліотеки." },
       "source": { "title": "Джерело медіа", "description": "Керуйте локальними папками, які сканує MediaLyze. Зміна шляхів зберігає налаштування й історію бібліотеки." },
       "analysis": { "title": "Сканування й аналіз", "description": "Налаштуйте розклад сканування, пошук дублікатів, історичні дати та профіль якості цієї бібліотеки." }
     },
@@ -600,6 +605,11 @@
     "tableView": {
       "edit": "Редагувати табличний вигляд"
     },
+    "fileNameSource": {
+      "label": "Відображувана назва файлу",
+      "file": "Показувати назви файлів",
+      "jellyfin": "Показувати назви Jellyfin"
+    },
     "export": {
       "aria": "Експортувати проаналізовані файли у CSV",
       "tooltip": "Експортувати повний відфільтрований набір проаналізованих файлів у CSV",
@@ -620,6 +630,10 @@
       "file": {
         "label": "Файл та шлях",
         "placeholder": "Пошук файлу та шляху"
+      },
+      "jellyfinName": {
+        "label": "Назва Jellyfin",
+        "placeholder": "Пошук назви Jellyfin"
       },
       "size": {
         "placeholder": "напр. >4GB",
@@ -799,6 +813,7 @@
       "title": "Історія медіабібліотеки",
       "subtitle": "Щоденні знімки трендів із завершених сканувань",
       "empty": "Тренди з'являться після завершення наступного сканування.",
+      "metricEmpty": "Для вибраної метрики немає даних.",
       "controls": {
         "metric": "Оберіть метрику історії",
         "range": "Оберіть діапазон історії"
@@ -1589,7 +1604,9 @@
     "testConnection": "Перевірити підключення", "syncNow": "Синхронізувати", "cancelSync": "Скасувати синхронізацію", "cancelingSync": "Скасування синхронізації", "cancelingSyncDetail": "Поточний запит Jellyfin безпечно завершується.", "cancelRequested": "Скасування запитано. Поточна операція буде безпечно завершена.", "syncCanceled": "Синхронізацію Jellyfin скасовано.", "connectionSaved": "Підключення Jellyfin збережено.", "autoSave": { "saving": "Збереження змін…", "saved": "Збережено автоматично" }, "operation": { "testingConnection": "Перевірка підключення до Jellyfin…", "savingUsers": "Збереження вибору користувачів…", "updatingMapping": "Оновлення відповідності шляхів", "updatingMappingCompact": "Оновлення відповідності та збігів…", "updatingLibrary": "Оновлення зв’язку бібліотеки", "recalculatingMatches": "MediaLyze повторно обчислює відповідності. Для великих каталогів це може тривати деякий час." }, "backgroundUpdate": { "title": "Оновлення даних Jellyfin у фоновому режимі", "detail": "Ваші зміни вже збережено. Ви можете продовжувати роботу, поки MediaLyze оновлює доступ до шляхів і відповідності.", "error": "Помилка фонового оновлення: {{message}}" }, "autoSaveFailed": "Не вдалося автоматично зберегти.", "testFailed": "Не вдалося перевірити підключення.", "testSucceeded": "Підключено до {{name}} {{version}}.", "syncSucceeded": "Синхронізовано {{items}} елементів із {{libraries}} бібліотек.",
     "syncProgress": "Перебіг синхронізації Jellyfin", "syncItemsProgress": "{{current}} із {{total}} елементів", "syncSteps": "Етапи синхронізації", "syncPhase": { "connecting": "Підключення до Jellyfin", "users": "Завантаження користувачів відтворення", "libraries": "Завантаження бібліотек Jellyfin", "items": "Отримання елементів Jellyfin", "saving": "Збереження елементів у MediaLyze", "cleanup": "Видалення застарілих записів", "matching": "Зіставлення елементів із файлами MediaLyze" }, "syncStep": { "connection": "Підключення", "catalog": "Каталог", "items": "Елементи", "matching": "Зіставлення" },
     "lastSync": "Остання успішна синхронізація: {{date}}", "notSynced": "Ще не синхронізовано", "matchSummary": "Зіставлено {{matched}} із {{total}} елементів", "nextSync": "Наступна синхронізація: {{date}}", "status": { "never": "Не синхронізовано", "running": "Триває синхронізація", "success": "Синхронізовано", "canceled": "Синхронізацію скасовано", "error": "Помилка синхронізації" },
-    "users": "Користувачі відтворення", "usersEmpty": "Синхронізуйте Jellyfin, щоб знайти користувачів.", "pathMappings": "Відповідності шляхів", "jellyfinPath": "Шлях Jellyfin", "medialyzePath": "Шлях MediaLyze", "jellyfinPathPlaceholder": "/jellyfin/media", "medialyzePathPlaceholder": "/media", "addMapping": "Додати відповідність", "mappingEnabled": "Увімкнути цю відповідність",
+    "catalogStatus": { "label": "Синхронізація каталогу", "current": "Каталог актуальний" },
+    "matchStatus": { "label": "Зіставлення локальних файлів", "percent": "{{percent}} % зіставлено локально", "zeroWarning": "Жоден елемент Jellyfin ще не зіставлено з локальними файлами MediaLyze.", "openPathMapping": "Відкрити відповідність шляхів", "openLibraries": "Відкрити призначення бібліотек" },
+    "users": "Користувачі відтворення", "usersEmpty": "Синхронізуйте Jellyfin, щоб знайти користувачів.", "usersSelected": "Вибрано {{selected}} із {{total}}", "userSearchLabel": "Пошук користувачів відтворення", "userSearchPlaceholder": "Пошук користувачів…", "userSearchEmpty": "За цим пошуком користувачів не знайдено.", "userBulkActions": "Масовий вибір користувачів відтворення", "selectAllUsers": "Вибрати всіх", "selectNoUsers": "Не вибирати нікого", "userGroups": { "selected": "Вибрані", "unselected": "Не вибрані" }, "pathMappings": "Відповідності шляхів", "jellyfinPath": "Шлях Jellyfin", "medialyzePath": "Шлях MediaLyze", "jellyfinPathPlaceholder": "/jellyfin/media", "medialyzePathPlaceholder": "/media", "addMapping": "Додати відповідність", "mappingEnabled": "Увімкнути цю відповідність",
     "libraries": "Бібліотеки Jellyfin", "librariesEmpty": "Бібліотеки Jellyfin ще не синхронізовано.", "libraryAssignments": "Призначення бібліотек Jellyfin", "libraryAssignmentsDescription": "Призначте кожну виявлену бібліотеку Jellyfin бібліотеці MediaLyze, файли якої вона описує. Усі призначення керуються тут.", "addDetectedLibrary": "Додати виявлену бібліотеку Jellyfin", "addDetectedLibraryDescription": "Виберіть непризначену бібліотеку Jellyfin, щоб заповнити назву й тип, а потім виберіть локальний шлях до медіа.", "detectedLibrarySelected": "Бібліотеку Jellyfin буде автоматично пов’язано після створення бібліотеки MediaLyze.", "libraryItemCount_one": "{{count}} елемент Jellyfin", "libraryItemCount_other": "{{count}} елементів Jellyfin", "libraryCreatedLinkFailed": "Бібліотеку MediaLyze створено, але призначення Jellyfin не вдалося: {{message}}", "libraryStatus": { "linked": "Пов’язано", "unassigned": "Не призначено", "accessible": "Готово до додавання", "path_unmapped": "Шлях не зіставлено", "path_not_accessible": "Шлях недоступний", "updating": "Оновлення" }, "libraryMappingTarget": "Шлях MediaLyze для {{name}}",
     "linkedLibrary": "Пов’язано з бібліотекою {{name}}", "associatedMedialyzeLibrary": "Пов’язана бібліотека MediaLyze", "associatedJellyfinLibrary": "Пов’язана бібліотека Jellyfin", "noAssociatedLibrary": "Немає пов’язаної бібліотеки", "libraryAssociationHelpAria": "Пояснити зв’язок бібліотеки Jellyfin", "libraryAssociationHelp": "Виберіть, який каталог Jellyfin належить цій бібліотеці MediaLyze. Це не залежить від зіставлення шляхів для окремих файлів.", "linkMethod": { "manual": "Вибрано вручну", "path": "Визначено зіставленням шляхів" }, "linkedSource": "Джерело Jellyfin", "linkedLibraryTooltipAria": "Пов’язано з бібліотекою Jellyfin {{name}}", "linkedLibraryTooltip": "Пов’язано з бібліотекою Jellyfin {{name}}", "addAsLibrary": "Додати як бібліотеку MediaLyze", "addAsLibraryUnavailable": "Спочатку налаштуйте доступне зіставлення шляхів, щоб додати цю бібліотеку.", "libraryCreated": "Бібліотеку MediaLyze створено з Jellyfin.",
     "historySource": "Історична дата додавання", "historySourceHelpAria": "Пояснити джерело дати", "historySourceHelp": "Використовує DateCreated Jellyfin для зіставлених файлів і дати MediaLyze для решти.", "historySourceMedialyze": "MediaLyze / файлова система", "historySourceJellyfin": "DateCreated Jellyfin",

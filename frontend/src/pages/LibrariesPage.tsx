@@ -17,6 +17,7 @@ import {
   Proportions,
   Radio,
   Save,
+  Search,
   Server,
   Settings,
   SlidersHorizontal,
@@ -84,6 +85,8 @@ import {
   hasStoredActiveSettingsPanelPreference,
   saveActiveSettingsPanel,
   saveSettingsNavCollapsed,
+  settingsPanelFromSection,
+  settingsSectionForPanel,
   type SettingsPanelId,
 } from "../lib/settings-panel-state";
 import {
@@ -740,22 +743,56 @@ function networkWatchFallbackApplied(inspection: PathInspection | null | undefin
   return Boolean(inspection && !inspection.watch_supported && scanMode === "scheduled");
 }
 
-const SETTINGS_NAV_ITEMS: Array<{
+type SettingsNavigationItem = {
   id: SettingsPanelId;
   labelKey: string;
   icon: typeof Settings;
-}> = [
-  { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
-  { id: "jellyfin", labelKey: "jellyfin.title", icon: Server },
-  { id: "qualityProfiles", labelKey: "libraries.qualityProfiles.title", icon: SlidersHorizontal },
-  { id: "compatibilityProfiles", labelKey: "compatibilityProfiles.navigationTitle", icon: Cpu },
-  { id: "appSettings", labelKey: "libraries.appSettings", icon: Settings },
-  { id: "resolutionCategories", labelKey: "libraries.resolutionCategories.title", icon: Proportions },
-  { id: "patternRecognition", labelKey: "libraries.settingsNavigationPatternRecognition", icon: FingerprintPattern },
-  { id: "historyRetention", labelKey: "libraries.historyRetention.title", icon: History },
-  { id: "recentScanLogs", labelKey: "scanLogs.title", icon: Archive },
-  { id: "telemetry", labelKey: "telemetry.panel.title", icon: Radio },
+};
+
+type SettingsNavigationGroup = {
+  id: "librariesSources" | "analysis" | "application" | "maintenanceDiagnostics";
+  labelKey: string;
+  items: SettingsNavigationItem[];
+};
+
+const SETTINGS_NAV_GROUPS: SettingsNavigationGroup[] = [
+  {
+    id: "librariesSources",
+    labelKey: "libraries.settingsGroups.librariesSources",
+    items: [
+      { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
+      { id: "jellyfin", labelKey: "jellyfin.title", icon: Server },
+    ],
+  },
+  {
+    id: "analysis",
+    labelKey: "libraries.settingsGroups.analysis",
+    items: [
+      { id: "qualityProfiles", labelKey: "libraries.qualityProfiles.title", icon: SlidersHorizontal },
+      { id: "compatibilityProfiles", labelKey: "compatibilityProfiles.navigationTitle", icon: Cpu },
+      { id: "resolutionCategories", labelKey: "libraries.resolutionCategories.title", icon: Proportions },
+      { id: "patternRecognition", labelKey: "libraries.settingsNavigationPatternRecognition", icon: FingerprintPattern },
+    ],
+  },
+  {
+    id: "application",
+    labelKey: "libraries.settingsGroups.application",
+    items: [
+      { id: "appSettings", labelKey: "libraries.appSettings", icon: Settings },
+    ],
+  },
+  {
+    id: "maintenanceDiagnostics",
+    labelKey: "libraries.settingsGroups.maintenanceDiagnostics",
+    items: [
+      { id: "historyRetention", labelKey: "libraries.historyRetention.title", icon: History },
+      { id: "recentScanLogs", labelKey: "scanLogs.title", icon: Archive },
+      { id: "telemetry", labelKey: "telemetry.panel.title", icon: Radio },
+    ],
+  },
 ];
+
+const SETTINGS_NAV_ITEMS: SettingsNavigationItem[] = SETTINGS_NAV_GROUPS.flatMap((group) => group.items);
 
 const QUALITY_METRICS_BY_MEDIA_TYPE: Record<QualityProfileMediaType, string[]> = {
   video: ["resolution", "visual_density", "video_codec", "audio_channels", "audio_codec", "dynamic_range", "language_preferences"],
@@ -779,7 +816,7 @@ const QUALITY_METRIC_DEFAULT_WEIGHTS: Record<string, number> = {
 };
 
 export function LibrariesPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const desktopBridge = getDesktopBridge();
   const desktopApp = isDesktopApp();
@@ -836,13 +873,22 @@ export function LibrariesPage() {
   const [dashboardVisibilityPending, setDashboardVisibilityPending] = useState<Record<number, boolean>>({});
   const [historySourcePending, setHistorySourcePending] = useState<Record<number, boolean>>({});
   const [activeSettingsPanelId, setActiveSettingsPanelId] = useState<SettingsPanelId>(() =>
-    getActiveSettingsPanel("configuredLibraries"),
+    settingsPanelFromSection(searchParams.get("section"))
+      ?? getActiveSettingsPanel("configuredLibraries"),
   );
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
   useEffect(() => {
-    if (searchParams.get("section") === "jellyfin") {
-      setActiveSettingsPanelId(saveActiveSettingsPanel("jellyfin"));
+    const requestedPanel = settingsPanelFromSection(searchParams.get("section"));
+    if (requestedPanel) {
+      setActiveSettingsPanelId((current) => (
+        current === requestedPanel ? current : saveActiveSettingsPanel(requestedPanel)
+      ));
+      return;
     }
-  }, [searchParams]);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("section", settingsSectionForPanel(activeSettingsPanelId));
+    setSearchParams(nextParams, { replace: true });
+  }, [activeSettingsPanelId, searchParams, setSearchParams]);
   const [isSettingsNavCollapsed, setIsSettingsNavCollapsed] = useState(() => getSettingsNavCollapsed());
   const [isSettingsMobileMenuOpen, setIsSettingsMobileMenuOpen] = useState(false);
   const [recentScanJobs, setRecentScanJobs] = useState<RecentScanJob[]>([]);
@@ -971,6 +1017,23 @@ export function LibrariesPage() {
   const activeSettingsNavItem =
     SETTINGS_NAV_ITEMS.find((item) => item.id === activeSettingsPanelId) ?? SETTINGS_NAV_ITEMS[0];
   const ActiveSettingsNavIcon = activeSettingsNavItem.icon;
+  const normalizedSettingsSearchQuery = settingsSearchQuery.trim().toLocaleLowerCase(i18n.resolvedLanguage);
+  const visibleSettingsNavigationGroups = SETTINGS_NAV_GROUPS.map((group) => {
+    const groupMatches = t(group.labelKey).toLocaleLowerCase(i18n.resolvedLanguage)
+      .includes(normalizedSettingsSearchQuery);
+    return {
+      ...group,
+      items: normalizedSettingsSearchQuery
+        ? group.items.filter((item) => (
+          groupMatches
+          || t(item.labelKey).toLocaleLowerCase(i18n.resolvedLanguage)
+            .includes(normalizedSettingsSearchQuery)
+        ))
+        : group.items,
+    };
+  }).filter((group) => group.items.length);
+  const targetLibraryId = Number(searchParams.get("library") || 0);
+  const focusedSettingsControl = searchParams.get("focus");
 
   useEffect(() => {
     return () => {
@@ -979,6 +1042,29 @@ export function LibrariesPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      activeSettingsPanelId !== "configuredLibraries"
+      || !targetLibraryId
+      || !libraries.some((library) => library.id === targetLibraryId)
+    ) return;
+    setExpandedLibrarySettings((current) => (
+      current[targetLibraryId] ? current : { ...current, [targetLibraryId]: true }
+    ));
+    const frame = window.requestAnimationFrame(() => {
+      const targetId = focusedSettingsControl === "path-mapping"
+        ? `library-path-mapping-${targetLibraryId}`
+        : `library-settings-card-${targetLibraryId}`;
+      document.getElementById(targetId)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeSettingsPanelId,
+    focusedSettingsControl,
+    libraries,
+    targetLibraryId,
+  ]);
 
   async function openTelemetryStatsPage() {
     const desktopBridge = getDesktopBridge();
@@ -1987,6 +2073,17 @@ export function LibrariesPage() {
     void loadJellyfinLibraries(true).catch(() => undefined);
   }
 
+  async function applyJellyfinPathMappingBatchChange(mappings: JellyfinPathMapping[]) {
+    setJellyfinPathMappings((current) => {
+      const updatedById = new Map(mappings.map((mapping) => [mapping.id, mapping]));
+      const merged = current.map((mapping) => updatedById.get(mapping.id) ?? mapping);
+      const knownIds = new Set(current.map((mapping) => mapping.id));
+      return [...merged, ...mappings.filter((mapping) => !knownIds.has(mapping.id))];
+    });
+    setJellyfinPathMappingsError(null);
+    await loadJellyfinLibraries(true);
+  }
+
   function selectJellyfinLibraryForCreation(jellyfinLibrary: JellyfinLibrary) {
     setSelectedJellyfinLibraryId(jellyfinLibrary.id);
     setForm((current) => ({
@@ -2345,7 +2442,15 @@ export function LibrariesPage() {
 
   function selectSettingsPanel(panelId: SettingsPanelId) {
     setActiveSettingsPanelId(saveActiveSettingsPanel(panelId));
+    setSettingsSearchQuery("");
     setIsSettingsMobileMenuOpen(false);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("section", settingsSectionForPanel(panelId));
+    if (panelId !== "configuredLibraries") {
+      nextParams.delete("library");
+      nextParams.delete("focus");
+    }
+    setSearchParams(nextParams);
   }
 
   function toggleSettingsNavCollapsed() {
@@ -5385,28 +5490,47 @@ export function LibrariesPage() {
             className={`settings-mobile-navigation-menu${isSettingsMobileMenuOpen ? " is-open" : ""}`}
             aria-hidden={!isSettingsMobileMenuOpen}
           >
+            <label className="settings-navigation-search settings-mobile-navigation-search">
+              <Search aria-hidden="true" className="nav-icon" />
+              <span className="sr-only">{t("libraries.settingsSearchLabel")}</span>
+              <input
+                type="search"
+                value={settingsSearchQuery}
+                placeholder={t("libraries.settingsSearchPlaceholder")}
+                tabIndex={isSettingsMobileMenuOpen ? 0 : -1}
+                onChange={(event) => setSettingsSearchQuery(event.target.value)}
+              />
+            </label>
             <nav className="settings-mobile-navigation-list" aria-label={t("libraries.mobileSettingsNavigation")}>
-              {SETTINGS_NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const label = t(item.labelKey);
-                const active = activeSettingsPanelId === item.id;
-                return (
-                  <button
-                    type="button"
-                    key={item.id}
-                    className={`settings-navigation-item settings-mobile-navigation-item${active ? " active" : ""}`}
-                    aria-current={active ? "page" : undefined}
-                    tabIndex={isSettingsMobileMenuOpen ? 0 : -1}
-                    onClick={() => selectSettingsPanel(item.id)}
-                  >
-                    {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
-                    <span className="settings-navigation-item-content">
-                      <Icon aria-hidden="true" className="nav-icon" />
-                      <span>{label}</span>
-                    </span>
-                  </button>
-                );
-              })}
+              {visibleSettingsNavigationGroups.map((group) => (
+                <div className="settings-navigation-group" key={group.id}>
+                  <div className="settings-navigation-group-label">{t(group.labelKey)}</div>
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const label = t(item.labelKey);
+                    const active = activeSettingsPanelId === item.id;
+                    return (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={`settings-navigation-item settings-mobile-navigation-item${active ? " active" : ""}`}
+                        aria-current={active ? "page" : undefined}
+                        tabIndex={isSettingsMobileMenuOpen ? 0 : -1}
+                        onClick={() => selectSettingsPanel(item.id)}
+                      >
+                        {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
+                        <span className="settings-navigation-item-content">
+                          <Icon aria-hidden="true" className="nav-icon" />
+                          <span>{label}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+              {!visibleSettingsNavigationGroups.length ? (
+                <div className="settings-navigation-empty">{t("libraries.settingsSearchEmpty")}</div>
+              ) : null}
             </nav>
             <div className="settings-mobile-navigation-quick-actions">
               <div className="settings-navigation-section-label">{t("libraries.quickActions")}</div>
@@ -5453,30 +5577,52 @@ export function LibrariesPage() {
               />
             </button>
           </div>
+          {!isSettingsNavCollapsed ? (
+            <label className="settings-navigation-search">
+              <Search aria-hidden="true" className="nav-icon" />
+              <span className="sr-only">{t("libraries.settingsSearchLabel")}</span>
+              <input
+                type="search"
+                value={settingsSearchQuery}
+                placeholder={t("libraries.settingsSearchPlaceholder")}
+                onChange={(event) => setSettingsSearchQuery(event.target.value)}
+              />
+            </label>
+          ) : null}
           <nav className="settings-navigation-list">
-            {SETTINGS_NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const label = t(item.labelKey);
-              const active = activeSettingsPanelId === item.id;
-              return (
-                <button
-                  type="button"
-                  key={item.id}
-                  className={`settings-navigation-item${active ? " active" : ""}`}
-                  aria-current={active ? "page" : undefined}
-                  aria-label={label}
-                  title={isSettingsNavCollapsed ? label : undefined}
-                  data-settings-panel-id={item.id}
-                  onClick={() => selectSettingsPanel(item.id)}
-                >
-                  {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
-                  <span className="settings-navigation-item-content">
-                    <Icon aria-hidden="true" className="nav-icon" />
-                    {!isSettingsNavCollapsed ? <span>{label}</span> : null}
-                  </span>
-                </button>
-              );
-            })}
+            {(isSettingsNavCollapsed ? SETTINGS_NAV_GROUPS : visibleSettingsNavigationGroups).map((group) => (
+              <div className="settings-navigation-group" key={group.id}>
+                {!isSettingsNavCollapsed ? (
+                  <div className="settings-navigation-group-label">{t(group.labelKey)}</div>
+                ) : null}
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const label = t(item.labelKey);
+                  const active = activeSettingsPanelId === item.id;
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      className={`settings-navigation-item${active ? " active" : ""}`}
+                      aria-current={active ? "page" : undefined}
+                      aria-label={label}
+                      title={isSettingsNavCollapsed ? label : undefined}
+                      data-settings-panel-id={item.id}
+                      onClick={() => selectSettingsPanel(item.id)}
+                    >
+                      {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
+                      <span className="settings-navigation-item-content">
+                        <Icon aria-hidden="true" className="nav-icon" />
+                        {!isSettingsNavCollapsed ? <span>{label}</span> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {!isSettingsNavCollapsed && !visibleSettingsNavigationGroups.length ? (
+              <div className="settings-navigation-empty">{t("libraries.settingsSearchEmpty")}</div>
+            ) : null}
           </nav>
           <div className="settings-navigation-quick-actions">
             <div className="settings-navigation-divider" />
@@ -5555,7 +5701,8 @@ export function LibrariesPage() {
 
                 return (
                   <div
-                    className={`media-card library-settings-card${areLibrarySettingsExpanded ? " is-expanded" : " is-collapsed"}${isDeletingLibrary ? " is-deleting" : ""}`}
+                    id={`library-settings-card-${library.id}`}
+                    className={`media-card library-settings-card${areLibrarySettingsExpanded ? " is-expanded" : " is-collapsed"}${isDeletingLibrary ? " is-deleting" : ""}${targetLibraryId === library.id ? " is-query-focused" : ""}`}
                     key={library.id}
                     aria-busy={isDeletingLibrary}
                   >
@@ -5822,6 +5969,9 @@ export function LibrariesPage() {
                               disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
                               loadError={jellyfinPathMappingsError}
                               onChanged={applyJellyfinPathMappingChange}
+                              onBatchChanged={applyJellyfinPathMappingBatchChange}
+                              sectionId={`library-path-mapping-${library.id}`}
+                              focused={targetLibraryId === library.id && focusedSettingsControl === "path-mapping"}
                             />
                           ) : null}
                         </div>

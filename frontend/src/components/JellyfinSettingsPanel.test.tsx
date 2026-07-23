@@ -1,7 +1,9 @@
 import "../i18n";
 
+import type { ComponentProps } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, type JellyfinConnection, type JellyfinSyncStatus } from "../lib/api";
 import { JellyfinSettingsPanel } from "./JellyfinSettingsPanel";
@@ -58,12 +60,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+beforeEach(() => {
+  vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
+});
+
+function renderPanel(props: ComponentProps<typeof JellyfinSettingsPanel> = {}) {
+  return render(
+    <MemoryRouter>
+      <JellyfinSettingsPanel {...props} />
+    </MemoryRouter>,
+  );
+}
+
 describe("JellyfinSettingsPanel", () => {
   it("shows only connection, synchronization, and playback-user settings", async () => {
     vi.spyOn(api, "jellyfinSyncStatus").mockResolvedValue(STATUS);
     vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
 
-    render(<JellyfinSettingsPanel />);
+    renderPanel();
 
     expect(await screen.findByText("Fetching Jellyfin items")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
@@ -87,7 +101,7 @@ describe("JellyfinSettingsPanel", () => {
     vi.spyOn(api, "syncJellyfin").mockResolvedValue({ job_id: 42, status: "queued", trigger_source: "manual", accepted: true });
     const onCatalogChanged = vi.fn();
 
-    render(<JellyfinSettingsPanel onCatalogChanged={onCatalogChanged} />);
+    renderPanel({ onCatalogChanged });
     fireEvent.click(await screen.findByRole("button", { name: "Sync now" }));
 
     expect(await screen.findByText("Synchronized 120 items from 3 libraries.", {}, { timeout: 2500 })).toBeInTheDocument();
@@ -99,7 +113,7 @@ describe("JellyfinSettingsPanel", () => {
     vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
     const cancelSync = vi.spyOn(api, "cancelJellyfinSync").mockResolvedValue({ job_id: 41, status: "running", cancellation_requested: true });
 
-    render(<JellyfinSettingsPanel />);
+    renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "Cancel sync" }));
 
     await waitFor(() => expect(cancelSync).toHaveBeenCalledTimes(1));
@@ -112,7 +126,7 @@ describe("JellyfinSettingsPanel", () => {
     vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
     const updateConnection = vi.spyOn(api, "updateJellyfinConnection").mockResolvedValue({ ...idleConnection, sync_interval_minutes: 0 });
 
-    render(<JellyfinSettingsPanel />);
+    renderPanel();
     const interval = await screen.findByRole("spinbutton", { name: "Sync interval (minutes)" });
     fireEvent.change(interval, { target: { value: "0" } });
 
@@ -126,7 +140,7 @@ describe("JellyfinSettingsPanel", () => {
     vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
     vi.spyOn(api, "testJellyfinConnection").mockResolvedValue({ ok: false, server_name: null, server_version: null, error: "Invalid Jellyfin URL" });
 
-    render(<JellyfinSettingsPanel />);
+    renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "Test connection" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid Jellyfin URL");
@@ -141,7 +155,7 @@ describe("JellyfinSettingsPanel", () => {
     const disconnect = vi.spyOn(api, "disconnectJellyfin").mockResolvedValue(undefined);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    render(<JellyfinSettingsPanel />);
+    renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "Disable integration" }));
     await waitFor(() => expect(updateConnection).toHaveBeenCalledWith({ enabled: false }));
 
@@ -149,5 +163,74 @@ describe("JellyfinSettingsPanel", () => {
     await waitFor(() => expect(disconnect).toHaveBeenCalledTimes(1));
     await act(async () => undefined);
     expect(await screen.findByText(/connection and its cached data were removed/i)).toBeInTheDocument();
+  });
+
+  it("separates catalog freshness from local file matching and links zero matches to mapping settings", async () => {
+    const idleConnection = {
+      ...CONNECTION,
+      last_status: "success",
+      last_successful_sync_at: "2026-07-15T10:00:00Z",
+    };
+    vi.spyOn(api, "jellyfinSyncStatus").mockResolvedValue({
+      ...idleSyncStatus(idleConnection),
+      item_count: 120,
+      matched_item_count: 0,
+      unmatched_item_count: 120,
+    });
+    vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([{
+      id: 7,
+      name: "Movies",
+      collection_type: "movies",
+      locations: ["/remote/movies"],
+      mapped_locations: [],
+      mapped_status: "linked",
+      linked_library_id: 3,
+      linked_library_name: "Movies",
+      link_method: "manual",
+      can_create_medialyze_library: false,
+      data_scope: "linked",
+      item_count: 120,
+      last_synced_at: "2026-07-15T10:00:00Z",
+    }]);
+
+    renderPanel();
+
+    expect(await screen.findByText("Catalog current")).toBeInTheDocument();
+    expect(screen.getByText("0% locally matched")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open path mapping" })).toHaveAttribute(
+      "href",
+      "/settings?section=libraries&library=3&focus=path-mapping",
+    );
+  });
+
+  it("filters and bulk-updates grouped playback users", async () => {
+    const idleConnection = { ...CONNECTION, last_status: "success" };
+    vi.spyOn(api, "jellyfinSyncStatus").mockResolvedValue(idleSyncStatus(idleConnection));
+    vi.spyOn(api, "jellyfinUsers").mockResolvedValue([
+      { jellyfin_user_id: "1", name: "Alice", enabled_for_sync: true, last_synced_at: null },
+      { jellyfin_user_id: "2", name: "Bob", enabled_for_sync: false, last_synced_at: null },
+      { jellyfin_user_id: "3", name: "Carla", enabled_for_sync: true, last_synced_at: null },
+    ]);
+    const updateUsers = vi.spyOn(api, "updateJellyfinUsers").mockImplementation(async (ids) => [
+      { jellyfin_user_id: "1", name: "Alice", enabled_for_sync: ids.includes("1"), last_synced_at: null },
+      { jellyfin_user_id: "2", name: "Bob", enabled_for_sync: ids.includes("2"), last_synced_at: null },
+      { jellyfin_user_id: "3", name: "Carla", enabled_for_sync: ids.includes("3"), last_synced_at: null },
+    ]);
+
+    renderPanel();
+
+    expect(await screen.findByText("2 of 3 selected")).toBeInTheDocument();
+    expect(screen.getByText("Selected")).toBeInTheDocument();
+    expect(screen.getByText("Not selected")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playback users" }), {
+      target: { value: "bob" },
+    });
+    expect(screen.getByText("Bob")).toBeInTheDocument();
+    expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Select none" }));
+    await waitFor(() => expect(updateUsers).toHaveBeenCalledWith([]));
+    expect(await screen.findByText("0 of 3 selected")).toBeInTheDocument();
   });
 });

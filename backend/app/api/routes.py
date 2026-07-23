@@ -43,6 +43,7 @@ from backend.app.schemas.jellyfin import (
     JellyfinMatchRecomputeStatusRead,
     JellyfinMatchRead,
     JellyfinPathMappingCreate,
+    JellyfinPathMappingBatchUpdate,
     JellyfinPathMappingRead,
     JellyfinPathMappingUpdate,
     JellyfinSyncCancelRead,
@@ -218,6 +219,7 @@ def _library_file_search_filters(
     search_audio_codecs: str = "",
     search_audio_spatial_profiles: str = "",
     search_audio_languages: str = "",
+    search_jellyfin_name: str = "",
     search_audio_title: str = "",
     search_audio_artist: str = "",
     search_audio_album: str = "",
@@ -263,6 +265,7 @@ def _library_file_search_filters(
         search_audio_codecs=search_audio_codecs,
         search_audio_spatial_profiles=search_audio_spatial_profiles,
         search_audio_languages=search_audio_languages,
+        search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -839,6 +842,55 @@ def _queue_jellyfin_mapping_refresh(
     runtime.request_jellyfin_match_recompute()
 
 
+@router.put("/jellyfin/path-mappings/batch", response_model=list[JellyfinPathMappingRead])
+def jellyfin_path_mappings_batch_update(
+    payload: JellyfinPathMappingBatchUpdate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> list[JellyfinPathMapping]:
+    update_ids = {item.id for item in payload.mappings if item.id is not None}
+    requested_ids = update_ids | set(payload.delete_ids)
+    existing_by_id = {
+        mapping.id: mapping
+        for mapping in db.scalars(
+            select(JellyfinPathMapping).where(JellyfinPathMapping.id.in_(requested_ids))
+        )
+    } if requested_ids else {}
+    missing_ids = sorted(requested_ids - set(existing_by_id))
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Path mapping not found: {missing_ids[0]}",
+        )
+
+    updated_mappings: list[JellyfinPathMapping] = []
+    try:
+        for item in payload.mappings:
+            mapping = existing_by_id.get(item.id) if item.id is not None else JellyfinPathMapping()
+            mapping.jellyfin_path_prefix = item.jellyfin_path_prefix
+            mapping.medialyze_path_prefix = item.medialyze_path_prefix
+            mapping.enabled = item.enabled
+            if item.id is None:
+                db.add(mapping)
+            updated_mappings.append(mapping)
+        for mapping_id in payload.delete_ids:
+            db.delete(existing_by_id[mapping_id])
+
+        for library in db.scalars(
+            select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id.is_(None))
+        ):
+            library.mapped_status = "updating"
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    runtime.request_jellyfin_match_recompute()
+    for mapping in updated_mappings:
+        db.refresh(mapping)
+    return updated_mappings
+
+
 @router.post("/jellyfin/path-mappings", response_model=JellyfinPathMappingRead, status_code=201)
 def jellyfin_path_mapping_create(
     payload: JellyfinPathMappingCreate,
@@ -1328,6 +1380,7 @@ def library_series_grouped_detail(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -1380,6 +1433,7 @@ def library_series_grouped_detail(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -1498,6 +1552,7 @@ def library_files(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -1600,6 +1655,7 @@ def library_files(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -1661,6 +1717,7 @@ def library_grouped_files(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -1765,6 +1822,7 @@ def library_grouped_files(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -1821,6 +1879,7 @@ def library_files_export_csv(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -1924,6 +1983,7 @@ def library_files_export_csv(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,

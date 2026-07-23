@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### 🐛 Fixed
 
+* Keep cached dashboard and library statistics visible during post-scan refreshes, show loading and empty states accurately, and avoid redundant full-statistic rebuilds for panels that are not visible.
 * Route manual and scheduled Jellyfin synchronizations through one persisted background job so concurrent triggers share the active run and manual requests return immediately.
 * Paginate Jellyfin item synchronization and retry transient read failures on large media collections.
 * Stop the Jellyfin settings panel from repeatedly reloading and flickering after navigation-state refreshes.
@@ -17,6 +18,10 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ Enhancements
 
+* Separate Jellyfin catalog freshness from local file matching, link zero-match warnings directly to the affected library mapping, and add searchable grouped playback-user selection with all/none actions.
+* Group and search Settings navigation, persist every settings section in the URL for shareable browser-history-aware links, and focus directly linked library controls.
+* Apply all Jellyfin path-mapping changes through one atomic batch request, reload the catalog once, and represent partially enabled multi-path mappings explicitly.
+* Replace inline Jellyfin library, playback, and title metadata in analyzed-file rows with a linked-library-only file/Jellyfin name switch, and add structured Jellyfin-name search.
 * Stage Jellyfin pages with native SQLite bulk UPSERTs and atomically promote only complete snapshots, with a reproducible 100,000-item benchmark.
 * Persist Jellyfin sync heartbeat, phase, detail, and item counters on the sync job for multi-process status polling.
 * Aggregate Jellyfin catalog and library overview metrics directly in SQL instead of materializing the full catalog in Python.

@@ -26,8 +26,35 @@ export const SETTINGS_PANEL_IDS: SettingsPanelId[] = [
   "telemetry",
 ];
 
+export const SETTINGS_PANEL_SLUGS: Record<SettingsPanelId, string> = {
+  configuredLibraries: "libraries",
+  jellyfin: "jellyfin",
+  qualityProfiles: "quality-profiles",
+  compatibilityProfiles: "compatibility-profiles",
+  appSettings: "application",
+  resolutionCategories: "resolution-categories",
+  patternRecognition: "pattern-recognition",
+  historyRetention: "history-retention",
+  recentScanLogs: "scan-logs",
+  telemetry: "telemetry",
+};
+
+const SETTINGS_PANEL_BY_SLUG = new Map(
+  Object.entries(SETTINGS_PANEL_SLUGS).map(([panelId, slug]) => [slug, panelId as SettingsPanelId]),
+);
+
 export function isSettingsPanelId(value: unknown): value is SettingsPanelId {
   return typeof value === "string" && SETTINGS_PANEL_IDS.includes(value as SettingsPanelId);
+}
+
+export function settingsPanelFromSection(value: string | null | undefined): SettingsPanelId | null {
+  if (!value) return null;
+  if (isSettingsPanelId(value)) return value;
+  return SETTINGS_PANEL_BY_SLUG.get(value) ?? null;
+}
+
+export function settingsSectionForPanel(panelId: SettingsPanelId): string {
+  return SETTINGS_PANEL_SLUGS[panelId];
 }
 
 export function getActiveSettingsPanel(fallback: SettingsPanelId): SettingsPanelId {

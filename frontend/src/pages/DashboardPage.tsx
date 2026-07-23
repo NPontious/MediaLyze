@@ -192,6 +192,7 @@ export function DashboardPage() {
   const inDepthDolbyVisionProfiles = appSettings.feature_flags.in_depth_dolby_vision_profiles;
   const [error, setError] = useState<string | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
+  const [isDashboardRefreshing, setIsDashboardRefreshing] = useState(false);
   const layoutOptions = useMemo(
     () => ({ unlimitedHeight: appSettings.feature_flags.unlimited_panel_size }),
     [appSettings.feature_flags.unlimited_panel_size],
@@ -220,6 +221,7 @@ export function DashboardPage() {
   const [dashboardHistory, setDashboardHistory] = useState<DashboardHistoryResponse | null>(() => readDashboardHistoryCache());
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [isHistoryRefreshing, setIsHistoryRefreshing] = useState(false);
   const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(() =>
     readDashboardHistoryPanelCollapsedPreference(),
   );
@@ -310,7 +312,10 @@ export function DashboardPage() {
 
     if (showLoading) {
       setIsHistoryLoading(true);
+    } else {
+      setIsHistoryRefreshing(true);
     }
+    setHistoryError(null);
 
     try {
       const payload = await api.dashboardHistory(controller.signal);
@@ -325,9 +330,11 @@ export function DashboardPage() {
     } finally {
       if (historyAbortRef.current === controller) {
         historyAbortRef.current = null;
-      }
-      if (showLoading) {
-        setIsHistoryLoading(false);
+        if (showLoading) {
+          setIsHistoryLoading(false);
+        } else {
+          setIsHistoryRefreshing(false);
+        }
       }
     }
   });
@@ -383,7 +390,11 @@ export function DashboardPage() {
 
       setComparisonErrorByPanel((current) => ({ ...current, [item.instanceId]: null }));
       setComparisonByPanel((current) =>
-        current[item.instanceId] === cachedComparison ? current : { ...current, [item.instanceId]: cachedComparison },
+        cachedComparison === null && force
+          ? current
+          : current[item.instanceId] === cachedComparison
+            ? current
+            : { ...current, [item.instanceId]: cachedComparison },
       );
       setComparisonLoadingByPanel((current) => ({
         ...current,
@@ -417,8 +428,8 @@ export function DashboardPage() {
         .finally(() => {
           if (comparisonAbortRef.current.get(item.instanceId) === controller) {
             comparisonAbortRef.current.delete(item.instanceId);
+            setComparisonLoadingByPanel((current) => ({ ...current, [item.instanceId]: false }));
           }
-          setComparisonLoadingByPanel((current) => ({ ...current, [item.instanceId]: false }));
         });
     }
   });
@@ -429,13 +440,12 @@ export function DashboardPage() {
 
   useEffect(() => {
     if (hadActiveJobsRef.current && !hasActiveJobs) {
-      setIsDashboardLoading(true);
+      setIsDashboardRefreshing(true);
       loadDashboard(true, visibleDashboardPanelIds)
         .then(() => setError(null))
         .catch((reason: Error) => setError(reason.message))
-        .finally(() => setIsDashboardLoading(false));
+        .finally(() => setIsDashboardRefreshing(false));
       void loadDashboardHistory(false);
-      window.sessionStorage.removeItem(DASHBOARD_HISTORY_CACHE_STORAGE_KEY);
       for (const { item } of comparisonPanels) {
         const selection = normalizeComparisonSelectionForLibraryType(
           item.comparisonSelection ?? getComparisonSelection("dashboard"),
@@ -684,8 +694,14 @@ export function DashboardPage() {
               content = (
                 <LibraryHistoryPanel
                   history={dashboardHistory}
-                  loading={isHistoryLoading && !dashboardHistory && !historyError}
-                  error={historyError}
+                  loading={
+                    !historyError &&
+                    ((isHistoryLoading && !dashboardHistory) ||
+                      (isHistoryRefreshing && (dashboardHistory?.points.length ?? 0) === 0))
+                  }
+                  refreshing={isHistoryRefreshing && Boolean(dashboardHistory?.points.length)}
+                  refreshError={dashboardHistory ? historyError : null}
+                  error={!dashboardHistory ? historyError : null}
                   selectedMetric={selectedHistoryMetric}
                   onChangeMetric={setSelectedHistoryMetric}
                   collapsed={isHistoryPanelCollapsed}
@@ -712,10 +728,24 @@ export function DashboardPage() {
                   availableFields={availableComparisonFields}
                   resizeToken={`${panel.item.width}:${panel.item.height}`}
                   loading={
-                    Boolean(comparisonLoadingByPanel[panel.item.instanceId]) ||
-                    (!comparisonByPanel[panel.item.instanceId] && !comparisonErrorByPanel[panel.item.instanceId])
+                    !comparisonByPanel[panel.item.instanceId] &&
+                    (Boolean(comparisonLoadingByPanel[panel.item.instanceId]) ||
+                      !comparisonErrorByPanel[panel.item.instanceId])
                   }
-                  error={comparisonErrorByPanel[panel.item.instanceId] ?? null}
+                  refreshing={
+                    Boolean(comparisonByPanel[panel.item.instanceId]) &&
+                    Boolean(comparisonLoadingByPanel[panel.item.instanceId])
+                  }
+                  refreshError={
+                    comparisonByPanel[panel.item.instanceId]
+                      ? comparisonErrorByPanel[panel.item.instanceId] ?? null
+                      : null
+                  }
+                  error={
+                    !comparisonByPanel[panel.item.instanceId]
+                      ? comparisonErrorByPanel[panel.item.instanceId] ?? null
+                      : null
+                  }
                   onChangeXField={(xField) =>
                     updateComparisonSelection(panel.item.instanceId, { ...selection, xField })
                   }
@@ -753,7 +783,9 @@ export function DashboardPage() {
                   metricId={statisticDefinition.numericMetricId}
                   resizeToken={`${panel.item.width}:${panel.item.height}`}
                   loading={(!dashboard || (isDashboardLoading && !distribution)) && !error}
-                  error={error}
+                  refreshing={isDashboardRefreshing && Boolean(dashboard)}
+                  refreshError={dashboard ? error : null}
+                  error={!dashboard ? error : null}
                 />
               );
             } else {
@@ -783,7 +815,9 @@ export function DashboardPage() {
                 <AsyncPanel
                   title={panelTitle}
                   loading={(!dashboard || (isDashboardLoading && formattedItems.length === 0)) && !error}
-                  error={error}
+                  refreshing={isDashboardRefreshing && Boolean(dashboard)}
+                  refreshError={dashboard ? error : null}
+                  error={!dashboard ? error : null}
                   bodyClassName="async-panel-body-scroll"
                 >
                   <DistributionList items={formattedItems} maxVisibleRows={5} scrollable />

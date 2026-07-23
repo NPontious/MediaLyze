@@ -741,6 +741,97 @@ def test_mapping_change_returns_before_background_match_recompute(db: Session) -
     }
 
 
+def test_path_mapping_batch_is_atomic_and_queues_one_recompute(db: Session) -> None:
+    first = JellyfinPathMapping(
+        jellyfin_path_prefix="/remote/movies",
+        medialyze_path_prefix="/media/movies",
+        enabled=False,
+    )
+    deleted = JellyfinPathMapping(
+        jellyfin_path_prefix="/remote/old",
+        medialyze_path_prefix="/media/old",
+        enabled=True,
+    )
+    db.add_all([first, deleted])
+    db.commit()
+    client = _client(db)
+
+    response = client.put(
+        "/api/jellyfin/path-mappings/batch",
+        json={
+            "mappings": [
+                {
+                    "id": first.id,
+                    "jellyfin_path_prefix": "/remote/movies",
+                    "medialyze_path_prefix": "/mnt/movies",
+                    "enabled": True,
+                },
+                {
+                    "jellyfin_path_prefix": "/remote/series",
+                    "medialyze_path_prefix": "/mnt/series",
+                    "enabled": True,
+                },
+            ],
+            "delete_ids": [deleted.id],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": first.id,
+            "jellyfin_path_prefix": "/remote/movies",
+            "medialyze_path_prefix": "/mnt/movies",
+            "enabled": True,
+        },
+        {
+            "id": response.json()[1]["id"],
+            "jellyfin_path_prefix": "/remote/series",
+            "medialyze_path_prefix": "/mnt/series",
+            "enabled": True,
+        },
+    ]
+    assert db.get(JellyfinPathMapping, deleted.id) is None
+    assert client.app.state.scan_runtime.jellyfin_match_recompute_requests == 1
+
+
+def test_path_mapping_batch_rolls_back_when_any_mapping_is_missing(db: Session) -> None:
+    mapping = JellyfinPathMapping(
+        jellyfin_path_prefix="/remote/movies",
+        medialyze_path_prefix="/media/movies",
+        enabled=False,
+    )
+    db.add(mapping)
+    db.commit()
+
+    response = _client(db).put(
+        "/api/jellyfin/path-mappings/batch",
+        json={
+            "mappings": [
+                {
+                    "id": mapping.id,
+                    "jellyfin_path_prefix": "/remote/movies",
+                    "medialyze_path_prefix": "/changed",
+                    "enabled": True,
+                },
+                {
+                    "id": 999_999,
+                    "jellyfin_path_prefix": "/remote/missing",
+                    "medialyze_path_prefix": "/media/missing",
+                    "enabled": True,
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 404
+    db.expire_all()
+    persisted = db.get(JellyfinPathMapping, mapping.id)
+    assert persisted is not None
+    assert persisted.medialyze_path_prefix == "/media/movies"
+    assert persisted.enabled is False
+
+
 def test_sync_cancel_endpoint_marks_running_sync_for_cancellation(db: Session) -> None:
     db.add(JellyfinConnection(id=1, last_status="running"))
     db.commit()

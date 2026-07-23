@@ -202,6 +202,7 @@ CSV_EXPORT_FILTER_LABELS = {
     "search_audio_codecs": "audio_codecs",
     "search_audio_spatial_profiles": "audio_spatial_profiles",
     "search_audio_languages": "audio_languages",
+    "search_jellyfin_name": "jellyfin_name",
     "search_chapter_titles": "chapter_titles",
     "search_chapter_count": "chapter_count",
     "search_audiobook_narrator": "audiobook_narrator",

@@ -9,6 +9,8 @@ type AsyncPanelProps = {
   subtitle?: string;
   subtitleAddon?: ReactNode;
   loading?: boolean;
+  refreshing?: boolean;
+  refreshError?: string | null;
   error?: string | null;
   className?: string;
   bodyClassName?: string;
@@ -30,6 +32,8 @@ export function AsyncPanel({
   subtitle,
   subtitleAddon,
   loading,
+  refreshing = false,
+  refreshError = null,
   error,
   className,
   bodyClassName,
@@ -105,7 +109,17 @@ export function AsyncPanel({
             {subtitle && !isCollapsed ? <p className="subtitle">{subtitle}</p> : null}
           </div>
         ) : null}
-        {headerAddon}
+        {refreshing || headerAddon ? (
+          <div className="async-panel-header-status">
+            {refreshing ? (
+              <span className="async-panel-refreshing" role="status" aria-live="polite">
+                <LoaderPinwheelIcon className="async-panel-refreshing-icon" size={16} />
+                <span>{t("panel.refreshing")}</span>
+              </span>
+            ) : null}
+            {headerAddon}
+          </div>
+        ) : null}
       </div>
       {!isCollapsed ? (
         <div id={bodyId} className={`async-panel-body ${bodyClassName ?? ""}`.trim()}>
@@ -116,7 +130,12 @@ export function AsyncPanel({
             </div>
           ) : null}
           {error ? <div className="alert">{error}</div> : null}
-          {!loading && !error ? children : null}
+          {!loading && !error ? (
+            <>
+              {refreshError ? <div className="alert async-panel-refresh-error">{refreshError}</div> : null}
+              {children}
+            </>
+          ) : null}
         </div>
       ) : null}
     </section>

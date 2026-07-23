@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
 class JellyfinConnectionUpdate(BaseModel):
@@ -80,6 +80,35 @@ class JellyfinPathMappingRead(BaseModel):
     jellyfin_path_prefix: str
     medialyze_path_prefix: str
     enabled: bool
+
+
+class JellyfinPathMappingBatchItem(BaseModel):
+    id: int | None = Field(default=None, ge=1)
+    jellyfin_path_prefix: str = Field(min_length=1, max_length=2048)
+    medialyze_path_prefix: str = Field(min_length=1, max_length=2048)
+    enabled: bool = True
+
+
+class JellyfinPathMappingBatchUpdate(BaseModel):
+    mappings: list[JellyfinPathMappingBatchItem] = Field(min_length=1, max_length=512)
+    delete_ids: list[int] = Field(default_factory=list, max_length=512)
+
+    @model_validator(mode="after")
+    def validate_unique_targets(self) -> "JellyfinPathMappingBatchUpdate":
+        mapping_ids = [mapping.id for mapping in self.mappings if mapping.id is not None]
+        if len(mapping_ids) != len(set(mapping_ids)):
+            raise ValueError("Path mapping ids must be unique")
+        if len(self.delete_ids) != len(set(self.delete_ids)):
+            raise ValueError("Deleted path mapping ids must be unique")
+        if set(mapping_ids) & set(self.delete_ids):
+            raise ValueError("A path mapping cannot be updated and deleted in the same batch")
+        normalized_sources = [
+            mapping.jellyfin_path_prefix.strip().replace("\\", "/").rstrip("/").casefold()
+            for mapping in self.mappings
+        ]
+        if len(normalized_sources) != len(set(normalized_sources)):
+            raise ValueError("Jellyfin path prefixes must be unique within a batch")
+        return self
 
 
 class JellyfinLibraryRead(BaseModel):

@@ -264,6 +264,42 @@ afterEach(() => {
 });
 
 describe("DashboardPage", () => {
+  it("shows loading rather than an empty state until dashboard history resolves", async () => {
+    window.localStorage.setItem(
+      "medialyze-statistic-panel-layout-dashboard-main",
+      JSON.stringify({
+        items: [{ instanceId: "history", statisticId: "history", width: 2, height: 2 }],
+      }),
+    );
+    let resolveHistory: ((payload: DashboardHistoryResponse) => void) | null = null;
+    const historyPromise = new Promise<DashboardHistoryResponse>((resolve) => {
+      resolveHistory = resolve;
+    });
+
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "dashboard").mockResolvedValue(createDashboard());
+    vi.spyOn(api, "dashboardHistory").mockReturnValue(historyPromise);
+    vi.spyOn(api, "dashboardComparison").mockResolvedValue(createComparisonResponse());
+    vi.spyOn(api, "activeScanJobs").mockResolvedValue([]);
+
+    renderPage();
+
+    expect(await screen.findByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dashboard trends will appear after the next finished scan.")).not.toBeInTheDocument();
+
+    resolveHistory!({
+      ...createDashboardHistory(),
+      oldest_snapshot_day: null,
+      newest_snapshot_day: null,
+      points: [],
+    });
+
+    expect(
+      await screen.findByText("Dashboard trends will appear after the next finished scan."),
+    ).toBeInTheDocument();
+  });
+
   it("keeps empty dashboard panels in a loading state until their data request resolves", async () => {
     window.localStorage.setItem(
       "medialyze-statistic-panel-layout-dashboard-main",

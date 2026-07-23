@@ -77,8 +77,6 @@ def test_quality_recompute_preserves_cancel_requested_during_work(tmp_path: Path
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    settings = Settings(config_path=tmp_path / "config", media_root=tmp_path)
-
     with session_factory() as db:
         library = Library(
             name="Movies",
@@ -374,6 +372,8 @@ def test_run_scan_allows_same_relative_path_in_different_library_roots(
         root_b = LibraryRoot(library_id=library.id, path=str(second_root), display_name="Movies B", path_key="b")
         db.add_all([root_a, root_b])
         db.commit()
+        root_a_id = root_a.id
+        root_b_id = root_b.id
 
         run_scan(db, settings, library.id, "incremental")
 
@@ -383,7 +383,7 @@ def test_run_scan_allows_same_relative_path_in_different_library_roots(
             .order_by(MediaFile.library_root_id.asc())
         ).all()
 
-    assert scanned_files == [(root_a.id, "movie.mkv"), (root_b.id, "movie.mkv")]
+    assert scanned_files == [(root_a_id, "movie.mkv"), (root_b_id, "movie.mkv")]
 
 
 def test_incremental_scan_reanalyzes_files_with_incomplete_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -1911,6 +1911,7 @@ def test_scan_continues_when_normalization_of_one_file_raises(tmp_path: Path, mo
         ffprobe_worker_count=1,
         scan_commit_batch_size=1,
     )
+    invalidation_state: list[tuple[str, int]] = []
 
     with session_factory() as db:
         library = Library(
@@ -1923,6 +1924,19 @@ def test_scan_continues_when_normalization_of_one_file_raises(tmp_path: Path, mo
         db.add(library)
         db.commit()
 
+        original_invalidate = scanner_service.stats_cache.invalidate
+
+        def observe_invalidation(cache_key: str, library_id: int | None = None) -> None:
+            db.expire_all()
+            current_job = db.scalar(select(ScanJob).order_by(ScanJob.id.desc()))
+            persisted_history = db.scalars(
+                select(LibraryHistory).where(LibraryHistory.library_id == library.id)
+            ).all()
+            assert current_job is not None
+            invalidation_state.append((current_job.status.value, len(persisted_history)))
+            original_invalidate(cache_key, library_id)
+
+        monkeypatch.setattr(scanner_service.stats_cache, "invalidate", observe_invalidation)
         job = run_scan(db, settings, library.id, "incremental")
         indexed_files = db.scalars(select(MediaFile).order_by(MediaFile.relative_path)).all()
         history_rows = db.scalars(
@@ -1934,6 +1948,7 @@ def test_scan_continues_when_normalization_of_one_file_raises(tmp_path: Path, mo
     assert job.files_total == 2
     assert job.files_scanned == 2
     assert job.status.value == "completed"
+    assert invalidation_state == [("running", 1)]
     assert [(media_file.relative_path, media_file.scan_status.value) for media_file in indexed_files] == [
         ("broken.mkv", "failed"),
         ("good.mkv", "ready"),

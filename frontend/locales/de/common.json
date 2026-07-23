@@ -82,6 +82,7 @@
     "collapseAria": "{{title}} einklappen",
     "expandAria": "{{title}} ausklappen",
     "loading": "Wird geladen...",
+    "refreshing": "Wird aktualisiert...",
     "noDataYet": "Noch keine Daten"
   },
   "releaseNotes": {
@@ -110,6 +111,10 @@
     "settingsNavigationLibraries": "Libraries",
     "settingsNavigationAddLibrary": "Add library",
     "settingsNavigationPatternRecognition": "Pattern recognition",
+    "settingsGroups": { "librariesSources": "Libraries & Quellen", "analysis": "Analyse", "application": "Anwendung", "maintenanceDiagnostics": "Wartung & Diagnose" },
+    "settingsSearchLabel": "Einstellungen durchsuchen",
+    "settingsSearchPlaceholder": "Einstellungen durchsuchen…",
+    "settingsSearchEmpty": "Keine passenden Einstellungen gefunden.",
     "quickActions": "Quickactions",
     "collapseSettingsNavigation": "Einstellungsmenü einklappen",
     "expandSettingsNavigation": "Einstellungsmenü ausklappen",
@@ -121,7 +126,7 @@
     "expandLibrarySettings": "Einstellungen für {{name}} anzeigen",
     "collapseLibrarySettings": "Einstellungen für {{name}} ausblenden",
     "sections": {
-      "jellyfin": { "title": "Jellyfin-Zuordnung", "description": "Wähle den Jellyfin-Katalog aus, der zu dieser MediaLyze-Library gehört. Ist der Katalog bereits anderweitig zugeordnet, wird die Zuordnung hierher verschoben.", "pathMappingTitle": "Path-Mapping (optional)", "pathMappingDescription": "Konfiguriere dies nur, wenn Jellyfin und MediaLyze dieselben Dateien unter unterschiedlichen Mounting-Punkten sehen. Ordne jedem Jellyfin-Quellpräfix den entsprechenden MediaLyze-Pfad zu.", "pathMappingDescriptionAria": "Path-Mapping erklären", "enablePathMapping": "Path-Mapping aktivieren", "disablePathMapping": "Path-Mapping deaktivieren", "pathMappingTargetRequired": "Vor dem Aktivieren des Path-Mappings ist ein MediaLyze-Pfad erforderlich.", "useMediaLyzePath": "{{path}} verwenden", "savePathMapping": "Mapping speichern", "removePathMapping": "Mapping entfernen", "noJellyfinPaths": "Jellyfin hat für diese Library noch keinen Quellpfad gemeldet." },
+      "jellyfin": { "title": "Jellyfin-Zuordnung", "description": "Wähle den Jellyfin-Katalog aus, der zu dieser MediaLyze-Library gehört. Ist der Katalog bereits anderweitig zugeordnet, wird die Zuordnung hierher verschoben.", "pathMappingTitle": "Path-Mapping (optional)", "pathMappingDescription": "Konfiguriere dies nur, wenn Jellyfin und MediaLyze dieselben Dateien unter unterschiedlichen Mounting-Punkten sehen. Ordne jedem Jellyfin-Quellpräfix den entsprechenden MediaLyze-Pfad zu.", "pathMappingDescriptionAria": "Path-Mapping erklären", "enablePathMapping": "Path-Mapping aktivieren", "disablePathMapping": "Path-Mapping deaktivieren", "pathMappingStateEnabled": "Aktiviert", "pathMappingStateDisabled": "Deaktiviert", "pathMappingStatePartial": "Teilweise aktiviert", "pathMappingTargetRequired": "Vor dem Aktivieren des Path-Mappings ist ein MediaLyze-Pfad erforderlich.", "useMediaLyzePath": "{{path}} verwenden", "savePathMapping": "Mapping speichern", "removePathMapping": "Mapping entfernen", "noJellyfinPaths": "Jellyfin hat für diese Library noch keinen Quellpfad gemeldet." },
       "source": { "title": "Medienquelle", "description": "Verwalte die lokalen Ordner, die MediaLyze scannt. Beim Ändern der Pfade bleiben Konfiguration und Verlauf der Library erhalten." },
       "analysis": { "title": "Scan und Analyse", "description": "Konfiguriere Scan-Planung, Duplikat-Erkennung, historische Datumsquelle und das Qualitätsprofil dieser Library." }
     },
@@ -600,6 +605,11 @@
     "tableView": {
       "edit": "Tabellenansicht bearbeiten"
     },
+    "fileNameSource": {
+      "label": "Angezeigter Dateiname",
+      "file": "Dateinamen anzeigen",
+      "jellyfin": "Jellyfin-Namen anzeigen"
+    },
     "export": {
       "aria": "Analysierte Dateien als CSV exportieren",
       "tooltip": "Die vollstaendige gefilterte Ergebnismenge der analysierten Dateien als CSV exportieren",
@@ -620,6 +630,10 @@
       "file": {
         "label": "Datei und Pfad",
         "placeholder": "Datei und Pfad durchsuchen"
+      },
+      "jellyfinName": {
+        "label": "Jellyfin-Name",
+        "placeholder": "Jellyfin-Namen durchsuchen"
       },
       "size": {
         "placeholder": "z. B. >4GB",
@@ -799,6 +813,7 @@
       "title": "Mediathekverlauf",
       "subtitle": "Taegliche Trend-Snapshots abgeschlossener Scans",
       "empty": "Verlaufstrends erscheinen nach dem naechsten abgeschlossenen Scan.",
+      "metricEmpty": "Fuer die ausgewaehlte Metrik sind keine Daten vorhanden.",
       "controls": {
         "metric": "Verlaufsmetrik auswaehlen",
         "range": "Verlaufszeitraum auswaehlen"
@@ -1622,8 +1637,18 @@
     "matchSummary": "{{matched}} von {{total}} Assets zugeordnet",
     "nextSync": "Nächster geplanter Sync: {{date}}",
     "status": { "never": "Nicht synchronisiert", "running": "Synchronisierung läuft", "success": "Synchronisiert", "canceled": "Synchronisierung abgebrochen", "error": "Synchronisierung fehlgeschlagen" },
+    "catalogStatus": { "label": "Katalog-Synchronisation", "current": "Katalog aktuell" },
+    "matchStatus": { "label": "Lokale Dateizuordnung", "percent": "{{percent}} % lokal zugeordnet", "zeroWarning": "Noch keine Jellyfin-Einträge sind lokalen MediaLyze-Dateien zugeordnet.", "openPathMapping": "Path-Mapping öffnen", "openLibraries": "Library-Zuordnungen öffnen" },
     "users": "Wiedergabe-Nutzer",
     "usersEmpty": "Synchronisiere Jellyfin, um Nutzer zu laden.",
+    "usersSelected": "{{selected}} von {{total}} ausgewählt",
+    "userSearchLabel": "Wiedergabe-Nutzer durchsuchen",
+    "userSearchPlaceholder": "Nutzer suchen…",
+    "userSearchEmpty": "Keine Nutzer entsprechen dieser Suche.",
+    "userBulkActions": "Mehrfachauswahl der Wiedergabe-Nutzer",
+    "selectAllUsers": "Alle auswählen",
+    "selectNoUsers": "Keine auswählen",
+    "userGroups": { "selected": "Ausgewählt", "unselected": "Nicht ausgewählt" },
     "pathMappings": "Pfad-Mappings",
     "jellyfinPath": "Jellyfin-Pfad",
     "medialyzePath": "MediaLyze-Pfad",

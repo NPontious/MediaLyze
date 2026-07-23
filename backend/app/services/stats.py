@@ -12,7 +12,6 @@ from backend.app.models.entities import (
     MediaFile,
     MediaFormat,
     SubtitleStream,
-    VideoStream,
 )
 from backend.app.services.app_settings import get_app_settings
 from backend.app.schemas.media import DashboardResponse, DistributionItem
@@ -139,16 +138,31 @@ def _dashboard_panel_view(payload: DashboardResponse, requested_panels: set[str]
     return payload.model_copy(update=updates)
 
 
-def build_dashboard(db: Session, requested_panels: Iterable[str] | None = None) -> DashboardResponse:
+def build_dashboard(
+    db: Session,
+    requested_panels: Iterable[str] | None = None,
+    *,
+    _coalesced: bool = False,
+) -> DashboardResponse:
     panel_filter = set(requested_panels) if requested_panels is not None else None
+    panel_key = tuple(sorted(panel_filter)) if panel_filter is not None else None
     cache_key = str(id(db.get_bind()))
-    cached = stats_cache.get_dashboard(cache_key)
-    if cached is not None:
-        return _dashboard_panel_view(cached, panel_filter)
+    if not _coalesced:
+        cached = stats_cache.get_dashboard(cache_key, panel_key)
+        if cached is not None:
+            return cached
+        if panel_key is not None:
+            complete = stats_cache.get_dashboard(cache_key)
+            if complete is not None:
+                return _dashboard_panel_view(complete, panel_filter)
+        return stats_cache.get_or_compute_dashboard(
+            cache_key,
+            panel_key,
+            lambda: build_dashboard(db, panel_filter, _coalesced=True),
+        )
 
     def wants(panel_id: str) -> bool:
-        del panel_id
-        return True
+        return panel_filter is None or panel_id in panel_filter
 
     primary_video_streams = (
         primary_video_streams_subquery()
@@ -464,10 +478,19 @@ def build_dashboard(db: Session, requested_panels: Iterable[str] | None = None) 
             ).all()
         )
 
+    requested_numeric_metric_ids = (
+        {
+            metric_id
+            for panel_id, metric_id in _NUMERIC_PANEL_METRIC_IDS.items()
+            if panel_filter is None or panel_id in panel_filter
+        }
+        if panel_filter is not None
+        else None
+    )
     numeric_distributions = build_numeric_distributions(
         db,
         dashboard_only=True,
-        metric_ids=None,
+        metric_ids=requested_numeric_metric_ids,
     )
 
     payload = DashboardResponse(
@@ -535,5 +558,4 @@ def build_dashboard(db: Session, requested_panels: Iterable[str] | None = None) 
         subtitle_source_distribution=subtitle_source_distribution,
         numeric_distributions=numeric_distributions,
     )
-    stats_cache.set_dashboard(cache_key, payload)
     return _dashboard_panel_view(payload, panel_filter)

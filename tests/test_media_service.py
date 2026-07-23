@@ -15,6 +15,8 @@ from backend.app.models.entities import (
     AppSetting,
     AudioStream,
     ExternalSubtitle,
+    JellyfinItem,
+    JellyfinMediaMatch,
     Library,
     LibraryType,
     MediaChapter,
@@ -1168,6 +1170,69 @@ def test_generate_media_chapters_csv_export_includes_chapter_detail_rows() -> No
     assert rows[1][header.index("chapter_index")] == "1"
     assert rows[1][header.index("title")] == "Chapter One"
     assert '"title": "Chapter One"' in rows[1][header.index("tags_json")]
+
+
+def test_list_library_files_filters_by_matched_jellyfin_name() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path="/tmp/jellyfin-search",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        matching_file = MediaFile(
+            library_id=library.id,
+            relative_path="technical-name-a.mkv",
+            filename="technical-name-a.mkv",
+            extension="mkv",
+            size_bytes=1,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+        )
+        other_file = MediaFile(
+            library_id=library.id,
+            relative_path="technical-name-b.mkv",
+            filename="technical-name-b.mkv",
+            extension="mkv",
+            size_bytes=1,
+            mtime=2.0,
+            scan_status=ScanStatus.ready,
+        )
+        db.add_all([matching_file, other_file])
+        db.flush()
+        jellyfin_item = JellyfinItem(
+            jellyfin_item_id="jf-search-1",
+            item_type="Movie",
+            title="The Jellyfin Display Name",
+        )
+        db.add(jellyfin_item)
+        db.flush()
+        db.add(
+            JellyfinMediaMatch(
+                media_file_id=matching_file.id,
+                jellyfin_item_id=jellyfin_item.id,
+                match_method="path",
+                status="matched",
+            )
+        )
+        db.commit()
+
+        page = list_library_files(
+            db,
+            library.id,
+            limit=50,
+            search_filters=LibraryFileSearchFilters(search_jellyfin_name="display name"),
+        )
+
+    assert [item.filename for item in page.items] == ["technical-name-a.mkv"]
+    assert page.items[0].jellyfin_title == "The Jellyfin Display Name"
 
 
 def test_list_library_files_sorts_and_filters_by_subtitle_sources() -> None:

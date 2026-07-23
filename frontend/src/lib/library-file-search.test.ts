@@ -22,4 +22,8 @@ describe("library file search metadata fields", () => {
       ]),
     );
   });
+
+  it("includes Jellyfin name as a structured metadata filter", () => {
+    expect(LIBRARY_METADATA_SEARCH_FIELDS).toContain("jellyfin_name");
+  });
 });

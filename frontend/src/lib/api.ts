@@ -309,6 +309,10 @@ export type JellyfinPathMapping = {
   enabled: boolean;
 };
 
+export type JellyfinPathMappingBatchItem = Omit<JellyfinPathMapping, "id"> & {
+  id?: number;
+};
+
 export type JellyfinLibrary = {
   id: number;
   name: string;
@@ -927,6 +931,7 @@ export type MediaFileSortKey =
 
 export type LibraryFileSearchField =
   | "file"
+  | "jellyfin_name"
   | "container"
   | "size"
   | "quality_score"
@@ -1432,6 +1437,7 @@ type DownloadedCsv = {
 const API_PREFIX = import.meta.env.VITE_API_PREFIX ?? "/api";
 const LIBRARY_FILE_FILTER_QUERY_KEYS: Array<[LibraryFileSearchField, string]> = [
   ["file", "file_search"],
+  ["jellyfin_name", "search_jellyfin_name"],
   ["container", "search_container"],
   ["size", "search_size"],
   ["quality_score", "search_quality_score"],
@@ -1890,6 +1896,14 @@ export const api = {
       body: JSON.stringify({ enabled_user_ids: enabledUserIds }),
     }),
   jellyfinPathMappings: () => request<JellyfinPathMapping[]>("/jellyfin/path-mappings"),
+  updateJellyfinPathMappingsBatch: (
+    mappings: JellyfinPathMappingBatchItem[],
+    deleteIds: number[] = [],
+  ) =>
+    request<JellyfinPathMapping[]>("/jellyfin/path-mappings/batch", {
+      method: "PUT",
+      body: JSON.stringify({ mappings, delete_ids: deleteIds }),
+    }),
   jellyfinMatchRecomputeStatus: () =>
     request<JellyfinMatchRecomputeStatus>("/jellyfin/matches/recompute/status"),
   createJellyfinPathMapping: (payload: Omit<JellyfinPathMapping, "id">) =>

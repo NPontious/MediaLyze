@@ -32,6 +32,8 @@ type ComparisonChartPanelProps = {
   selection: ComparisonSelection;
   resizeToken?: string;
   loading?: boolean;
+  refreshing?: boolean;
+  refreshError?: string | null;
   error?: string | null;
   onChangeXField: (fieldId: ComparisonFieldId) => void;
   onChangeYField: (fieldId: ComparisonFieldId) => void;
@@ -94,6 +96,8 @@ function ComparisonChartPanelComponent({
   selection,
   resizeToken,
   loading = false,
+  refreshing = false,
+  refreshError = null,
   error = null,
   onChangeXField,
   onChangeYField,
@@ -471,6 +475,8 @@ function ComparisonChartPanelComponent({
     <AsyncPanel
       title=""
       loading={loading}
+      refreshing={refreshing}
+      refreshError={refreshError}
       error={error}
       bodyClassName="async-panel-body-scroll"
       headerAddon={

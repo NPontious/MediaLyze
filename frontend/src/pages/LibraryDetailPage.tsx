@@ -12,7 +12,6 @@ import {
   PanelTopClose,
   Plus,
   Search,
-  Server,
   Trash2,
   X,
 } from "lucide-react";
@@ -225,6 +224,7 @@ type FilePageLoadBehavior = {
 
 type LibraryFileSearchFilters = Partial<Record<"file" | LibraryFileMetadataSearchField, string>>;
 type DuplicatePanelViewMode = "all" | "filehash" | "filename" | "hidden";
+type AnalyzedFileNameSource = "file" | "jellyfin";
 
 type LibraryDetailTableState = {
   sortKey: FileColumnKey;
@@ -810,6 +810,7 @@ export function buildFileColumns(
   hideQualityScoreMeter: boolean,
   libraryType?: string | null,
   inDepthDolbyVisionProfiles = false,
+  fileNameSource: AnalyzedFileNameSource = "file",
 ): FileColumnDefinition[] {
   const audioCodecsLabelKey =
     libraryType === "music" || libraryType === "audiobooks" ? "fileTable.formatsAndCodecs" : "fileTable.audioCodecs";
@@ -854,7 +855,12 @@ export function buildFileColumns(
       sizing: { mode: "flex", minPx: 240, fr: 2.2, maxPx: 420 },
       sticky: true,
       hideable: false,
-      measureValue: (row) => (isGroupedAnalyzedFilesRow(row) ? row.title : row.filename),
+      measureValue: (row) =>
+        isGroupedAnalyzedFilesRow(row)
+          ? row.title
+          : fileNameSource === "jellyfin"
+            ? (row.jellyfin_title ?? row.filename)
+            : row.filename,
       render: (row) =>
         isGroupedAnalyzedFilesRow(row) ? (
           <button
@@ -877,19 +883,9 @@ export function buildFileColumns(
             <span className={`media-tree-indent media-tree-indent-${rowDepth(row)}`} aria-hidden="true" />
             <span className="media-file-cell-copy">
               <Link to={`/files/${row.id}`} className="file-link">
-                {row.filename}
+                {fileNameSource === "jellyfin" ? (row.jellyfin_title ?? row.filename) : row.filename}
               </Link>
               {row.root_name ? <span className="media-tree-subtitle">{row.root_name}</span> : null}
-              {row.jellyfin_title ? (
-                <span className="media-tree-subtitle media-file-jellyfin-metadata">
-                  <Server aria-hidden="true" />
-                  <span>{row.jellyfin_title}</span>
-                  {row.jellyfin_production_year ? <span>{row.jellyfin_production_year}</span> : null}
-                  {row.jellyfin_play_count !== null && row.jellyfin_play_count !== undefined ? (
-                    <span>{t("jellyfin.catalog.plays")}: {row.jellyfin_play_count}</span>
-                  ) : null}
-                </span>
-              ) : null}
             </span>
           </div>
         ),
@@ -1585,6 +1581,7 @@ export function LibraryDetailPage() {
   const [knownHasVideoMetadata, setKnownHasVideoMetadata] = useState<boolean | undefined>(undefined);
   const [libraryHistory, setLibraryHistory] = useState<LibraryHistoryResponse | null>(null);
   const [linkedJellyfinLibrary, setLinkedJellyfinLibrary] = useState<JellyfinLibrary | null>(null);
+  const [analyzedFileNameSource, setAnalyzedFileNameSource] = useState<AnalyzedFileNameSource>("file");
   const [expandedGroupedSeriesIds, setExpandedGroupedSeriesIds] = useState<Record<number, boolean>>({});
   const [expandedGroupedSeasonKeys, setExpandedGroupedSeasonKeys] = useState<Record<string, boolean>>({});
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroupPage | null>(null);
@@ -1636,7 +1633,9 @@ export function LibraryDetailPage() {
   const [filesError, setFilesError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(true);
   const [isStatisticsLoading, setIsStatisticsLoading] = useState(true);
+  const [isStatisticsRefreshing, setIsStatisticsRefreshing] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [isHistoryRefreshing, setIsHistoryRefreshing] = useState(false);
   const [isDuplicateGroupsLoading, setIsDuplicateGroupsLoading] = useState(true);
   const [isFilesLoading, setIsFilesLoading] = useState(true);
   const [isFilesRefreshing, setIsFilesRefreshing] = useState(false);
@@ -1772,6 +1771,7 @@ export function LibraryDetailPage() {
         hideQualityScoreMeter,
         activeLibraryType,
         inDepthDolbyVisionProfiles,
+        analyzedFileNameSource,
       );
       // Filter columns by library type
       if (activeLibraryType) {
@@ -1796,6 +1796,7 @@ export function LibraryDetailPage() {
       t,
       tooltipEnabledColumns,
       activeLibraryType,
+      analyzedFileNameSource,
       showMusicQualityScore,
     ],
   );
@@ -1937,9 +1938,13 @@ export function LibraryDetailPage() {
   const orderedMetadataFieldDefinitions = useMemo(
     () =>
       LIBRARY_METADATA_SEARCH_FIELDS
-        .filter((field) => !activeLibraryType || shouldShowField(field, activeLibraryType))
+        .filter((field) =>
+          field === "jellyfin_name"
+            ? Boolean(linkedJellyfinLibrary)
+            : !activeLibraryType || shouldShowField(field, activeLibraryType),
+        )
         .map((id) => ({ id })),
-    [activeLibraryType],
+    [activeLibraryType, linkedJellyfinLibrary],
   );
   const orderedSelectedMetadataFields = useMemo(
     () =>
@@ -2253,7 +2258,10 @@ export function LibraryDetailPage() {
 
     if (showLoading) {
       setIsStatisticsLoading(true);
+    } else {
+      setIsStatisticsRefreshing(true);
     }
+    setStatisticsError(null);
 
     try {
       const payload = await api.libraryStatistics(libraryId, controller.signal, visibleLibraryStatisticPanelIds);
@@ -2270,9 +2278,11 @@ export function LibraryDetailPage() {
     } finally {
       if (statisticsAbortRef.current === controller) {
         statisticsAbortRef.current = null;
-      }
-      if (showLoading) {
-        setIsStatisticsLoading(false);
+        if (showLoading) {
+          setIsStatisticsLoading(false);
+        } else {
+          setIsStatisticsRefreshing(false);
+        }
       }
     }
   });
@@ -2284,7 +2294,10 @@ export function LibraryDetailPage() {
 
     if (showLoading) {
       setIsHistoryLoading(true);
+    } else {
+      setIsHistoryRefreshing(true);
     }
+    setHistoryError(null);
 
     try {
       const payload = await api.libraryHistory(libraryId, controller.signal);
@@ -2300,9 +2313,11 @@ export function LibraryDetailPage() {
     } finally {
       if (historyAbortRef.current === controller) {
         historyAbortRef.current = null;
-      }
-      if (showLoading) {
-        setIsHistoryLoading(false);
+        if (showLoading) {
+          setIsHistoryLoading(false);
+        } else {
+          setIsHistoryRefreshing(false);
+        }
       }
     }
   });
@@ -2676,6 +2691,7 @@ export function LibraryDetailPage() {
   useEffect(() => {
     const controller = new AbortController();
     setLinkedJellyfinLibrary(null);
+    setAnalyzedFileNameSource("file");
     api.jellyfinLibraries()
       .then((items) => {
         const linked = items.find((item) => String(item.linked_library_id) === libraryId) ?? null;
@@ -2896,8 +2912,6 @@ export function LibraryDetailPage() {
       libraryHistoryCache.get(libraryId) ??
       readLibrarySessionCache<LibraryHistoryResponse>("history", libraryId) ??
       null;
-    const duplicateGroupsCacheKey = buildDuplicateGroupsCacheKey(libraryId, includeSuppressedDuplicateGroups);
-    const cachedDuplicateGroups = libraryDuplicateGroupsCache.get(duplicateGroupsCacheKey) ?? null;
 
     setComparisonByPanel({});
     setComparisonErrorByPanel({});
@@ -2910,16 +2924,22 @@ export function LibraryDetailPage() {
     setSeriesDetailErrorById({});
     setExpandedGroupedSeriesIds({});
     setExpandedGroupedSeasonKeys({});
-    setDuplicateGroups(cachedDuplicateGroups);
     setSummaryError(null);
     setHistoryError(null);
-    setDuplicateGroupsError(null);
     setIsSummaryLoading(cachedSummary === null);
     setIsHistoryLoading(cachedHistory === null);
-    setIsDuplicateGroupsLoading(cachedDuplicateGroups === null);
+    setIsHistoryRefreshing(false);
 
     void loadLibrarySummary(cachedSummary === null);
     void loadLibraryHistory(cachedHistory === null);
+  }, [libraryId]);
+
+  useEffect(() => {
+    const duplicateGroupsCacheKey = buildDuplicateGroupsCacheKey(libraryId, includeSuppressedDuplicateGroups);
+    const cachedDuplicateGroups = libraryDuplicateGroupsCache.get(duplicateGroupsCacheKey) ?? null;
+    setDuplicateGroups(cachedDuplicateGroups);
+    setDuplicateGroupsError(null);
+    setIsDuplicateGroupsLoading(cachedDuplicateGroups === null);
     void loadDuplicateGroups(cachedDuplicateGroups === null);
   }, [includeSuppressedDuplicateGroups, libraryId]);
 
@@ -2933,6 +2953,7 @@ export function LibraryDetailPage() {
     setLibraryStatistics(cachedStatistics);
     setStatisticsError(null);
     setIsStatisticsLoading(cachedStatistics === null);
+    setIsStatisticsRefreshing(false);
     void loadLibraryStatistics(cachedStatistics === null);
   }, [libraryId, visibleLibraryStatisticPanelIdsKey]);
 
@@ -3017,7 +3038,11 @@ export function LibraryDetailPage() {
 
       setComparisonErrorByPanel((current) => ({ ...current, [item.instanceId]: null }));
       setComparisonByPanel((current) =>
-        current[item.instanceId] === cachedComparison ? current : { ...current, [item.instanceId]: cachedComparison },
+        cachedComparison === null && force
+          ? current
+          : current[item.instanceId] === cachedComparison
+            ? current
+            : { ...current, [item.instanceId]: cachedComparison },
       );
       setComparisonLoadingByPanel((current) => ({
         ...current,
@@ -3051,8 +3076,8 @@ export function LibraryDetailPage() {
         .finally(() => {
           if (comparisonAbortRef.current.get(item.instanceId) === controller) {
             comparisonAbortRef.current.delete(item.instanceId);
+            setComparisonLoadingByPanel((current) => ({ ...current, [item.instanceId]: false }));
           }
-          setComparisonLoadingByPanel((current) => ({ ...current, [item.instanceId]: false }));
         });
     }
   });
@@ -3198,12 +3223,6 @@ export function LibraryDetailPage() {
 
   useEffect(() => {
     if (hadActiveJobRef.current && !activeJob) {
-      librarySummaryCache.delete(libraryId);
-      libraryStatisticsCache.delete(buildLibraryStatisticsCacheKey(libraryId, visibleLibraryStatisticPanelIds));
-      libraryHistoryCache.delete(libraryId);
-      deleteLibrarySessionCache("summary", libraryId);
-      deleteLibrarySessionCache("statistics", buildLibraryStatisticsCacheKey(libraryId, visibleLibraryStatisticPanelIds));
-      deleteLibrarySessionCache("history", libraryId);
       for (const { item } of comparisonPanels) {
         const selection = normalizeComparisonSelectionForLibraryType(
           item.comparisonSelection ?? getComparisonSelection("library"),
@@ -3602,10 +3621,24 @@ export function LibraryDetailPage() {
                   availableFields={availableComparisonFields}
                   resizeToken={`${panel.item.width}:${panel.item.height}`}
                   loading={
-                    Boolean(comparisonLoadingByPanel[panel.item.instanceId]) ||
-                    (!comparisonByPanel[panel.item.instanceId] && !comparisonErrorByPanel[panel.item.instanceId])
+                    !comparisonByPanel[panel.item.instanceId] &&
+                    (Boolean(comparisonLoadingByPanel[panel.item.instanceId]) ||
+                      !comparisonErrorByPanel[panel.item.instanceId])
                   }
-                  error={comparisonErrorByPanel[panel.item.instanceId] ?? null}
+                  refreshing={
+                    Boolean(comparisonByPanel[panel.item.instanceId]) &&
+                    Boolean(comparisonLoadingByPanel[panel.item.instanceId])
+                  }
+                  refreshError={
+                    comparisonByPanel[panel.item.instanceId]
+                      ? comparisonErrorByPanel[panel.item.instanceId] ?? null
+                      : null
+                  }
+                  error={
+                    !comparisonByPanel[panel.item.instanceId]
+                      ? comparisonErrorByPanel[panel.item.instanceId] ?? null
+                      : null
+                  }
                   onChangeXField={(xField) =>
                     updateComparisonSelection(panel.item.instanceId, { ...selection, xField })
                   }
@@ -3647,7 +3680,9 @@ export function LibraryDetailPage() {
                   metricId={metricId}
                   resizeToken={`${panel.item.width}:${panel.item.height}`}
                   loading={isStatisticsLoading && !libraryStatistics && !statisticsError}
-                  error={statisticsError}
+                  refreshing={isStatisticsRefreshing && Boolean(libraryStatistics)}
+                  refreshError={libraryStatistics ? statisticsError : null}
+                  error={!libraryStatistics ? statisticsError : null}
                   interactive={!statisticsError && !libraryStatistics ? false : true}
                   onSelectBin={
                     statisticsError || !libraryStatistics
@@ -3707,7 +3742,9 @@ export function LibraryDetailPage() {
                 <AsyncPanel
                   title={panelTitle}
                   loading={isStatisticsLoading && !libraryStatistics && !statisticsError}
-                  error={statisticsError}
+                  refreshing={isStatisticsRefreshing && Boolean(libraryStatistics)}
+                  refreshError={libraryStatistics ? statisticsError : null}
+                  error={!libraryStatistics ? statisticsError : null}
                   bodyClassName="async-panel-body-scroll"
                 >
                   <DistributionList items={formattedItems} maxVisibleRows={5} scrollable />
@@ -3717,8 +3754,14 @@ export function LibraryDetailPage() {
               content = (
                 <LibraryHistoryPanel
                   history={libraryHistory}
-                  loading={isHistoryLoading && !libraryHistory && !historyError}
-                  error={historyError}
+                  loading={
+                    !historyError &&
+                    ((isHistoryLoading && !libraryHistory) ||
+                      (isHistoryRefreshing && (libraryHistory?.points.length ?? 0) === 0))
+                  }
+                  refreshing={isHistoryRefreshing && Boolean(libraryHistory?.points.length)}
+                  refreshError={libraryHistory ? historyError : null}
+                  error={!libraryHistory ? historyError : null}
                   selectedMetric={selectedHistoryMetric}
                   onChangeMetric={setSelectedHistoryMetric}
                   collapsed={isHistoryPanelCollapsed}
@@ -3963,6 +4006,48 @@ export function LibraryDetailPage() {
                   bodyClassName="async-panel-body-scroll"
                   titleAddon={
                     <div className="analyzed-files-title-addon">
+                      {!isEditingTableView && linkedJellyfinLibrary ? (
+                        <div
+                          className="distribution-chart-mode-toggle analyzed-file-name-source-toggle"
+                          role="group"
+                          aria-label={t("libraryDetail.fileNameSource.label")}
+                        >
+                          <SlidingTogglePill
+                            activeKey={analyzedFileNameSource}
+                            className="nav-active-pill distribution-chart-mode-pill"
+                          />
+                          <button
+                            type="button"
+                            data-toggle-key="file"
+                            className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                              analyzedFileNameSource === "file" ? " active" : ""
+                            }`}
+                            aria-label={t("libraryDetail.fileNameSource.file")}
+                            title={t("libraryDetail.fileNameSource.file")}
+                            aria-pressed={analyzedFileNameSource === "file"}
+                            onClick={() => setAnalyzedFileNameSource("file")}
+                          >
+                            <span className="distribution-chart-mode-button-content">
+                              <FileText aria-hidden="true" className="distribution-chart-mode-icon" />
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            data-toggle-key="jellyfin"
+                            className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                              analyzedFileNameSource === "jellyfin" ? " active" : ""
+                            }`}
+                            aria-label={t("libraryDetail.fileNameSource.jellyfin")}
+                            title={t("libraryDetail.fileNameSource.jellyfin")}
+                            aria-pressed={analyzedFileNameSource === "jellyfin"}
+                            onClick={() => setAnalyzedFileNameSource("jellyfin")}
+                          >
+                            <span className="distribution-chart-mode-button-content">
+                              <JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" />
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
                       <StatisticPanelLayoutControls
                         availableDefinitions={[]}
                         isEditing={isEditingTableView}

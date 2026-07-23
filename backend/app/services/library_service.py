@@ -628,8 +628,11 @@ def get_library_statistics(
     db: Session,
     library_id: int,
     requested_panels: Iterable[str] | None = None,
+    *,
+    _coalesced: bool = False,
 ) -> LibraryStatistics | None:
     panel_filter = set(requested_panels) if requested_panels is not None else None
+    panel_key = tuple(sorted(panel_filter)) if panel_filter is not None else None
     cache_key = str(id(db.get_bind()))
 
     library = db.get(Library, library_id)
@@ -641,13 +644,33 @@ def get_library_statistics(
         if library.type in {"music", "audiobooks"}
         else _AUDIOBOOK_PANEL_IDS
     )
-    cached = stats_cache.get_library_statistics(cache_key, library_id)
-    if cached is not None:
-        return _statistics_panel_view(cached, panel_filter, hidden_panel_ids)
+    if not _coalesced:
+        cached = stats_cache.get_library_statistics(cache_key, library_id, panel_key)
+        if cached is not None:
+            return cached
+        if panel_key is not None:
+            complete = stats_cache.get_library_statistics(cache_key, library_id)
+            if complete is not None:
+                return _statistics_panel_view(complete, panel_filter, hidden_panel_ids)
+        return stats_cache.get_or_compute_library_statistics(
+            cache_key,
+            library_id,
+            panel_key,
+            lambda: get_library_statistics(
+                db,
+                library_id,
+                panel_filter,
+                _coalesced=True,
+            ),
+        )
+
+    visible_requested_panels = set(_DISTRIBUTION_FIELD_BY_PANEL) | set(_NUMERIC_PANEL_METRIC_IDS)
+    if panel_filter is not None:
+        visible_requested_panels &= panel_filter
+    visible_requested_panels -= hidden_panel_ids
 
     def wants(panel_id: str) -> bool:
-        del panel_id
-        return True
+        return panel_id in visible_requested_panels
 
     app_settings = load_app_settings(db)
     primary_video_streams = (
@@ -966,7 +989,11 @@ def get_library_statistics(
     numeric_distributions = build_numeric_distributions(
         db,
         library_id=library_id,
-        metric_ids=None,
+        metric_ids={
+            metric_id
+            for panel_id, metric_id in _NUMERIC_PANEL_METRIC_IDS.items()
+            if panel_id in visible_requested_panels
+        },
     )
 
     payload = LibraryStatistics(
@@ -1036,5 +1063,4 @@ def get_library_statistics(
         subtitle_source_distribution=subtitle_source_distribution,
         numeric_distributions=numeric_distributions,
     )
-    stats_cache.set_library_statistics(cache_key, library_id, payload)
     return _statistics_panel_view(payload, panel_filter, hidden_panel_ids)
