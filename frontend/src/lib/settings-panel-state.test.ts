@@ -16,7 +16,6 @@ describe("settings panel URL state", () => {
     expect(settingsPanelFromSection("pattern-recognition")).toBe("patternRecognition");
     expect(settingsPanelFromSection("history-retention")).toBe("historyRetention");
     expect(settingsPanelFromSection("scan-logs")).toBe("recentScanLogs");
-    expect(settingsPanelFromSection("telemetry")).toBe("telemetry");
   });
 
   it("keeps legacy internal ids readable and emits canonical slugs", () => {

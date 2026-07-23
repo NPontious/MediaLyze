@@ -101,7 +101,7 @@ jobs:
             previous_version="$(
               git show "${previous_ref}:Dockerfile" 2>/dev/null \
                 | sed -n 's/^ARG APP_VERSION=//p' \
-                | tail -n 1
+                | tail -n 1 || true
             )"
           fi
 

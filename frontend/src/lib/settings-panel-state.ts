@@ -34,7 +34,6 @@ export const SETTINGS_PANEL_SLUGS: Record<SettingsPanelId, string> = {
   patternRecognition: "pattern-recognition",
   historyRetention: "history-retention",
   recentScanLogs: "scan-logs",
-  telemetry: "telemetry",
 };
 
 const SETTINGS_PANEL_BY_SLUG = new Map(
