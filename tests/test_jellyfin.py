@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Barrier, Lock
 import tempfile
 from types import SimpleNamespace
+import zlib
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
 os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="medialyze-media-"))
@@ -347,6 +348,33 @@ def test_client_checks_cancellation_while_reading_response() -> None:
         client.get_system_info()
 
     assert chunks_read == 2
+
+
+def test_client_does_not_decompress_streamed_deflate_response_twice() -> None:
+    payload = zlib.compress(b'{"ServerName":"Compressed Jellyfin"}')
+
+    class CompressedResponseStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield payload[:8]
+            yield payload[8:]
+
+    client = JellyfinClient(
+        "http://jellyfin:8096",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                headers={
+                    "Content-Encoding": "deflate",
+                    "Content-Length": str(len(payload)),
+                    "Content-Type": "application/json",
+                },
+                stream=CompressedResponseStream(),
+            )
+        ),
+    )
+
+    assert client.get_system_info()["ServerName"] == "Compressed Jellyfin"
 
 
 def test_client_rejects_cross_origin_redirect_without_forwarding_key() -> None:

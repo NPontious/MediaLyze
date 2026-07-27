@@ -139,9 +139,15 @@ class JellyfinClient:
                 self._check_cancelled()
                 content.extend(chunk)
             self._check_cancelled()
+            # iter_bytes() has already decoded gzip/deflate/brotli content. Do not
+            # carry the wire-level encoding metadata onto the buffered response,
+            # otherwise httpx attempts to decode the JSON body a second time.
+            decoded_headers = httpx.Headers(response.headers)
+            for header in ("content-encoding", "content-length", "transfer-encoding"):
+                decoded_headers.pop(header, None)
             return httpx.Response(
                 response.status_code,
-                headers=response.headers,
+                headers=decoded_headers,
                 content=bytes(content),
                 request=response.request,
                 extensions=response.extensions,
