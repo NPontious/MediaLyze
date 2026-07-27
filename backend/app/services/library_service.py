@@ -13,6 +13,7 @@ from backend.app.core.config import Settings
 from backend.app.models.entities import (
     AudioStream,
     ExternalSubtitle,
+    JellyfinLibrary,
     Library,
     LibraryRoot,
     MediaChapter,
@@ -23,7 +24,14 @@ from backend.app.models.entities import (
     SubtitleStream,
     VideoStream,
 )
-from backend.app.schemas.library import LibraryCreate, LibraryRootRead, LibraryStatistics, LibrarySummary, LibraryUpdate
+from backend.app.schemas.library import (
+    LibraryCreate,
+    LibraryRootRead,
+    LibraryStatistics,
+    LibrarySummary,
+    LibraryUpdate,
+    LinkedJellyfinLibraryRead,
+)
 from backend.app.schemas.media import DistributionItem
 from backend.app.schemas.quality import QualityProfile
 from backend.app.services.app_settings import get_app_settings as load_app_settings
@@ -161,6 +169,7 @@ def _library_summary_from_model(
     library: Library,
     aggregate: dict[str, int | float] | None = None,
     resolution_categories=None,
+    linked_jellyfin_library: JellyfinLibrary | None = None,
 ) -> LibrarySummary:
     app_resolution_categories = resolution_categories or load_app_settings(db).resolution_categories
     summary = LibrarySummary.model_validate(library)
@@ -178,6 +187,12 @@ def _library_summary_from_model(
     )
     for key, value in (aggregate or {}).items():
         setattr(summary, key, value)
+    if linked_jellyfin_library is not None:
+        summary.linked_jellyfin_library = LinkedJellyfinLibraryRead(
+            id=linked_jellyfin_library.id,
+            name=linked_jellyfin_library.name,
+            last_synced_at=linked_jellyfin_library.last_synced_at,
+        )
     return summary
 
 
@@ -599,8 +614,20 @@ def list_libraries(db: Session) -> list[LibrarySummary]:
     app_settings = load_app_settings(db)
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
     aggregates = _library_aggregate_map(db)
+    jellyfin_libraries_by_library_id = {
+        jellyfin_library.linked_library_id: jellyfin_library
+        for jellyfin_library in db.scalars(
+            select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id.is_not(None))
+        )
+    }
     result = [
-        _library_summary_from_model(db, library, aggregates.get(library.id), app_settings.resolution_categories)
+        _library_summary_from_model(
+            db,
+            library,
+            aggregates.get(library.id),
+            app_settings.resolution_categories,
+            jellyfin_libraries_by_library_id.get(library.id),
+        )
         for library in libraries
     ]
     stats_cache.set_libraries(cache_key, result)
@@ -619,7 +646,16 @@ def get_library_summary(db: Session, library_id: int) -> LibrarySummary | None:
 
     app_settings = load_app_settings(db)
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
-    payload = _library_summary_from_model(db, library, _library_aggregate(db, library_id), app_settings.resolution_categories)
+    linked_jellyfin_library = db.scalar(
+        select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id == library_id)
+    )
+    payload = _library_summary_from_model(
+        db,
+        library,
+        _library_aggregate(db, library_id),
+        app_settings.resolution_categories,
+        linked_jellyfin_library,
+    )
     stats_cache.set_library_summary(cache_key, library_id, payload)
     return payload
 

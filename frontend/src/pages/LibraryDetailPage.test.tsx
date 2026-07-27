@@ -618,11 +618,19 @@ describe("LibraryDetailPage", () => {
   it("switches the analyzed-file name source without exposing Jellyfin playback metadata", async () => {
     const libraryId = 100;
     mockAppSettings();
-    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, { name: "Movies" }));
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
+      name: "Movies",
+      linked_jellyfin_library: {
+        id: 7,
+        name: "Movies",
+        last_synced_at: "2026-07-17T10:00:00Z",
+      },
+    }));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
     const filesPage = createFilesPage(libraryId);
     filesPage.items[0] = {
       ...filesPage.items[0],
+      root_name: "Jellyfin Library",
       jellyfin_title: "Catalog episode title",
       jellyfin_production_year: 2024,
       jellyfin_play_count: 4,
@@ -643,6 +651,28 @@ describe("LibraryDetailPage", () => {
       item_count: 2,
       last_synced_at: "2026-07-17T10:00:00Z",
     }]);
+    const scanJob = {
+      id: 81,
+      library_id: libraryId,
+      library_name: "Movies",
+      status: "queued",
+      job_type: "incremental",
+      files_total: 0,
+      files_scanned: 0,
+      errors: 0,
+      started_at: null,
+      finished_at: null,
+      progress_percent: 0,
+      phase_label: "Queued",
+      phase_detail: null,
+    };
+    const scanLibrarySpy = vi.spyOn(api, "scanLibrary").mockResolvedValue(scanJob);
+    const syncJellyfinSpy = vi.spyOn(api, "syncJellyfin").mockResolvedValue({
+      job_id: 91,
+      status: "queued",
+      trigger_source: "manual",
+      accepted: true,
+    });
     const jellyfinOverviewSpy = vi.spyOn(api, "jellyfinLibraryOverview").mockResolvedValue({
       library: (await api.jellyfinLibraries())[0],
       item_count: 2,
@@ -678,12 +708,59 @@ describe("LibraryDetailPage", () => {
     expect(screen.queryByText("2024")).not.toBeInTheDocument();
     expect(screen.queryByText("Plays: 4")).not.toBeInTheDocument();
     expect(screen.queryByText("Jellyfin metadata only")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin Library")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick scan" }));
+    await waitFor(() => expect(scanLibrarySpy).toHaveBeenCalledWith(libraryId, "incremental"));
+    expect(syncJellyfinSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not synchronize Jellyfin when Quickscan runs for an unlinked library", async () => {
+    const libraryId = 98;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    const scanLibrarySpy = vi.spyOn(api, "scanLibrary").mockResolvedValue({
+      id: 82,
+      library_id: libraryId,
+      library_name: `Series ${libraryId}`,
+      status: "queued",
+      job_type: "incremental",
+      files_total: 0,
+      files_scanned: 0,
+      errors: 0,
+      started_at: null,
+      finished_at: null,
+      progress_percent: 0,
+      phase_label: "Queued",
+      phase_detail: null,
+    });
+    const syncJellyfinSpy = vi.spyOn(api, "syncJellyfin").mockResolvedValue({
+      job_id: 92,
+      status: "queued",
+      trigger_source: "manual",
+      accepted: true,
+    });
+
+    renderPage(libraryId);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Quick scan" }));
+    await waitFor(() => expect(scanLibrarySpy).toHaveBeenCalledWith(libraryId, "incremental"));
+    expect(syncJellyfinSpy).not.toHaveBeenCalled();
   });
 
   it("offers Jellyfin-name search only for linked libraries", async () => {
     const libraryId = 99;
     mockAppSettings();
-    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, { name: "Movies" }));
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
+      name: "Movies",
+      linked_jellyfin_library: {
+        id: 7,
+        name: "Movies",
+        last_synced_at: "2026-07-17T10:00:00Z",
+      },
+    }));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
     const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
     vi.mocked(api.jellyfinLibraries).mockResolvedValue([{
@@ -737,6 +814,50 @@ describe("LibraryDetailPage", () => {
     expect(libraryComparisonSpy).toHaveBeenCalled();
     expect(libraryDuplicatesSpy).toHaveBeenCalled();
     expect(libraryFilesSpy).toHaveBeenCalled();
+  });
+
+  it("keeps the analyzed-files loader visible when an obsolete request is aborted", async () => {
+    const libraryId = 102;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    let resolveCurrentRequest: ((payload: MediaFileTablePage) => void) | null = null;
+    const currentRequest = new Promise<MediaFileTablePage>((resolve) => {
+      resolveCurrentRequest = resolve;
+    });
+    let requestCount = 0;
+    vi.spyOn(api, "libraryFiles").mockImplementation((_id, options) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Promise<MediaFileTablePage>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }
+      return currentRequest;
+    });
+
+    renderPage(libraryId);
+
+    await waitFor(() => expect(requestCount).toBe(1));
+    fireEvent.change(screen.getByPlaceholderText("Search file and path"), {
+      target: { value: "new filter" },
+    });
+    await waitFor(() => expect(requestCount).toBeGreaterThanOrEqual(2));
+    expect(screen.getByText("Loading analyzed files…")).toBeInTheDocument();
+    expect(screen.queryByText("No analyzed files yet.")).not.toBeInTheDocument();
+
+    resolveCurrentRequest!({
+      total: 0,
+      offset: 0,
+      limit: 200,
+      next_cursor: null,
+      has_more: false,
+      items: [],
+    });
+
+    expect(await screen.findByText("No analyzed files yet.")).toBeInTheDocument();
   });
 
   it("groups recognized series and seasons inside analyzed files without showing a series/files switch", async () => {

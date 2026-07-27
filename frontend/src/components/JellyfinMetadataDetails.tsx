@@ -1,4 +1,4 @@
-import { CheckCircle2, ImageIcon, Server } from "lucide-react";
+import { ImageIcon, Server } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { api, type JellyfinFileOverlay, type JellyfinItem, type JellyfinItemDetail } from "../lib/api";
@@ -84,22 +84,13 @@ export function JellyfinOverviewDetails({
 
 export function JellyfinStreamingDetails({
   userData,
-  matchMethod,
-  onRejectMatch,
   t,
 }: {
   userData: UserData;
-  matchMethod?: string | null;
-  onRejectMatch?: () => void;
   t: Translate;
 }): ReactNode {
   return (
     <div className="jellyfin-file-panel jellyfin-streaming-panel">
-      {matchMethod ? (
-        <span className="jellyfin-status-badge status-matched">
-          <CheckCircle2 aria-hidden="true" />{t("jellyfin.matchedBy", { method: matchMethod })}
-        </span>
-      ) : null}
       {userData.length ? (
         <div className="jellyfin-playback-list">
           {userData.map((user) => (
@@ -115,9 +106,6 @@ export function JellyfinStreamingDetails({
           ))}
         </div>
       ) : <div className="notice">{t("jellyfin.noPlaybackData")}</div>}
-      {onRejectMatch ? (
-        <button type="button" className="secondary small danger" onClick={onRejectMatch}>{t("jellyfin.wrongMatch")}</button>
-      ) : null}
     </div>
   );
 }

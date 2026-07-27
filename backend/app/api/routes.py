@@ -181,6 +181,7 @@ from backend.app.services.scan_jobs import (
 )
 from backend.app.services.stat_comparisons import get_dashboard_comparison, get_library_comparison
 from backend.app.services.stats import build_dashboard
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.telemetry import build_telemetry_payload, send_current_telemetry_snapshot
 from backend.app.services.update_status import get_or_check_update_status
 
@@ -986,6 +987,7 @@ def jellyfin_library_link_update(
     else:
         source.mapped_status = "updating"
     db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
     runtime.request_jellyfin_match_recompute()
     db.refresh(source)
     return get_jellyfin_library_read(db, source)
@@ -1112,6 +1114,7 @@ def jellyfin_library_create_medialyze(
     source.link_method = "manual"
     source.mapped_status = "linked"
     db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
     runtime.sync_library(library.id)
     result = get_library_summary(db, library.id)
     if result is None:

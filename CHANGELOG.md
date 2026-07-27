@@ -13,11 +13,17 @@ All notable changes to this project will be documented in this file.
 * Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links.
 * Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle.
 * Fetch enabled Jellyfin users' playback data with bounded concurrency while keeping SQLite staging writes serialized.
+* Load Settings data only for the active section, cache validated hardware/software profile catalogs, and reuse profile data within the browser session.
+* Synchronize Jellyfin catalog and playback data when Quickscan is started for a Jellyfin-linked MediaLyze library.
+* Simplify the file-detail Streaming panel by removing the local match-method badge and wrong-match action.
 
 ### 🐛 Fixed
 
 * Keep cached dashboard and library statistics visible during post-scan refreshes, show loading and empty states accurately, and avoid redundant full-statistic rebuilds for panels that are not visible.
 * Keep Jellyfin synchronization cancellation responsive while large HTTP responses are still being received so the Settings page unlocks when the job stops.
+* Include Jellyfin associations in library summaries so linked-library indicators render immediately, remove redundant Jellyfin root labels from analyzed-file rows, and keep the loading state visible until the active file request completes.
+* Open every file detail view on Overview instead of carrying the previously selected subsection across files.
+* Keep protected quality-profile controls and hardware/software profile lists aligned with MediaLyze's warm dark-mode palette instead of rendering them as light gray surfaces.
 
 ### 🔒 Security
 

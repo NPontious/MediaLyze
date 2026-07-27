@@ -1344,6 +1344,9 @@ def test_jellyfin_library_link_can_be_changed_and_unlinked(db: Session, tmp_path
     assert linked.status_code == 200
     assert linked.json()["linked_library_id"] == first_media.library_id
     assert linked.json()["link_method"] == "manual"
+    linked_summary = client.get(f"/api/libraries/{first_media.library_id}/summary").json()
+    assert linked_summary["linked_jellyfin_library"]["id"] == first_remote.id
+    assert linked_summary["linked_jellyfin_library"]["name"] == "Movies remote"
 
     reassigned = client.patch(
         f"/api/jellyfin/libraries/{second_remote.id}/link",
@@ -1353,6 +1356,8 @@ def test_jellyfin_library_link_can_be_changed_and_unlinked(db: Session, tmp_path
     db.refresh(first_remote)
     assert first_remote.linked_library_id is None
     assert first_remote.link_method == "manual"
+    reassigned_summary = client.get(f"/api/libraries/{first_media.library_id}/summary").json()
+    assert reassigned_summary["linked_jellyfin_library"]["id"] == second_remote.id
 
     unlinked = client.patch(
         f"/api/jellyfin/libraries/{second_remote.id}/link",
@@ -1360,6 +1365,8 @@ def test_jellyfin_library_link_can_be_changed_and_unlinked(db: Session, tmp_path
     )
     assert unlinked.status_code == 200
     assert unlinked.json()["linked_library_id"] is None
+    unlinked_summary = client.get(f"/api/libraries/{first_media.library_id}/summary").json()
+    assert unlinked_summary["linked_jellyfin_library"] is None
     assert client.patch(
         f"/api/jellyfin/libraries/{second_remote.id}/link",
         json={"linked_library_id": second.id + 1000},

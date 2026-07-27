@@ -60,7 +60,6 @@ import {
   type GroupedMediaTablePage,
   type GroupedSeriesTableRow,
   type LibraryHistoryResponse,
-  type JellyfinLibrary,
   type LibraryStatistics,
   type LibrarySummary,
   type MediaFileQualityScoreDetail,
@@ -811,6 +810,7 @@ export function buildFileColumns(
   libraryType?: string | null,
   inDepthDolbyVisionProfiles = false,
   fileNameSource: AnalyzedFileNameSource = "file",
+  hideRootName = false,
 ): FileColumnDefinition[] {
   const audioCodecsLabelKey =
     libraryType === "music" || libraryType === "audiobooks" ? "fileTable.formatsAndCodecs" : "fileTable.audioCodecs";
@@ -885,7 +885,9 @@ export function buildFileColumns(
               <Link to={`/files/${row.id}`} className="file-link">
                 {fileNameSource === "jellyfin" ? (row.jellyfin_title ?? row.filename) : row.filename}
               </Link>
-              {row.root_name ? <span className="media-tree-subtitle">{row.root_name}</span> : null}
+              {row.root_name && !hideRootName ? (
+                <span className="media-tree-subtitle">{row.root_name}</span>
+              ) : null}
             </span>
           </div>
         ),
@@ -1580,7 +1582,6 @@ export function LibraryDetailPage() {
   const [libraryStatistics, setLibraryStatistics] = useState<LibraryStatistics | null>(null);
   const [knownHasVideoMetadata, setKnownHasVideoMetadata] = useState<boolean | undefined>(undefined);
   const [libraryHistory, setLibraryHistory] = useState<LibraryHistoryResponse | null>(null);
-  const [linkedJellyfinLibrary, setLinkedJellyfinLibrary] = useState<JellyfinLibrary | null>(null);
   const [analyzedFileNameSource, setAnalyzedFileNameSource] = useState<AnalyzedFileNameSource>("file");
   const [expandedGroupedSeriesIds, setExpandedGroupedSeriesIds] = useState<Record<number, boolean>>({});
   const [expandedGroupedSeasonKeys, setExpandedGroupedSeasonKeys] = useState<Record<string, boolean>>({});
@@ -1683,6 +1684,7 @@ export function LibraryDetailPage() {
   const hadActiveJobRef = useRef(Boolean(activeJob));
   const fallbackSummary = findLibrarySummary(libraries, libraryId);
   const displayLibrary = librarySummary ?? fallbackSummary;
+  const linkedJellyfinLibrary = displayLibrary?.linked_jellyfin_library ?? null;
   const activeLibraryType = displayLibrary?.type;
   const showMusicQualityScore = appSettings.feature_flags.show_music_quality_score;
   const hasVideoMetadata =
@@ -1740,8 +1742,19 @@ export function LibraryDetailPage() {
     setIsQuickScanStarting(true);
     setQuickScanError(null);
     try {
-      const job = await api.scanLibrary(displayLibrary.id, "incremental");
-      trackJob(job);
+      const [scanResult, jellyfinResult] = await Promise.allSettled([
+        api.scanLibrary(displayLibrary.id, "incremental"),
+        linkedJellyfinLibrary ? api.syncJellyfin() : Promise.resolve(null),
+      ] as const);
+      if (scanResult.status === "fulfilled") {
+        trackJob(scanResult.value);
+      }
+      const failures = [scanResult, jellyfinResult]
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+      if (failures.length > 0) {
+        throw new Error(failures.join(" · "));
+      }
     } catch (reason) {
       setQuickScanError((reason as Error).message);
     } finally {
@@ -1772,6 +1785,7 @@ export function LibraryDetailPage() {
         activeLibraryType,
         inDepthDolbyVisionProfiles,
         analyzedFileNameSource,
+        Boolean(linkedJellyfinLibrary),
       );
       // Filter columns by library type
       if (activeLibraryType) {
@@ -1797,6 +1811,7 @@ export function LibraryDetailPage() {
       tooltipEnabledColumns,
       activeLibraryType,
       analyzedFileNameSource,
+      linkedJellyfinLibrary,
       showMusicQualityScore,
     ],
   );
@@ -2490,12 +2505,13 @@ export function LibraryDetailPage() {
       }
     } finally {
       inflightRequestGateRef.current.end(requestKey);
-      if (filesAbortRef.current === controller) {
+      const isActiveRequest = filesAbortRef.current === controller;
+      if (isActiveRequest) {
         filesAbortRef.current = null;
       }
       if (append) {
         setIsLoadingMore(false);
-      } else {
+      } else if (isActiveRequest) {
         setIsFilesLoading(false);
         setIsFilesRefreshing(false);
       }
@@ -2576,12 +2592,13 @@ export function LibraryDetailPage() {
       }
     } finally {
       inflightRequestGateRef.current.end(requestKey);
-      if (filesAbortRef.current === controller) {
+      const isActiveRequest = filesAbortRef.current === controller;
+      if (isActiveRequest) {
         filesAbortRef.current = null;
       }
       if (append) {
         setIsLoadingMore(false);
-      } else {
+      } else if (isActiveRequest) {
         setIsFilesLoading(false);
         setIsFilesRefreshing(false);
       }
@@ -2689,21 +2706,7 @@ export function LibraryDetailPage() {
   }, [fileQueryKey]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    setLinkedJellyfinLibrary(null);
     setAnalyzedFileNameSource("file");
-    api.jellyfinLibraries()
-      .then((items) => {
-        const linked = items.find((item) => String(item.linked_library_id) === libraryId) ?? null;
-        if (controller.signal.aborted) return;
-        setLinkedJellyfinLibrary(linked);
-      })
-      .catch((reason: Error) => {
-        if (reason.name !== "AbortError") {
-          setLinkedJellyfinLibrary(null);
-        }
-      });
-    return () => controller.abort();
   }, [libraryId]);
 
   useEffect(() => {
@@ -2903,11 +2906,15 @@ export function LibraryDetailPage() {
   }, [libraryStatistics]);
 
   useEffect(() => {
-    const cachedSummary =
+    const storedSummary =
       librarySummaryCache.get(libraryId) ??
       readLibrarySessionCache<LibrarySummary>("summary", libraryId) ??
-      fallbackSummary ??
       null;
+    const cachedSummary =
+      storedSummary && fallbackSummary
+      && storedSummary.linked_jellyfin_library?.id !== fallbackSummary.linked_jellyfin_library?.id
+        ? { ...storedSummary, linked_jellyfin_library: fallbackSummary.linked_jellyfin_library ?? null }
+        : storedSummary ?? fallbackSummary ?? null;
     const cachedHistory =
       libraryHistoryCache.get(libraryId) ??
       readLibrarySessionCache<LibraryHistoryResponse>("history", libraryId) ??

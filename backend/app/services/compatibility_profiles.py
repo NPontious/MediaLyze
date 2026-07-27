@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import TypeVar
 
@@ -55,15 +56,22 @@ def _load_directory(path: Path, model: type[ProfileT], source: CatalogSource) ->
     return profiles
 
 
+@lru_cache(maxsize=2)
+def _load_official_profiles(kind: str) -> tuple[BaseModel, ...]:
+    return tuple(
+        _load_directory(
+            official_catalog_root() / LOCAL_DIRECTORIES[kind],
+            PROFILE_MODELS[kind],
+            CatalogSource.official,
+        )
+    )
+
+
 def list_profiles(settings: Settings, kind: str):
     model = PROFILE_MODELS[kind]
     official = []
     if kind != "compatibility":
-        official = _load_directory(
-            official_catalog_root() / LOCAL_DIRECTORIES[kind],
-            model,
-            CatalogSource.official,
-        )
+        official = list(_load_official_profiles(kind))
     local = _load_directory(
         Path(settings.config_path) / LOCAL_DIRECTORIES[kind],
         model,
@@ -142,4 +150,3 @@ def validate_compatibility_references(settings: Settings, profile: Compatibility
         raise ProfileCatalogError(f"Unknown hardware profile: {profile.hardware_profile_id}")
     if get_profile(settings, "software", profile.software_profile_id) is None:
         raise ProfileCatalogError(f"Unknown software profile: {profile.software_profile_id}")
-

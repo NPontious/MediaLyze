@@ -1204,7 +1204,7 @@ export function UiElementsPage() {
               <VariantCard title="Settings sidebar" source={`${settings} > Navigation`} classes={["settings-navigation-panel", "settings-navigation-item", "settings-navigation-quick-action"]} wide>
                 <SettingsNavigationFixture />
               </VariantCard>
-              <VariantCard title="Compatibility profile list" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-list", "compatibility-profile-list-row", "compatibility-profile-quick-actions"]} wide>
+              <VariantCard title="Compatibility profile list" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-list", "compatibility-profile-search", "compatibility-profile-list-row", "compatibility-profile-quick-actions"]} wide>
                 <div className="compatibility-profile-list">
                   <div className="compatibility-profile-search">
                     <Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" />
@@ -1578,6 +1578,15 @@ export function UiElementsPage() {
                         <button type="button" className="secondary icon-only-button statistic-layout-action-button" aria-label="Edit table view"><Settings aria-hidden="true" /></button>
                       </div>
                     </div>
+                    <div className="media-data-table" role="table">
+                      <div className="media-data-row" role="row">
+                        <div className="media-data-cell media-file-cell" role="cell">
+                          <span className="media-file-cell-copy">
+                            <span className="file-link">Arrival.2016.UHD.mkv</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </section>
                 </div>
               </VariantCard>
@@ -1630,7 +1639,7 @@ export function UiElementsPage() {
               <VariantCard title="Ignore pattern rows" source={`${settings} > Ignore patterns`} classes={["ignore-pattern-section", "ignore-pattern-row", "ignore-pattern-action-button"]} wide>
                 <IgnorePatternFixture />
               </VariantCard>
-              <VariantCard title="Quality picker and profile editor" source={`${settings} > Quality profiles`} classes={["quality-picker-field", "quality-profile-metric-item", "quality-profile-weight-input"]} wide>
+              <VariantCard title="Quality picker and profile editor" source={`${settings} > Quality profiles`} classes={["quality-picker-field", "quality-profile-picker-control", "quality-profile-metric-item", "quality-profile-weight-input"]} wide>
                 <QualityProfileFixture />
               </VariantCard>
             </VariantGroup>
@@ -1828,7 +1837,7 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Jellyfin metadata in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-cover-comparison"]} wide>
+              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-cover-comparison"]} wide>
                 <div className="file-detail-overview">
                   <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
                   <div className="file-detail-jellyfin-overview"><div className="jellyfin-overview-details"><div className="meta-tags"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div><div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Production year</span><strong className="format-details-value">2016</strong></div></div></div><p className="jellyfin-overview">Jellyfin catalog metadata is shown alongside the technical analysis.</p></div></div>

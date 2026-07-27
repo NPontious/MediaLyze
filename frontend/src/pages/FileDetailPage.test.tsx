@@ -521,6 +521,8 @@ describe("FileDetailPage", () => {
     await selectFileDetailPanel("Streaming");
     expect(screen.getByText("Frederik")).toBeInTheDocument();
     expect(screen.getByText("Played 3 times")).toBeInTheDocument();
+    expect(screen.queryByText("Matched by path")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "This match is wrong" })).not.toBeInTheDocument();
 
     await selectFileDetailPanel("Cover");
     expect(screen.getByRole("img", { name: "Jellyfin cover for Jellyfin title" })).toBeInTheDocument();
@@ -1143,7 +1145,7 @@ describe("FileDetailPage", () => {
     expect(entries[3]).toHaveTextContent("Skipped");
   });
 
-  it("falls back to overview when the stored active panel is the retired format panel", async () => {
+  it("always opens on overview even when an old active-panel preference exists", async () => {
     const file = createFileDetail();
     window.localStorage.setItem("medialyze-file-detail-active-panel", "format");
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
@@ -1155,10 +1157,10 @@ describe("FileDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Format" })).not.toBeInTheDocument();
     expect(screen.getByText("Matroska")).toBeInTheDocument();
-    await waitFor(() => expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("overview"));
+    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("format");
   });
 
-  it("persists active navigation selection across file detail pages", async () => {
+  it("starts each opened file on overview instead of carrying over navigation position", async () => {
     const file = createFileDetail();
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
@@ -1168,13 +1170,12 @@ describe("FileDetailPage", () => {
 
     await selectFileDetailPanel("Video streams");
     expect(await screen.findByRole("heading", { name: "Video streams" })).toBeInTheDocument();
-    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("videoStreams");
+    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBeNull();
 
     cleanup();
     renderPage(file.id + 1);
 
-    expect(await screen.findByRole("heading", { name: "Video streams" })).toBeInTheDocument();
-    expect(screen.getAllByText("Main 10").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
   });
 
   it("persists collapsed navigation state", async () => {
@@ -1352,7 +1353,7 @@ describe("FileDetailPage", () => {
     renderPage(file.id);
 
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
-    await waitFor(() => expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("overview"));
+    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("chapters");
     expect(screen.queryByRole("button", { name: "Chapters" })).not.toBeInTheDocument();
   });
 

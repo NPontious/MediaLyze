@@ -95,7 +95,6 @@ type FileDetailNavItem = {
   icon: typeof Info;
 };
 
-const FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY = "medialyze-file-detail-active-panel";
 const FILE_DETAIL_NAV_COLLAPSED_STORAGE_KEY = "medialyze-file-detail-sidebar-collapsed";
 const FILE_DETAIL_AUDIO_STREAM_PRIMARY_STORAGE_KEY = "medialyze-file-detail-audio-stream-primary";
 const DEFAULT_FILE_DETAIL_PANEL_ID: FileDetailPanelId = "overview";
@@ -116,24 +115,6 @@ const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "fileHistory", labelKey: "fileDetail.history.title", icon: FileClock },
   { id: "rawJson", labelKey: "fileDetail.rawJson", icon: FileJson },
 ];
-
-function isFileDetailPanelId(value: string | null): value is FileDetailPanelId {
-  return FILE_DETAIL_NAV_ITEMS.some((item) => item.id === value);
-}
-
-function readStoredFileDetailPanelId(): FileDetailPanelId {
-  if (typeof window === "undefined") {
-    return DEFAULT_FILE_DETAIL_PANEL_ID;
-  }
-  const value = window.localStorage.getItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY);
-  if (isFileDetailPanelId(value)) {
-    return value;
-  }
-  if (value !== null) {
-    window.localStorage.setItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY, DEFAULT_FILE_DETAIL_PANEL_ID);
-  }
-  return DEFAULT_FILE_DETAIL_PANEL_ID;
-}
 
 function readStoredFileDetailNavCollapsed(): boolean {
   if (typeof window === "undefined") {
@@ -1622,7 +1603,14 @@ export function FileDetailPage() {
   const [jellyfinOverlay, setJellyfinOverlay] = useState<JellyfinFileOverlay | null>(null);
   const [jellyfinError, setJellyfinError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activePanelId, setActivePanelId] = useState<FileDetailPanelId>(() => readStoredFileDetailPanelId());
+  const [activePanelState, setActivePanelState] = useState<{
+    fileId: string;
+    panelId: FileDetailPanelId;
+  }>(() => ({ fileId, panelId: DEFAULT_FILE_DETAIL_PANEL_ID }));
+  const activePanelId =
+    activePanelState.fileId === fileId
+      ? activePanelState.panelId
+      : DEFAULT_FILE_DETAIL_PANEL_ID;
   const [isNavCollapsed, setIsNavCollapsed] = useState(() => readStoredFileDetailNavCollapsed());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [audioStreamPrimaryMode, setAudioStreamPrimaryMode] = useState<AudioStreamPrimaryMode>(() =>
@@ -1631,6 +1619,10 @@ export function FileDetailPage() {
   const [rawJsonCopied, setRawJsonCopied] = useState(false);
   const rawJsonCopyResetTimeoutRef = useRef<number | null>(null);
   const previewReportIconRef = useRef<ArrowUpRightIconHandle>(null);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [fileId]);
 
   const goBack = useCallback(() => {
     if (location.key !== "default") {
@@ -1892,14 +1884,7 @@ export function FileDetailPage() {
       body: (
         <JellyfinStreamingDetails
           userData={jellyfinOverlay?.user_data ?? []}
-          matchMethod={jellyfinOverlay?.match?.match_method}
           t={t}
-          onRejectMatch={jellyfinOverlay?.match ? () => {
-            if (!jellyfinOverlay?.match) return;
-            void api.deleteJellyfinMatch(jellyfinOverlay.match.id)
-              .then(() => setJellyfinOverlay(null))
-              .catch((reason: Error) => setJellyfinError(reason.message));
-          } : undefined}
         />
       ),
     },
@@ -2015,20 +2000,14 @@ export function FileDetailPage() {
     }
     const normalized = normalizeFileDetailPanelId(activePanelId, availablePanelIds);
     if (normalized !== activePanelId) {
-      setActivePanelId(normalized);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY, normalized);
-      }
+      setActivePanelState({ fileId, panelId: normalized });
     }
-  }, [activePanelId, availablePanelIds, error, file]);
+  }, [activePanelId, availablePanelIds, error, file, fileId]);
 
   const selectPanel = useCallback((panelId: FileDetailPanelId) => {
-    setActivePanelId(panelId);
+    setActivePanelState({ fileId, panelId });
     setIsMobileMenuOpen(false);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY, panelId);
-    }
-  }, []);
+  }, [fileId]);
 
   const toggleNavCollapsed = useCallback(() => {
     setIsNavCollapsed((current) => {

@@ -1699,7 +1699,6 @@
     "coverAlt": "Jellyfin-Cover für {{title}}",
     "noCover": "Kein Cover verfügbar",
     "noMatch": "Dieser Datei ist kein Jellyfin-Asset zugeordnet.",
-    "matchedBy": "Zuordnung über {{method}}",
     "seasonNumber": "Staffel {{number}}",
     "episodeNumber": "Episode {{number}}",
     "released": "Veröffentlicht {{date}}",
@@ -1709,7 +1708,6 @@
     "position": "Position {{duration}}",
     "neverPlayed": "Nie wiedergegeben",
     "noPlaybackData": "Keine Wiedergabedaten für die ausgewählten Nutzer.",
-    "wrongMatch": "Diese Zuordnung ist falsch",
     "catalog": {
       "metadataOnly": "Nur Jellyfin-Metadaten", "library": "Jellyfin-Library", "libraries": "Libraries", "item": "Jellyfin-Asset", "items": "Assets", "lastSync": "Zuletzt synchronisiert: {{date}}", "configureAccess": "Pfadzugriff konfigurieren", "limitedTitle": "Eingeschränkte Kataloganalyse", "limitedDescription": "MediaLyze kann nur die von Jellyfin gelieferten Metadaten auswerten. Gib Dateisystemzugriff und mappe diese Library, um ffprobe-, Stream-, Untertitel-, HDR-, Qualitäts- und Duplikatanalysen zu erhalten.", "itemScopeDescription": "Diese Ansicht enthält von Jellyfin gelieferte Katalog- und Wiedergabedaten, keine technische Analyse der Mediendatei.", "overview": "Jellyfin-Katalogübersicht", "knownStorage": "Bekannter Speicher", "knownDuration": "Bekannte Laufzeit", "coverage": "Laufzeitabdeckung", "itemTypes": "Asset-Typen", "productionYears": "Produktionsjahre", "addedTimeline": "Hinzugefügt im Zeitverlauf", "playback": "Wiedergabestatus", "played": "Wiedergegeben", "unplayed": "Nicht wiedergegeben", "catalog": "Katalog", "resultCount": "{{count}} Assets", "search": "Jellyfin-Katalog durchsuchen", "typeFilter": "Asset-Typ filtern", "allTypes": "Alle Typen", "userFilter": "Wiedergabe-Nutzer", "allUsers": "Alle Nutzer", "playedFilter": "Wiedergabestatus filtern", "allPlayback": "Alle Wiedergabestatus", "sortBy": "Katalog sortieren", "toggleSort": "Sortierreihenfolge wechseln", "title": "Titel", "type": "Typ", "year": "Jahr", "added": "Hinzugefügt", "duration": "Laufzeit", "size": "Größe", "plays": "Wiedergaben", "release": "Veröffentlichung", "empty": "Keine Jellyfin-Assets entsprechen diesen Filtern.", "loading": "Jellyfin-Katalog wird geladen…", "previous": "Vorherige Seite", "next": "Nächste Seite", "back": "Zurück", "openFullAnalysis": "Vollständige MediaLyze-Analyse öffnen", "dashboardTitle": "Jellyfin-Katalog", "notIncluded": "Separat von den technischen MediaLyze-Summen"
     }

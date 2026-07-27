@@ -15,6 +15,12 @@ class LibraryRootRead(BaseModel):
     path_key: str
 
 
+class LinkedJellyfinLibraryRead(BaseModel):
+    id: int
+    name: str
+    last_synced_at: UtcDateTime
+
+
 class LibraryCreate(BaseModel):
     name: str
     path: str
@@ -66,6 +72,7 @@ class LibrarySummary(BaseModel):
     total_duration_seconds: float = 0
     ready_files: int = 0
     pending_files: int = 0
+    linked_jellyfin_library: LinkedJellyfinLibraryRead | None = None
 
 
 class LibraryStatistics(BaseModel):

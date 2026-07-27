@@ -691,6 +691,11 @@ export type LibrarySummary = {
   total_duration_seconds: number;
   ready_files: number;
   pending_files: number;
+  linked_jellyfin_library?: {
+    id: number;
+    name: string;
+    last_synced_at: string;
+  } | null;
 };
 
 export type LibraryStatistics = {
@@ -1959,7 +1964,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ linked_library_id: linkedLibraryId }),
     }),
-  deleteJellyfinMatch: (id: number) => request<void>(`/jellyfin/matches/${id}`, { method: "DELETE" }),
   updateAppSettings: (payload: {
     ignore_patterns?: string[];
     user_ignore_patterns?: string[];

@@ -980,6 +980,11 @@ export function LibrariesPage() {
   const persistedResolutionCategories = useRef<ResolutionCategory[]>(normalizeResolutionCategories(appSettings.resolution_categories));
   const ignorePatternsRequestId = useRef(0);
   const ignorePatternsSuccessId = useRef(0);
+  const jellyfinPathMappingsLoadedRef = useRef(false);
+  const qualityProfilesLoadedRef = useRef(false);
+  const recentScanJobsLoadedRef = useRef(false);
+  const historyStorageLoadedRef = useRef(false);
+  const historyReconstructionLoadedRef = useRef(false);
   const persistedIgnorePatterns = useRef<PersistedIgnorePatterns>({ user: [], default: [] });
   const seededDefaultIgnorePatterns = useRef<string[] | null>(null);
   const libraryNameInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
@@ -1489,24 +1494,34 @@ export function LibrariesPage() {
   };
 
   useEffect(() => {
+    if (activeSettingsPanelId !== "configuredLibraries") {
+      return;
+    }
     if (librariesLoaded) {
       setIsLoadingLibraries(false);
       return;
     }
     void refreshLibraries(true).catch(() => undefined);
-  }, [librariesLoaded]);
+  }, [activeSettingsPanelId, librariesLoaded]);
 
   useEffect(() => {
-    if (!jellyfinLibrariesLoaded) {
+    if (
+      (activeSettingsPanelId === "configuredLibraries" || activeSettingsPanelId === "jellyfin")
+      && !jellyfinLibrariesLoaded
+    ) {
       void loadJellyfinLibraries().catch(() => undefined);
     }
-  }, [jellyfinLibrariesLoaded, loadJellyfinLibraries]);
+  }, [activeSettingsPanelId, jellyfinLibrariesLoaded, loadJellyfinLibraries]);
 
   useEffect(() => {
+    if (activeSettingsPanelId !== "configuredLibraries" || jellyfinPathMappingsLoadedRef.current) {
+      return;
+    }
     let active = true;
     api.jellyfinPathMappings()
       .then((mappings) => {
         if (!active) return;
+        jellyfinPathMappingsLoadedRef.current = true;
         setJellyfinPathMappings(mappings);
         setJellyfinPathMappingsError(null);
       })
@@ -1516,11 +1531,17 @@ export function LibrariesPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
-    void refreshQualityProfiles(true).catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "qualityProfiles" || qualityProfilesLoadedRef.current) {
+      return;
+    }
+    qualityProfilesLoadedRef.current = true;
+    void refreshQualityProfiles(true).catch(() => {
+      qualityProfilesLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
     if (!isRenamingQualityProfile) {
@@ -1538,16 +1559,34 @@ export function LibrariesPage() {
   }, [libraries.length, librariesLoaded]);
 
   useEffect(() => {
-    void refreshRecentScanJobs(true).catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "recentScanLogs" || recentScanJobsLoadedRef.current) {
+      return;
+    }
+    recentScanJobsLoadedRef.current = true;
+    void refreshRecentScanJobs(true).catch(() => {
+      recentScanJobsLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
-    void refreshHistoryStorage(true).catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "historyRetention" || historyStorageLoadedRef.current) {
+      return;
+    }
+    historyStorageLoadedRef.current = true;
+    void refreshHistoryStorage(true).catch(() => {
+      historyStorageLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
-    void refreshHistoryReconstructionStatus().catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "historyRetention" || historyReconstructionLoadedRef.current) {
+      return;
+    }
+    historyReconstructionLoadedRef.current = true;
+    void refreshHistoryReconstructionStatus().catch(() => {
+      historyReconstructionLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
     if (!isHistoryReconstructionActive) {
@@ -2041,14 +2080,32 @@ export function LibrariesPage() {
 
   async function updateLibraryJellyfinLink(library: LibrarySummary, jellyfinLibraryId: number | null) {
     const current = jellyfinLibraries.find((candidate) => candidate.linked_library_id === library.id);
+    const selected = jellyfinLibraries.find((candidate) => candidate.id === jellyfinLibraryId);
     if ((current?.id ?? null) === jellyfinLibraryId) return;
     setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: true }));
     setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
     try {
+      let updatedLink: JellyfinLibrary | null = null;
       if (jellyfinLibraryId === null) {
         if (current) await api.updateJellyfinLibraryLink(current.id, null);
       } else {
-        await api.updateJellyfinLibraryLink(jellyfinLibraryId, library.id);
+        updatedLink = await api.updateJellyfinLibraryLink(jellyfinLibraryId, library.id);
+      }
+      for (const candidate of libraries) {
+        if (candidate.id === library.id) {
+          upsertLibrary({
+            ...candidate,
+            linked_jellyfin_library: updatedLink
+              ? {
+                  id: updatedLink.id,
+                  name: updatedLink.name,
+                  last_synced_at: updatedLink.last_synced_at,
+                }
+              : null,
+          });
+        } else if (selected?.linked_library_id === candidate.id) {
+          upsertLibrary({ ...candidate, linked_jellyfin_library: null });
+        }
       }
       await loadJellyfinLibraries(true);
     } catch (reason) {
@@ -6194,7 +6251,10 @@ export function LibrariesPage() {
           ) : null}
           {activeSettingsPanelId === "jellyfin" ? (
             <JellyfinSettingsPanel
-              onCatalogChanged={() => void loadJellyfinLibraries(true)}
+              onCatalogChanged={() => {
+                void loadJellyfinLibraries(true);
+                void loadLibraries(true);
+              }}
             />
           ) : null}
 
