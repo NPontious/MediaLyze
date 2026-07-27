@@ -38,9 +38,12 @@ from backend.app.services.jellyfin_staging import (
 from backend.app.services.jellyfin_progress import (
     begin_jellyfin_progress,
     clear_jellyfin_progress,
+    complete_jellyfin_progress_track,
     jellyfin_cancellation_requested,
     reset_jellyfin_cancellation,
+    set_jellyfin_progress_tracks,
     update_jellyfin_progress,
+    update_jellyfin_progress_track,
 )
 from backend.app.utils.time import utc_now
 
@@ -276,6 +279,12 @@ def _sync_enabled_user_data(
     """Fetch user-scoped pages concurrently while keeping SQLite writes serialized."""
     for batch_start in range(0, len(enabled_users), JELLYFIN_USER_SYNC_WORKERS):
         batch = enabled_users[batch_start : batch_start + JELLYFIN_USER_SYNC_WORKERS]
+        set_jellyfin_progress_tracks(
+            [
+                (str(user_row["jellyfin_user_id"]), str(user_row["name"]))
+                for user_row in batch
+            ]
+        )
         batch_abort = Event()
 
         def check_batch_cancellation(abort_event: Event = batch_abort) -> None:
@@ -335,6 +344,7 @@ def _sync_enabled_user_data(
                                 .values(last_synced_at=now)
                             )
                             db.commit()
+                            complete_jellyfin_progress_track(user_id)
                             continue
 
                         rows = []
@@ -368,9 +378,8 @@ def _sync_enabled_user_data(
                             page.start_index + len(page.items),
                             page.total_record_count,
                         )
-                        update_jellyfin_progress(
-                            "items",
-                            detail=str(user_row["name"]),
+                        update_jellyfin_progress_track(
+                            user_id,
                             current=current,
                             total=page.total_record_count,
                         )
@@ -487,11 +496,12 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                     conflict_columns=("sync_run_id", "jellyfin_item_id"),
                 )
                 update_jellyfin_progress(
-                    "saving",
+                    "items",
                     current=min(page.start_index + len(page.items), page.total_record_count),
                     total=page.total_record_count,
                 )
 
+            update_jellyfin_progress("items", current=0, total=None)
             _sync_enabled_user_data(
                 db,
                 sync_run_id=sync_run_id,

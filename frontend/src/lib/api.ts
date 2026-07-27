@@ -273,6 +273,13 @@ export type JellyfinSyncStatus = JellyfinConnection & {
   sync_phase_detail: string | null;
   sync_current: number;
   sync_total: number | null;
+  sync_progress_tracks?: Array<{
+    id: string;
+    label: string;
+    current: number;
+    total: number | null;
+    status: "queued" | "running" | "completed";
+  }>;
   cancellation_requested?: boolean;
   item_count: number;
   matched_item_count: number;

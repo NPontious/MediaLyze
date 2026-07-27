@@ -56,7 +56,9 @@ from backend.app.services.jellyfin_progress import (
     clear_jellyfin_progress,
     request_jellyfin_cancellation,
     reset_jellyfin_cancellation,
+    set_jellyfin_progress_tracks,
     update_jellyfin_progress,
+    update_jellyfin_progress_track,
 )
 from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.media_service import list_library_files
@@ -709,6 +711,9 @@ def test_runtime_deduplicates_manual_and_scheduled_jellyfin_syncs(
 def test_sync_status_exposes_live_progress(db: Session) -> None:
     client = _client(db)
     update_jellyfin_progress("items", detail="Alice", current=500, total=1200)
+    set_jellyfin_progress_tracks([("user-1", "Alice"), ("user-2", "Bob")])
+    update_jellyfin_progress_track("user-1", current=500, total=1200)
+    update_jellyfin_progress_track("user-2", current=250, total=1000)
     try:
         response = client.get("/api/jellyfin/sync/status")
     finally:
@@ -725,6 +730,22 @@ def test_sync_status_exposes_live_progress(db: Session) -> None:
         "sync_current": 500,
         "sync_total": 1200,
     }
+    assert payload["sync_progress_tracks"] == [
+        {
+            "id": "user-1",
+            "label": "Alice",
+            "current": 500,
+            "total": 1200,
+            "status": "running",
+        },
+        {
+            "id": "user-2",
+            "label": "Bob",
+            "current": 250,
+            "total": 1000,
+            "status": "running",
+        },
+    ]
 
 
 def test_sync_status_exposes_persisted_active_job(db: Session) -> None:

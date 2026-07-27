@@ -318,6 +318,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
   const syncPercent = status?.sync_total
     ? Math.min(100, Math.round((status.sync_current / status.sync_total) * 100))
     : null;
+  const syncProgressTracks = status?.sync_progress_tracks ?? [];
   const syncSteps = ["connection", "catalog", "items", "matching"];
   const cancellationRequested = cancelPending || Boolean(status?.cancellation_requested);
   const matchedItemCount = status?.matched_item_count ?? 0;
@@ -469,19 +470,54 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
                   <strong>{cancellationRequested ? t("jellyfin.cancelingSync") : t(`jellyfin.syncPhase.${syncPhase}`)}</strong>
                   {cancellationRequested ? <span>{t("jellyfin.cancelingSyncDetail")}</span> : status?.sync_phase_detail ? <span>{status.sync_phase_detail}</span> : null}
                 </div>
-                {syncPercent !== null ? <b>{syncPercent}%</b> : null}
+                {syncProgressTracks.length === 0 && syncPercent !== null ? <b>{syncPercent}%</b> : null}
               </div>
-              <div
-                className={`jellyfin-sync-progress-track${syncPercent === null ? " is-indeterminate" : ""}`}
-                role="progressbar"
-                aria-label={t("jellyfin.syncProgress")}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={syncPercent ?? undefined}
-              >
-                <span style={syncPercent === null ? undefined : { width: `${syncPercent}%` }} />
-              </div>
-              {status?.sync_total ? (
+              {syncProgressTracks.length > 0 ? (
+                <div className="jellyfin-sync-progress-tracks">
+                  {syncProgressTracks.map((track) => {
+                    const trackPercent = track.status === "completed"
+                      ? 100
+                      : track.total
+                        ? Math.min(100, Math.round((track.current / track.total) * 100))
+                        : null;
+                    return (
+                      <div className="jellyfin-sync-progress-item" key={track.id}>
+                        <div className="jellyfin-sync-progress-item-heading">
+                          <strong>{track.label}</strong>
+                          {trackPercent !== null ? <b>{trackPercent}%</b> : null}
+                        </div>
+                        <div
+                          className={`jellyfin-sync-progress-track${trackPercent === null ? " is-indeterminate" : ""}`}
+                          role="progressbar"
+                          aria-label={`${t("jellyfin.syncProgress")}: ${track.label}`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={trackPercent ?? undefined}
+                        >
+                          <span style={trackPercent === null ? undefined : { width: `${trackPercent}%` }} />
+                        </div>
+                        {track.total !== null ? (
+                          <span className="jellyfin-sync-progress-count">
+                            {t("jellyfin.syncItemsProgress", { current: track.current, total: track.total })}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div
+                  className={`jellyfin-sync-progress-track${syncPercent === null ? " is-indeterminate" : ""}`}
+                  role="progressbar"
+                  aria-label={t("jellyfin.syncProgress")}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={syncPercent ?? undefined}
+                >
+                  <span style={syncPercent === null ? undefined : { width: `${syncPercent}%` }} />
+                </div>
+              )}
+              {syncProgressTracks.length === 0 && status?.sync_total ? (
                 <span className="jellyfin-sync-progress-count">
                   {t("jellyfin.syncItemsProgress", { current: status.sync_current, total: status.sync_total })}
                 </span>

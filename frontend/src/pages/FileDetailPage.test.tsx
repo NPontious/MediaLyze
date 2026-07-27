@@ -512,15 +512,24 @@ describe("FileDetailPage", () => {
     vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
     vi.spyOn(api, "fileJellyfin").mockResolvedValue(overlay);
 
-    renderPage(file.id);
+    const { container } = renderPage(file.id);
 
     expect(await screen.findByText("Jellyfin overview text.")).toBeInTheDocument();
     expect(screen.getByText("Production year")).toBeInTheDocument();
+    const topBadges = container.querySelector(".file-detail-overview-badges");
+    expect(topBadges).not.toBeNull();
+    expect(within(topBadges as HTMLElement).getByText("Jellyfin")).toBeInTheDocument();
+    expect(within(topBadges as HTMLElement).getByText("Movie")).toBeInTheDocument();
+    expect(container.querySelector(".file-detail-jellyfin-overview .badge")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Jellyfin metadata" })).not.toBeInTheDocument();
 
     await selectFileDetailPanel("Streaming");
-    expect(screen.getByText("Frederik")).toBeInTheDocument();
-    expect(screen.getByText("Played 3 times")).toBeInTheDocument();
+    expect(screen.getAllByText("Frederik")).not.toHaveLength(0);
+    expect(screen.getByRole("group", { name: "History range" })).toBeInTheDocument();
+    const playbackTable = screen.getByRole("table");
+    expect(playbackTable).toBeInTheDocument();
+    expect(within(playbackTable).getByText("3")).toBeInTheDocument();
+    expect(screen.getByText(/Jellyfin supplies the latest playback time/)).toBeInTheDocument();
     expect(screen.queryByText("Matched by path")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "This match is wrong" })).not.toBeInTheDocument();
 

@@ -36,6 +36,7 @@ import { DuplicatePanelEmptyState } from "../components/DuplicatePanelEmptyState
 import { LoaderCircleIcon } from "../components/LoaderCircleIcon";
 import {
   JellyfinCoverDetails,
+  JellyfinOverviewBadges,
   JellyfinOverviewDetails,
   JellyfinStreamingDetails,
 } from "../components/JellyfinMetadataDetails";
@@ -1128,13 +1129,20 @@ function OverviewPanel({
           </TooltipTrigger>
         ) : null}
       </div>
-      {badges.length > 0 ? (
-        <div className="meta-tags">
+      {badges.length > 0 || jellyfinItem ? (
+        <div className="meta-tags file-detail-overview-badges">
           {badges.map((badge) => (
             <span className="badge" key={badge}>
               {badge}
             </span>
           ))}
+          {jellyfinItem ? (
+            <JellyfinOverviewBadges
+              className={badges.length > 0 ? "is-separated" : ""}
+              item={jellyfinItem}
+              t={t}
+            />
+          ) : null}
         </div>
       ) : null}
       <div className="stream-tooltip-content stream-tooltip-content-panel format-details-content">
@@ -1168,7 +1176,7 @@ function OverviewPanel({
       ) : null}
       {jellyfinItem ? (
         <div className="file-detail-jellyfin-overview">
-          <JellyfinOverviewDetails item={jellyfinItem} showTitle={false} t={t} />
+          <JellyfinOverviewDetails item={jellyfinItem} showBadges={false} showTitle={false} t={t} />
         </div>
       ) : null}
     </div>
@@ -1884,7 +1892,7 @@ export function FileDetailPage() {
       body: (
         <JellyfinStreamingDetails
           userData={jellyfinOverlay?.user_data ?? []}
-          t={t}
+          durationSeconds={file?.duration}
         />
       ),
     },

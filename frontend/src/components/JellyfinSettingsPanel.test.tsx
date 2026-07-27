@@ -32,9 +32,13 @@ const STATUS: JellyfinSyncStatus = {
   sync_job_error: null,
   sync_summary: {},
   sync_phase: "items",
-  sync_phase_detail: "Alice",
-  sync_current: 250,
-  sync_total: 1000,
+  sync_phase_detail: null,
+  sync_current: 0,
+  sync_total: null,
+  sync_progress_tracks: [
+    { id: "user-1", label: "Alice", current: 250, total: 1000, status: "running" },
+    { id: "user-2", label: "Bob", current: 600, total: 1000, status: "running" },
+  ],
   item_count: 900,
   matched_item_count: 700,
   unmatched_item_count: 200,
@@ -81,11 +85,15 @@ describe("JellyfinSettingsPanel", () => {
 
     expect(await screen.findByText("Fetching Jellyfin items")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
+    expect(screen.getByText("Bob")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connection" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Playback users" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Path mappings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Jellyfin libraries" })).not.toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
+    const progressbars = screen.getAllByRole("progressbar");
+    expect(progressbars).toHaveLength(2);
+    expect(progressbars[0]).toHaveAttribute("aria-valuenow", "25");
+    expect(progressbars[1]).toHaveAttribute("aria-valuenow", "60");
   });
 
   it("queues synchronization, reports completion, and refreshes the external catalog", async () => {

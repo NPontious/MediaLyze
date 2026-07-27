@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 
 * Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
 * Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
+* Accelerate Docker and desktop publishing with native parallel AMD64/ARM64 image builds, persistent dependency and image-layer caches, and consolidated manually selectable dev/release workflows
 
 ### 🐛 Fixed
 
@@ -22,6 +23,8 @@ All notable changes to this project will be documented in this file.
 
 * Pin all transitive desktop `brace-expansion` branches to their patched releases to prevent exponential-time brace-pattern expansion during Electron packaging.
 * Update the transitive desktop `tar` package to 7.5.22 to prevent crafted PAX metadata from crashing Electron packaging.
+* Override the desktop icon pipeline to `sharp` 0.35.3 so packaged libvips binaries include the latest upstream security fixes.
+* Update React Router to 7.18.1 to address redirect and error-handler validation vulnerabilities.
 
 ## v0.16.3
 

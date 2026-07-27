@@ -1,30 +1,52 @@
 import { ImageIcon, Server } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 
 import { api, type JellyfinFileOverlay, type JellyfinItem, type JellyfinItemDetail } from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
+import { PlaybackHistoryPanel, type PlaybackHistoryEntry } from "./PlaybackHistoryPanel";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 type UserData = JellyfinFileOverlay["user_data"];
 
-export function JellyfinOverviewDetails({
+export function JellyfinOverviewBadges({
   item,
-  sizeBytes,
-  durationSeconds,
-  showTitle = true,
   t,
+  className = "",
 }: {
   item: JellyfinItem;
-  sizeBytes?: number | null;
-  durationSeconds?: number | null;
-  showTitle?: boolean;
   t: Translate;
+  className?: string;
 }): ReactNode {
   const hierarchy = [
     item.series_name,
     item.season_name || (item.parent_index_number !== null ? t("jellyfin.seasonNumber", { number: item.parent_index_number }) : null),
     item.index_number !== null ? t("jellyfin.episodeNumber", { number: item.index_number }) : null,
   ].filter(Boolean);
+
+  return (
+    <div className={`jellyfin-overview-badge-group ${className}`.trim()}>
+      <span className="badge"><Server aria-hidden="true" />Jellyfin</span>
+      <span className="badge">{item.item_type}</span>
+      {hierarchy.map((entry) => <span className="badge" key={String(entry)}>{entry}</span>)}
+    </div>
+  );
+}
+
+export function JellyfinOverviewDetails({
+  item,
+  sizeBytes,
+  durationSeconds,
+  showTitle = true,
+  showBadges = true,
+  t,
+}: {
+  item: JellyfinItem;
+  sizeBytes?: number | null;
+  durationSeconds?: number | null;
+  showTitle?: boolean;
+  showBadges?: boolean;
+  t: Translate;
+}): ReactNode {
   const rows = [
     item.original_title && item.original_title !== item.title
       ? { key: "originalTitle", label: t("jellyfin.originalTitle"), value: item.original_title }
@@ -53,11 +75,7 @@ export function JellyfinOverviewDetails({
           <h3 className="file-detail-title">{item.title}</h3>
         </div>
       ) : null}
-      <div className="meta-tags">
-        <span className="badge"><Server aria-hidden="true" />Jellyfin</span>
-        <span className="badge">{item.item_type}</span>
-        {hierarchy.map((entry) => <span className="badge" key={String(entry)}>{entry}</span>)}
-      </div>
+      {showBadges ? <JellyfinOverviewBadges item={item} t={t} /> : null}
       {rows.length ? (
         <div className="stream-tooltip-content stream-tooltip-content-panel format-details-content">
           {rows.map((row) => (
@@ -84,28 +102,33 @@ export function JellyfinOverviewDetails({
 
 export function JellyfinStreamingDetails({
   userData,
-  t,
+  durationSeconds,
 }: {
   userData: UserData;
-  t: Translate;
+  durationSeconds?: number | null;
 }): ReactNode {
+  const entries = useMemo(
+    () =>
+      userData
+        .filter((user): user is UserData[number] & { last_played_date: string } =>
+          Boolean(user.last_played_date) && user.play_count > 0,
+        )
+        .map<PlaybackHistoryEntry>((user) => ({
+          id: `jellyfin:${user.jellyfin_user_id}`,
+          provider: "Jellyfin",
+          userId: user.jellyfin_user_id,
+          userName: user.user_name,
+          playCount: user.play_count,
+          completed: user.played,
+          resumePositionSeconds: user.playback_position_ticks / 10_000_000,
+          lastPlayedAt: user.last_played_date,
+        })),
+    [userData],
+  );
+
   return (
     <div className="jellyfin-file-panel jellyfin-streaming-panel">
-      {userData.length ? (
-        <div className="jellyfin-playback-list">
-          {userData.map((user) => (
-            <div className="jellyfin-playback-row" key={user.jellyfin_user_id}>
-              <strong>{user.user_name}</strong>
-              <span>{t("jellyfin.playCount", { count: user.play_count })}</span>
-              <span>{user.played ? t("jellyfin.catalog.played") : t("jellyfin.catalog.unplayed")}</span>
-              {user.playback_position_ticks > 0 ? (
-                <span>{t("jellyfin.position", { duration: formatDuration(user.playback_position_ticks / 10_000_000) })}</span>
-              ) : null}
-              <span>{user.last_played_date ? formatDate(user.last_played_date) : t("jellyfin.neverPlayed")}</span>
-            </div>
-          ))}
-        </div>
-      ) : <div className="notice">{t("jellyfin.noPlaybackData")}</div>}
+      <PlaybackHistoryPanel entries={entries} durationSeconds={durationSeconds} />
     </div>
   );
 }

@@ -156,3 +156,14 @@ Output:
 - `npm run dist` creates the platform installer format configured in `desktop/package.json`.
 - The desktop build also regenerates the native app icons from `frontend/public/favicon.svg`.
 - GitHub release builds use the same packaging flow and attach the resulting desktop artifacts to the release automatically.
+
+## GitHub Actions
+
+The `build desktop artifacts` workflow supports both release and development builds:
+
+- Published releases and the main-branch release workflow invoke `release` builds automatically. The resulting AppImage, DMG, and Windows installer are attached to the matching GitHub release.
+- Development desktop artifacts are never built automatically from `dev`.
+- To create development desktop artifacts manually, open the workflow, choose `Run workflow`, select the `dev` branch, and leave `build_type` set to `dev`.
+- To rebuild assets for an existing release manually, choose `release`, provide its `tag_name`, and optionally use `code_ref` when only the packaging code should come from a different ref.
+
+Linux, macOS, and Windows artifacts are always built on their matching GitHub-hosted operating systems. Dependency downloads and the verified static Linux `ffprobe` binary are cached between runs, while every generated desktop package still passes the existing artifact and bundled-`ffprobe` checks.

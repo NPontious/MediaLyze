@@ -193,6 +193,14 @@ class JellyfinLibraryItemPageRead(BaseModel):
     limit: int = 100
 
 
+class JellyfinSyncProgressTrackRead(BaseModel):
+    id: str
+    label: str
+    current: int = 0
+    total: int | None = None
+    status: str = "queued"
+
+
 class JellyfinSyncStatusRead(JellyfinConnectionRead):
     sync_job_id: int | None = None
     sync_job_status: str | None = None
@@ -205,6 +213,7 @@ class JellyfinSyncStatusRead(JellyfinConnectionRead):
     sync_phase_detail: str | None = None
     sync_current: int = 0
     sync_total: int | None = None
+    sync_progress_tracks: list[JellyfinSyncProgressTrackRead] = Field(default_factory=list)
     cancellation_requested: bool = False
     item_count: int = 0
     matched_item_count: int = 0

@@ -782,6 +782,12 @@ def jellyfin_sync_status(
             else int(progress["total"]) if not persisted_progress and progress["total"] is not None
             else None
         ),
+        sync_progress_tracks=(
+            progress["tracks"]
+            if (job is None and progress["job_id"] is None)
+            or (job is not None and progress["job_id"] == job.id)
+            else []
+        ),
         cancellation_requested=bool(
             (job.cancellation_requested if job else False)
             or progress["cancellation_requested"]

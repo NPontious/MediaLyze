@@ -1,47 +1,99 @@
-name: publish official release
+name: build and publish Docker images
+
 on:
-  workflow_dispatch:
   push:
     branches:
+      - dev
       - main
-    paths:
-      - 'Dockerfile'
-      - 'pyproject.toml'
-      - 'frontend/package.json'
-      - 'desktop/package.json'
+  workflow_dispatch:
 
 permissions:
   actions: write
   contents: write
   packages: write
 
+concurrency:
+  group: build-docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
+
 jobs:
-  publish_release:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.build_context.outputs.channel }}
+      image_name: ${{ steps.build_context.outputs.image_name }}
+      release_exists: ${{ steps.release_state.outputs.release_exists }}
+      should_build: ${{ steps.build_context.outputs.should_build }}
+      tag_exists: ${{ steps.release_state.outputs.tag_exists }}
+      version: ${{ steps.build_context.outputs.version }}
     steps:
-      - name: Checkout repository
+      - name: Checkout repository history
+        shell: bash
         run: |
           git init .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git fetch --prune --tags origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
           git checkout --force "${GITHUB_SHA}"
 
-      - name: Set image name
-        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
-
-      - name: Validate release metadata
-        run: python3 .github/scripts/release_metadata.py validate
-
-      - name: Resolve release version
-        id: version
-        run: echo "version=$(python3 .github/scripts/release_metadata.py version)" >> "$GITHUB_OUTPUT"
-
-      - name: Check whether this push bumps the release version
-        id: release_gate
+      - name: Resolve build channel and version
+        id: build_context
+        shell: bash
         run: |
           set -euo pipefail
 
-          current_version="${{ steps.version.outputs.version }}"
+          image_name="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "image_name=${image_name}" >> "${GITHUB_OUTPUT}"
+
+          case "${GITHUB_REF}" in
+            refs/heads/dev)
+              channel="dev"
+              ;;
+            refs/heads/main)
+              channel="release"
+              ;;
+            *)
+              echo "Docker publishing is restricted to the dev and main branches; received ${GITHUB_REF}." >&2
+              exit 1
+              ;;
+          esac
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${channel}" == "dev" ]]; then
+            main_branch_version="$(
+              git show origin/main:Dockerfile \
+                | sed -n 's/^ARG APP_VERSION=//p' \
+                | tail -n 1
+            )"
+            latest_release_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+
+            if [[ -n "${latest_release_tag}" ]]; then
+              base_version="${latest_release_tag#v}"
+              base_commit="$(git rev-list -n 1 "${latest_release_tag}")"
+            else
+              base_version="${main_branch_version}"
+              if ! base_commit="$(git merge-base HEAD origin/main)"; then
+                base_commit="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+              fi
+            fi
+
+            if [[ ! "${base_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Unable to determine a valid base version for the dev image." >&2
+              exit 1
+            fi
+
+            commits_since_base="$(git rev-list --count "${base_commit}..HEAD")"
+            if (( commits_since_base < 1 )); then
+              commits_since_base=1
+            fi
+
+            version="$(printf '%s-dev%03d' "${base_version}" "${commits_since_base}")"
+            echo "version=${version}" >> "${GITHUB_OUTPUT}"
+            echo "should_build=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          python3 .github/scripts/release_metadata.py validate
+          version="$(python3 .github/scripts/release_metadata.py version)"
           previous_ref="${{ github.event.before }}"
           previous_version=""
 
@@ -53,134 +105,233 @@ jobs:
             )"
           fi
 
-          if [[ -z "${previous_version}" ]]; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "previous_version=" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+          if [[ -n "${previous_version}" ]] && [[ "${previous_version}" == "${version}" ]]; then
+            echo "Release version is unchanged at ${version}; skipping the main-branch publish."
+            echo "should_build=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
-          echo "previous_version=${previous_version}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${previous_version}" == "${current_version}" ]]; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ -n "${previous_version}" ]]; then
+            highest_version="$(printf '%s\n%s\n' "${previous_version}" "${version}" | sort -V | tail -n 1)"
+            if [[ "${highest_version}" != "${version}" ]]; then
+              echo "Release version must increase on main pushes (${previous_version} -> ${version} is invalid)." >&2
+              exit 1
+            fi
           fi
 
-          highest_version="$(printf '%s\n%s\n' "${previous_version}" "${current_version}" | sort -V | tail -n 1)"
-          if [[ "${highest_version}" != "${current_version}" ]]; then
-            echo "Release version must increase on main pushes (${previous_version} -> ${current_version} is invalid)." >&2
-            exit 1
-          fi
+          echo "should_build=true" >> "${GITHUB_OUTPUT}"
 
-          echo "should_release=true" >> "$GITHUB_OUTPUT"
-
-      - name: Log skipped release
-        if: steps.release_gate.outputs.should_release != 'true'
-        run: |
-          echo "Skipping official release for ${GITHUB_SHA}"
-          echo "Version unchanged at ${{ steps.version.outputs.version }}"
-
-      - name: Check existing tag and release state
-        id: state
-        if: steps.release_gate.outputs.should_release == 'true'
+      - name: Check existing release state
+        id: release_state
+        if: steps.build_context.outputs.channel == 'release' && steps.build_context.outputs.should_build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build_context.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
 
-          version="${{ steps.version.outputs.version }}"
-          tag_name="v${version}"
-
+          tag_name="v${VERSION}"
           git fetch --tags origin
 
           if gh release view "${tag_name}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            release_exists="true"
-          else
-            release_exists="false"
+            echo "Release ${tag_name} already exists; no image or desktop rebuild is required."
+            echo "release_exists=true" >> "${GITHUB_OUTPUT}"
+            echo "tag_exists=true" >> "${GITHUB_OUTPUT}"
+            exit 0
           fi
-          echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
+          echo "release_exists=false" >> "${GITHUB_OUTPUT}"
 
           if git rev-parse -q --verify "refs/tags/${tag_name}" >/dev/null; then
             tag_commit="$(git rev-list -n 1 "refs/tags/${tag_name}")"
             if [[ "${tag_commit}" != "${GITHUB_SHA}" ]]; then
-              if [[ "${release_exists}" == "true" ]]; then
-                echo "Tag ${tag_name} already exists on ${tag_commit}; release exists, so this run will skip publishing."
-                echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
               echo "Tag ${tag_name} already exists on ${tag_commit}, expected ${GITHUB_SHA}." >&2
               exit 1
             fi
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag_exists=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+            echo "tag_exists=false" >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: Log release target
-        if: steps.release_gate.outputs.should_release == 'true'
-        run: |
-          echo "Publishing version ${{ steps.version.outputs.version }} from ${GITHUB_SHA}"
-          echo "previous_version=${{ steps.release_gate.outputs.previous_version }}"
-          echo "tag_exists=${{ steps.state.outputs.tag_exists }}"
-          echo "release_exists=${{ steps.state.outputs.release_exists }}"
-
-      - name: Set up QEMU
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
-        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true' && needs.prepare.outputs.release_exists != 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - architecture: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
-        run: |
-          docker buildx create --name medialyze-builder --use
-          docker buildx inspect --bootstrap
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
+      - name: Build and push ${{ matrix.platform }} image by digest
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            APP_VERSION=${{ needs.prepare.outputs.version }}
+          outputs: type=image,name=${{ needs.prepare.outputs.image_name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ needs.prepare.outputs.image_name }}:buildcache-${{ needs.prepare.outputs.channel }}-${{ matrix.architecture }}
+          cache-to: type=registry,ref=${{ needs.prepare.outputs.image_name }}:buildcache-${{ needs.prepare.outputs.channel }}-${{ matrix.architecture }},mode=max
+
+      - name: Record image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --push \
-            --build-arg "APP_VERSION=${{ steps.version.outputs.version }}" \
-            --tag "${IMAGE_NAME}:latest" \
-            --tag "${IMAGE_NAME}:${{ steps.version.outputs.version }}" \
-            .
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${IMAGE_DIGEST#sha256:}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-digest-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish_manifest:
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: docker-digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-platform image manifest
+        env:
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+          IMAGE_NAME: ${{ needs.prepare.outputs.image_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          digest_args=()
+          while IFS= read -r digest_file; do
+            digest_args+=("${IMAGE_NAME}@sha256:$(basename "${digest_file}")")
+          done < <(find "${RUNNER_TEMP}/digests" -type f | sort)
+
+          if [[ "${#digest_args[@]}" -ne 2 ]]; then
+            echo "Expected two platform digests, found ${#digest_args[@]}." >&2
+            exit 1
+          fi
+
+          if [[ "${CHANNEL}" == "dev" ]]; then
+            tag_args=(
+              --tag "${IMAGE_NAME}:dev"
+              --tag "${IMAGE_NAME}:${VERSION}"
+            )
+          else
+            tag_args=(
+              --tag "${IMAGE_NAME}:latest"
+              --tag "${IMAGE_NAME}:${VERSION}"
+            )
+          fi
+
+          docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
+
+      - name: Verify published platforms
+        env:
+          IMAGE_NAME: ${{ needs.prepare.outputs.image_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          inspection="$(docker buildx imagetools inspect "${IMAGE_NAME}:${VERSION}")"
+          echo "${inspection}"
+          grep -q 'linux/amd64' <<< "${inspection}"
+          grep -q 'linux/arm64' <<< "${inspection}"
+
+  finalize_release:
+    needs:
+      - prepare
+      - publish_manifest
+    if: needs.prepare.outputs.channel == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository history
+        shell: bash
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --prune --tags origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+          git checkout --force "${GITHUB_SHA}"
 
       - name: Extract release notes
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
-        run: python3 .github/scripts/release_metadata.py release-notes --version "${{ steps.version.outputs.version }}" > release-notes.md
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: python3 .github/scripts/release_metadata.py release-notes --version "${VERSION}" > release-notes.md
 
       - name: Create annotated git tag
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.tag_exists != 'true'
+        if: needs.prepare.outputs.tag_exists != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.version }}" "${GITHUB_SHA}" -m "MediaLyze v${{ steps.version.outputs.version }}"
+          git tag -a "v${VERSION}" "${GITHUB_SHA}" -m "MediaLyze v${VERSION}"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git push origin "v${VERSION}"
 
       - name: Create GitHub release
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
+          gh release create "v${VERSION}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "MediaLyze v${{ steps.version.outputs.version }}" \
+            --title "MediaLyze v${VERSION}" \
             --notes-file release-notes.md
 
       - name: Trigger desktop release workflow
-        if: steps.release_gate.outputs.should_release == 'true' && steps.state.outputs.release_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
         run: |
           gh workflow run build-desktop.yaml \
             --repo "${GITHUB_REPOSITORY}" \
-            -f tag_name="v${{ steps.version.outputs.version }}"
+            --ref main \
+            -f build_type=release \
+            -f tag_name="v${VERSION}"
