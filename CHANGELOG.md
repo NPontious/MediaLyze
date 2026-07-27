@@ -4,39 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.17.0
+
+>2026-07-27
+
+This release adds a read-only Jellyfin integration with catalog synchronization, library linking, multi-user playback analytics, and a detailed Streaming timeline for matched files.
+
 ### ✨ New
 
-- add a read-only Jellyfin integration with scheduled catalog and multi-user playback sync, path-based asset matching, image proxying, library mount diagnostics, optional MediaLyze-library creation, and per-library Jellyfin added-date history reconstruction
+- add a read-only Jellyfin integration with scheduled catalog synchronization, path-based asset matching, image proxying, library mount diagnostics, optional MediaLyze-library creation, and per-library Jellyfin added-date history reconstruction
+- add selectable multi-user Jellyfin playback synchronization with per-user library statistics, total play counts in Analyzed files, and play-count/user-count comparison metrics
+- add a file-detail Streaming timeline with configurable date ranges, runtime-aware event stacking, CSV export, Jellyfin activity-history coverage markers, and unresolved play counts when individual timestamps are unavailable
 
 ### ✨ Enhancements
 
-* Refine the Jellyfin playback-user selector into a compact, alphabetically sorted grouped checklist with clearer selection counts and responsive bulk actions
-* Add the aggregated playback-provider play count as an optional integer column in the library Analyzed files panel
-* Add per-user Jellyfin play-count statistics for linked libraries and make non-zero play counts available as a metric-comparison axis
-* Add the distinct number of Jellyfin users who played each asset as a library metric-comparison axis
-* Import individual playback starts from Jellyfin's retained activity log for the file-detail Streaming timeline, and add a feature flag that removes unstacked table pagination
-* Mark the earliest synchronized individual playback on the file-detail Streaming timeline and explain Jellyfin activity-history limits in the panel header
-* Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
-* Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
-* Accelerate Docker and desktop publishing with native parallel AMD64/ARM64 image builds, persistent dependency and image-layer caches, and consolidated manually selectable dev/release workflows
+- group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
+- split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
+- accelerate Docker and desktop publishing with native parallel AMD64/ARM64 image builds, persistent dependency and image-layer caches, and consolidated manually selectable dev/release workflows
 
 ### 🐛 Fixed
 
-* Preserve every Jellyfin per-user play count in the file-detail Streaming view when only some plays have individual activity timestamps, and list the unresolved remainder without a determinable time
-* Restore comfortable responsive search-field widths in the library Analyzed files panel and wrap the search toolbar before adjacent header controls collide
-* Keep the file-detail playback-stacking control available for every asset, place it in its own right-aligned labeled control with explanatory tooltips, and group only nearby events from the same user within a quarter runtime or a ten-minute fallback
-* Keep the file-detail playback-history range highlighter aligned with the Custom selection
-* Vertically center file-detail playback-history timestamps with the rest of their table rows and remove the short separator beneath the timestamp cell
-* Keep the file-detail Streaming date picker inside the content area, add runtime-aware playback grouping, and compact its export action and playback rows
-* Open every file detail view on Overview instead of carrying the previously selected subsection across files
-* Fix hardware/software profile dark-mode palette
+- restore comfortable responsive search-field widths in the library Analyzed files panel and wrap the search toolbar before adjacent header controls collide
+- open every file detail view on Overview instead of carrying the previously selected subsection across files
+- align protected quality-profile controls and hardware/software profile lists with MediaLyze's dark-mode palette
 
 ### 🔒 Security
 
-* Pin all transitive desktop `brace-expansion` branches to their patched releases to prevent exponential-time brace-pattern expansion during Electron packaging.
-* Update the transitive desktop `tar` package to 7.5.22 to prevent crafted PAX metadata from crashing Electron packaging.
-* Override the desktop icon pipeline to `sharp` 0.35.3 so packaged libvips binaries include the latest upstream security fixes.
-* Update React Router to 7.18.1 to address redirect and error-handler validation vulnerabilities.
+- pin all transitive desktop `brace-expansion` branches to their patched releases to prevent exponential-time brace-pattern expansion during Electron packaging
+- update the transitive desktop `tar` package to 7.5.22 to prevent crafted PAX metadata from crashing Electron packaging
+- override the desktop icon pipeline to `sharp` 0.35.3 so packaged libvips binaries include the latest upstream security fixes
+- update React Router to 7.18.1 to address redirect and error-handler validation vulnerabilities
 
 ## v0.16.3
 
