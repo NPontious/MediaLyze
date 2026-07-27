@@ -13,6 +13,10 @@ from backend.app.core.config import Settings
 from backend.app.models.entities import (
     AudioStream,
     ExternalSubtitle,
+    JellyfinItem,
+    JellyfinLibrary,
+    JellyfinUser,
+    JellyfinUserItemData,
     Library,
     LibraryRoot,
     MediaChapter,
@@ -23,7 +27,14 @@ from backend.app.models.entities import (
     SubtitleStream,
     VideoStream,
 )
-from backend.app.schemas.library import LibraryCreate, LibraryRootRead, LibraryStatistics, LibrarySummary, LibraryUpdate
+from backend.app.schemas.library import (
+    LibraryCreate,
+    LibraryRootRead,
+    LibraryStatistics,
+    LibrarySummary,
+    LibraryUpdate,
+    LinkedJellyfinLibraryRead,
+)
 from backend.app.schemas.media import DistributionItem
 from backend.app.schemas.quality import QualityProfile
 from backend.app.services.app_settings import get_app_settings as load_app_settings
@@ -111,6 +122,7 @@ _DISTRIBUTION_FIELD_BY_PANEL = {
     "subtitle_languages": "subtitle_language_distribution",
     "subtitle_codecs": "subtitle_codec_distribution",
     "subtitle_sources": "subtitle_source_distribution",
+    "user_plays": "user_play_count_distribution",
 }
 
 
@@ -161,6 +173,7 @@ def _library_summary_from_model(
     library: Library,
     aggregate: dict[str, int | float] | None = None,
     resolution_categories=None,
+    linked_jellyfin_library: JellyfinLibrary | None = None,
 ) -> LibrarySummary:
     app_resolution_categories = resolution_categories or load_app_settings(db).resolution_categories
     summary = LibrarySummary.model_validate(library)
@@ -178,6 +191,12 @@ def _library_summary_from_model(
     )
     for key, value in (aggregate or {}).items():
         setattr(summary, key, value)
+    if linked_jellyfin_library is not None:
+        summary.linked_jellyfin_library = LinkedJellyfinLibraryRead(
+            id=linked_jellyfin_library.id,
+            name=linked_jellyfin_library.name,
+            last_synced_at=linked_jellyfin_library.last_synced_at,
+        )
     return summary
 
 
@@ -412,6 +431,7 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
         quality_profile=normalize_quality_profile(payload.quality_profile, app_settings.resolution_categories),
         quality_profile_id=selected_profile.id if selected_profile else None,
         show_on_dashboard=payload.show_on_dashboard,
+        history_added_date_source=payload.history_added_date_source,
     )
     db.add(library)
     db.flush()
@@ -505,6 +525,8 @@ def update_library_settings(
             quality_profile_changed = True
     if payload.show_on_dashboard is not None:
         library.show_on_dashboard = payload.show_on_dashboard
+    if payload.history_added_date_source is not None:
+        library.history_added_date_source = payload.history_added_date_source
     db.commit()
     db.refresh(library)
     stats_cache.invalidate(cache_key, library.id)
@@ -596,8 +618,20 @@ def list_libraries(db: Session) -> list[LibrarySummary]:
     app_settings = load_app_settings(db)
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
     aggregates = _library_aggregate_map(db)
+    jellyfin_libraries_by_library_id = {
+        jellyfin_library.linked_library_id: jellyfin_library
+        for jellyfin_library in db.scalars(
+            select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id.is_not(None))
+        )
+    }
     result = [
-        _library_summary_from_model(db, library, aggregates.get(library.id), app_settings.resolution_categories)
+        _library_summary_from_model(
+            db,
+            library,
+            aggregates.get(library.id),
+            app_settings.resolution_categories,
+            jellyfin_libraries_by_library_id.get(library.id),
+        )
         for library in libraries
     ]
     stats_cache.set_libraries(cache_key, result)
@@ -616,7 +650,16 @@ def get_library_summary(db: Session, library_id: int) -> LibrarySummary | None:
 
     app_settings = load_app_settings(db)
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
-    payload = _library_summary_from_model(db, library, _library_aggregate(db, library_id), app_settings.resolution_categories)
+    linked_jellyfin_library = db.scalar(
+        select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id == library_id)
+    )
+    payload = _library_summary_from_model(
+        db,
+        library,
+        _library_aggregate(db, library_id),
+        app_settings.resolution_categories,
+        linked_jellyfin_library,
+    )
     stats_cache.set_library_summary(cache_key, library_id, payload)
     return payload
 
@@ -625,8 +668,11 @@ def get_library_statistics(
     db: Session,
     library_id: int,
     requested_panels: Iterable[str] | None = None,
+    *,
+    _coalesced: bool = False,
 ) -> LibraryStatistics | None:
     panel_filter = set(requested_panels) if requested_panels is not None else None
+    panel_key = tuple(sorted(panel_filter)) if panel_filter is not None else None
     cache_key = str(id(db.get_bind()))
 
     library = db.get(Library, library_id)
@@ -638,13 +684,33 @@ def get_library_statistics(
         if library.type in {"music", "audiobooks"}
         else _AUDIOBOOK_PANEL_IDS
     )
-    cached = stats_cache.get_library_statistics(cache_key, library_id)
-    if cached is not None:
-        return _statistics_panel_view(cached, panel_filter, hidden_panel_ids)
+    if not _coalesced:
+        cached = stats_cache.get_library_statistics(cache_key, library_id, panel_key)
+        if cached is not None:
+            return cached
+        if panel_key is not None:
+            complete = stats_cache.get_library_statistics(cache_key, library_id)
+            if complete is not None:
+                return _statistics_panel_view(complete, panel_filter, hidden_panel_ids)
+        return stats_cache.get_or_compute_library_statistics(
+            cache_key,
+            library_id,
+            panel_key,
+            lambda: get_library_statistics(
+                db,
+                library_id,
+                panel_filter,
+                _coalesced=True,
+            ),
+        )
+
+    visible_requested_panels = set(_DISTRIBUTION_FIELD_BY_PANEL) | set(_NUMERIC_PANEL_METRIC_IDS)
+    if panel_filter is not None:
+        visible_requested_panels &= panel_filter
+    visible_requested_panels -= hidden_panel_ids
 
     def wants(panel_id: str) -> bool:
-        del panel_id
-        return True
+        return panel_id in visible_requested_panels
 
     app_settings = load_app_settings(db)
     primary_video_streams = (
@@ -960,10 +1026,53 @@ def get_library_statistics(
             ).all()
         )
 
+    user_play_count_distribution = []
+    linked_jellyfin_library_id = (
+        db.scalar(
+            select(JellyfinLibrary.id).where(
+                JellyfinLibrary.linked_library_id == library_id
+            )
+        )
+        if wants("user_plays")
+        else None
+    )
+    if linked_jellyfin_library_id is not None:
+        user_play_count_distribution = _distribution_items(
+            db.execute(
+                select(
+                    JellyfinUser.name,
+                    func.sum(JellyfinUserItemData.play_count).label("play_count"),
+                )
+                .select_from(JellyfinUser)
+                .join(
+                    JellyfinUserItemData,
+                    JellyfinUserItemData.jellyfin_user_id == JellyfinUser.jellyfin_user_id,
+                )
+                .join(
+                    JellyfinItem,
+                    JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id,
+                )
+                .where(
+                    JellyfinUser.enabled_for_sync.is_(True),
+                    JellyfinItem.library_id == linked_jellyfin_library_id,
+                    JellyfinUserItemData.play_count > 0,
+                )
+                .group_by(JellyfinUser.jellyfin_user_id, JellyfinUser.name)
+                .order_by(
+                    func.sum(JellyfinUserItemData.play_count).desc(),
+                    JellyfinUser.name.asc(),
+                )
+            ).all()
+        )
+
     numeric_distributions = build_numeric_distributions(
         db,
         library_id=library_id,
-        metric_ids=None,
+        metric_ids={
+            metric_id
+            for panel_id, metric_id in _NUMERIC_PANEL_METRIC_IDS.items()
+            if panel_id in visible_requested_panels
+        },
     )
 
     payload = LibraryStatistics(
@@ -1031,7 +1140,7 @@ def get_library_statistics(
             for key, value in _sorted_count_items(subtitle_codec_counts)
         ],
         subtitle_source_distribution=subtitle_source_distribution,
+        user_play_count_distribution=user_play_count_distribution,
         numeric_distributions=numeric_distributions,
     )
-    stats_cache.set_library_statistics(cache_key, library_id, payload)
     return _statistics_panel_view(payload, panel_filter, hidden_panel_ids)

@@ -13,6 +13,7 @@ import {
   ListVideo,
   Play,
   Search,
+  Radio,
   X,
 } from "lucide-react";
 import {
@@ -33,6 +34,12 @@ import { CopyIcon } from "../components/CopyIcon";
 import { DownloadIcon, type DownloadIconHandle } from "../components/DownloadIcon";
 import { DuplicatePanelEmptyState } from "../components/DuplicatePanelEmptyState";
 import { LoaderCircleIcon } from "../components/LoaderCircleIcon";
+import {
+  JellyfinCoverDetails,
+  JellyfinOverviewBadges,
+  JellyfinOverviewDetails,
+  JellyfinStreamingDetails,
+} from "../components/JellyfinMetadataDetails";
 import { PanelLeftToggleIcon } from "../components/PanelLeftToggleIcon";
 import { ProfileFavoriteButton } from "../components/ProfileFavoriteButton";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
@@ -44,6 +51,7 @@ import {
   type CompatibilityProfile,
   type CompatibilityStatus,
   type HardwareProfile,
+  type JellyfinFileOverlay,
   type MediaFileDetail,
   type MediaFileHistory,
   type MediaFileQualityScoreDetail,
@@ -73,6 +81,7 @@ type FileDetailPanelId =
   | "preview"
   | "qualityBreakdown"
   | "compatibility"
+  | "jellyfin"
   | "videoStreams"
   | "audioStreams"
   | "subtitles"
@@ -87,7 +96,6 @@ type FileDetailNavItem = {
   icon: typeof Info;
 };
 
-const FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY = "medialyze-file-detail-active-panel";
 const FILE_DETAIL_NAV_COLLAPSED_STORAGE_KEY = "medialyze-file-detail-sidebar-collapsed";
 const FILE_DETAIL_AUDIO_STREAM_PRIMARY_STORAGE_KEY = "medialyze-file-detail-audio-stream-primary";
 const DEFAULT_FILE_DETAIL_PANEL_ID: FileDetailPanelId = "overview";
@@ -99,6 +107,7 @@ const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "preview", labelKey: "fileDetail.preview", icon: Play },
   { id: "qualityBreakdown", labelKey: "fileDetail.qualityBreakdown", icon: Gauge },
   { id: "compatibility", labelKey: "fileDetail.compatibility.title", icon: Cpu },
+  { id: "jellyfin", labelKey: "jellyfin.streaming", icon: Radio },
   { id: "videoStreams", labelKey: "fileDetail.videoStreams", icon: Film },
   { id: "audioStreams", labelKey: "fileDetail.audioStreams", icon: AudioLines },
   { id: "subtitles", labelKey: "fileDetail.subtitles", icon: Captions },
@@ -107,24 +116,6 @@ const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "fileHistory", labelKey: "fileDetail.history.title", icon: FileClock },
   { id: "rawJson", labelKey: "fileDetail.rawJson", icon: FileJson },
 ];
-
-function isFileDetailPanelId(value: string | null): value is FileDetailPanelId {
-  return FILE_DETAIL_NAV_ITEMS.some((item) => item.id === value);
-}
-
-function readStoredFileDetailPanelId(): FileDetailPanelId {
-  if (typeof window === "undefined") {
-    return DEFAULT_FILE_DETAIL_PANEL_ID;
-  }
-  const value = window.localStorage.getItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY);
-  if (isFileDetailPanelId(value)) {
-    return value;
-  }
-  if (value !== null) {
-    window.localStorage.setItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY, DEFAULT_FILE_DETAIL_PANEL_ID);
-  }
-  return DEFAULT_FILE_DETAIL_PANEL_ID;
-}
 
 function readStoredFileDetailNavCollapsed(): boolean {
   if (typeof window === "undefined") {
@@ -418,9 +409,11 @@ function ChaptersList({
 
 function CoverDetailsList({
   detail,
+  jellyfinItem,
   t,
 }: {
   detail: MediaFileDetail | null;
+  jellyfinItem?: JellyfinFileOverlay["item"];
   t: (key: string, options?: Record<string, unknown>) => string;
 }): ReactNode {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
@@ -450,17 +443,17 @@ function CoverDetailsList({
     };
   }, [coverUrl]);
 
-  if (!detail) {
+  if (!detail && !jellyfinItem) {
     return t("streamDetails.unavailable");
   }
-  if (!detail.has_embedded_cover) {
+  if (!detail?.has_embedded_cover && !jellyfinItem?.image_tags.Primary) {
     return t("streamDetails.none");
   }
   const dimensions =
-    detail.embedded_cover_width && detail.embedded_cover_height
+    detail?.embedded_cover_width && detail?.embedded_cover_height
       ? `${detail.embedded_cover_width}x${detail.embedded_cover_height}`
       : "n/a";
-  const rows = [
+  const rows = detail?.has_embedded_cover ? [
     { key: "codec", label: t("fileDetail.coverCodec"), value: detail.embedded_cover_codec ?? "n/a" },
     { key: "dimensions", label: t("fileDetail.coverDimensions"), value: dimensions },
     {
@@ -470,11 +463,11 @@ function CoverDetailsList({
         ? String(detail.embedded_cover_stream_index)
         : "n/a",
     },
-  ];
-  const fallbackCoverFilename = `${detail.filename.replace(/\.[^.]+$/, "") || "cover"}-cover.png`;
+  ] : [];
+  const fallbackCoverFilename = `${detail?.filename.replace(/\.[^.]+$/, "") || "cover"}-cover.png`;
 
   async function loadCover() {
-    if (!detail) {
+    if (!detail?.has_embedded_cover) {
       return;
     }
     setIsCoverLoading(true);
@@ -509,7 +502,7 @@ function CoverDetailsList({
 
   return (
     <div className="stream-tooltip-content stream-tooltip-content-panel file-detail-cover-panel">
-      <div className="file-detail-cover-actions">
+      {detail?.has_embedded_cover ? <div className="file-detail-cover-actions">
         <button type="button" className="secondary small file-detail-cover-button" onClick={() => void loadCover()} disabled={isCoverLoading}>
           {isCoverLoading ? (
             <LoaderCircleIcon size={16} aria-hidden="true" />
@@ -532,13 +525,17 @@ function CoverDetailsList({
             {t("fileDetail.downloadCover")}
           </button>
         ) : null}
-      </div>
+      </div> : null}
       {coverError ? <div className="notice compact file-detail-cover-error">{coverError}</div> : null}
-      {coverUrl ? (
-        <figure className="file-detail-cover-preview">
-          <img src={coverUrl} alt={t("fileDetail.coverPreviewAlt", { filename: detail.filename })} />
-        </figure>
-      ) : null}
+      <div className="file-detail-cover-comparison">
+        {coverUrl && detail ? (
+          <figure className="file-detail-cover-preview">
+            <figcaption><ImageIcon aria-hidden="true" />{t("jellyfin.embeddedCoverSource")}</figcaption>
+            <img src={coverUrl} alt={t("fileDetail.coverPreviewAlt", { filename: detail.filename })} />
+          </figure>
+        ) : null}
+        {jellyfinItem ? <JellyfinCoverDetails item={jellyfinItem} t={t} /> : null}
+      </div>
       {rows.map((row) => (
         <div className="stream-tooltip-row" key={row.key}>
           <div className="stream-tooltip-head format-details-row">
@@ -665,6 +662,8 @@ function buildAvailableFileDetailPanelIds(
   file: MediaFileDetail | null,
   qualityDetail: MediaFileQualityScoreDetail | null,
   compatibilityCount = 0,
+  hasJellyfinMatch = false,
+  hasJellyfinCover = false,
 ): FileDetailPanelId[] {
   const ids: FileDetailPanelId[] = ["overview"];
   if (hasPreviewMetadata(file)) {
@@ -676,6 +675,9 @@ function buildAvailableFileDetailPanelIds(
   if (compatibilityCount > 0) {
     ids.push("compatibility");
   }
+  if (hasJellyfinMatch) {
+    ids.push("jellyfin");
+  }
   if (hasVideoMetadata(file)) {
     ids.push("videoStreams");
   }
@@ -685,7 +687,7 @@ function buildAvailableFileDetailPanelIds(
   if (hasSubtitleMetadata(file)) {
     ids.push("subtitles");
   }
-  if (hasCoverMetadata(file)) {
+  if (hasCoverMetadata(file) || hasJellyfinCover) {
     ids.push("cover");
   }
   if ((file?.chapters ?? []).length > 0) {
@@ -1066,10 +1068,12 @@ type OverviewRow = {
 
 function OverviewPanel({
   file,
+  jellyfinItem,
   t,
   inDepthDolbyVisionProfiles = false,
 }: {
   file: MediaFileDetail | null;
+  jellyfinItem?: JellyfinFileOverlay["item"];
   t: (key: string, options?: Record<string, unknown>) => string;
   inDepthDolbyVisionProfiles?: boolean;
 }): ReactNode {
@@ -1125,13 +1129,20 @@ function OverviewPanel({
           </TooltipTrigger>
         ) : null}
       </div>
-      {badges.length > 0 ? (
-        <div className="meta-tags">
+      {badges.length > 0 || jellyfinItem ? (
+        <div className="meta-tags file-detail-overview-badges">
           {badges.map((badge) => (
             <span className="badge" key={badge}>
               {badge}
             </span>
           ))}
+          {jellyfinItem ? (
+            <JellyfinOverviewBadges
+              className={badges.length > 0 ? "is-separated" : ""}
+              item={jellyfinItem}
+              t={t}
+            />
+          ) : null}
         </div>
       ) : null}
       <div className="stream-tooltip-content stream-tooltip-content-panel format-details-content">
@@ -1161,6 +1172,11 @@ function OverviewPanel({
         <div className="notice file-detail-analysis-warning">
           <strong>{t("fileDetail.analysisFailure")}</strong>
           <span>{file.analysis_failure_reason}</span>
+        </div>
+      ) : null}
+      {jellyfinItem ? (
+        <div className="file-detail-jellyfin-overview">
+          <JellyfinOverviewDetails item={jellyfinItem} showBadges={false} showTitle={false} t={t} />
         </div>
       ) : null}
     </div>
@@ -1578,6 +1594,8 @@ export function FileDetailPage() {
   const navigate = useNavigate();
   const { appSettings } = useAppData();
   const inDepthDolbyVisionProfiles = appSettings.feature_flags.in_depth_dolby_vision_profiles;
+  const showAllPlaybacksWhenUnstacked =
+    appSettings.feature_flags.show_all_playbacks_when_unstacked;
   const [file, setFile] = useState<MediaFileDetail | null>(null);
   const [qualityDetail, setQualityDetail] = useState<MediaFileQualityScoreDetail | null>(null);
   const [qualityError, setQualityError] = useState(false);
@@ -1592,8 +1610,17 @@ export function FileDetailPage() {
   const [compatibilityError, setCompatibilityError] = useState<string | null>(null);
   const [fileHistory, setFileHistory] = useState<MediaFileHistory | null>(null);
   const [fileHistoryError, setFileHistoryError] = useState<string | null>(null);
+  const [jellyfinOverlay, setJellyfinOverlay] = useState<JellyfinFileOverlay | null>(null);
+  const [jellyfinError, setJellyfinError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activePanelId, setActivePanelId] = useState<FileDetailPanelId>(() => readStoredFileDetailPanelId());
+  const [activePanelState, setActivePanelState] = useState<{
+    fileId: string;
+    panelId: FileDetailPanelId;
+  }>(() => ({ fileId, panelId: DEFAULT_FILE_DETAIL_PANEL_ID }));
+  const activePanelId =
+    activePanelState.fileId === fileId
+      ? activePanelState.panelId
+      : DEFAULT_FILE_DETAIL_PANEL_ID;
   const [isNavCollapsed, setIsNavCollapsed] = useState(() => readStoredFileDetailNavCollapsed());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [audioStreamPrimaryMode, setAudioStreamPrimaryMode] = useState<AudioStreamPrimaryMode>(() =>
@@ -1602,6 +1629,10 @@ export function FileDetailPage() {
   const [rawJsonCopied, setRawJsonCopied] = useState(false);
   const rawJsonCopyResetTimeoutRef = useRef<number | null>(null);
   const previewReportIconRef = useRef<ArrowUpRightIconHandle>(null);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [fileId]);
 
   const goBack = useCallback(() => {
     if (location.key !== "default") {
@@ -1642,6 +1673,13 @@ export function FileDetailPage() {
         setFileHistoryError(null);
       })
       .catch((reason: Error) => setFileHistoryError(reason.message));
+    api
+      .fileJellyfin(fileId)
+      .then((payload) => {
+        setJellyfinOverlay(payload);
+        setJellyfinError(null);
+      })
+      .catch((reason: Error) => setJellyfinError(reason.message));
     Promise.all([
       api.hardwareProfiles(),
       api.softwareProfiles(),
@@ -1763,7 +1801,7 @@ export function FileDetailPage() {
       title: t("fileDetail.navigation.overview"),
       loading: !file && !error,
       error,
-      body: <OverviewPanel file={file} t={t} inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles} />,
+      body: <OverviewPanel file={file} jellyfinItem={jellyfinOverlay?.item} t={t} inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles} />,
     },
     preview: {
       title: t("fileDetail.preview"),
@@ -1849,11 +1887,35 @@ export function FileDetailPage() {
         />
       ),
     },
+    jellyfin: {
+      title: t("jellyfin.streaming"),
+      loading: !jellyfinOverlay && !jellyfinError,
+      error: jellyfinError,
+      titleAddon: (
+        <TooltipTrigger
+          className="file-detail-streaming-availability-tooltip"
+          ariaLabel={t("jellyfin.playbackHistory.availabilityHelpAria")}
+          content={t("jellyfin.playbackHistory.availabilityHelp")}
+          preserveLineBreaks
+        />
+      ),
+      body: (
+        <JellyfinStreamingDetails
+          userData={jellyfinOverlay?.user_data ?? []}
+          playbackEvents={jellyfinOverlay?.playback_events ?? []}
+          individualPlaybackHistoryStartAt={
+            jellyfinOverlay?.individual_playback_history_start_at ?? null
+          }
+          durationSeconds={file?.duration}
+          showAllPlaybacksWhenUnstacked={showAllPlaybacksWhenUnstacked}
+        />
+      ),
+    },
     cover: {
       title: t("fileDetail.cover"),
       loading: !file && !error,
       error,
-      body: <CoverDetailsList detail={file} t={t} />,
+      body: <CoverDetailsList detail={file} jellyfinItem={jellyfinOverlay?.item} t={t} />,
     },
     fileHistory: {
       title: t("fileDetail.history.title"),
@@ -1944,8 +2006,10 @@ export function FileDetailPage() {
       file,
       qualityDetail,
       hardwareProfiles.length + softwareProfiles.length + combinationProfiles.length,
+      Boolean(jellyfinOverlay?.item),
+      Boolean(jellyfinOverlay?.item?.image_tags.Primary),
     ),
-    [combinationProfiles.length, file, hardwareProfiles.length, qualityDetail, softwareProfiles.length],
+    [combinationProfiles.length, file, hardwareProfiles.length, jellyfinOverlay?.item, qualityDetail, softwareProfiles.length],
   );
   const navItems = FILE_DETAIL_NAV_ITEMS.filter((item) => availablePanelIds.includes(item.id));
   const normalizedActivePanelId = normalizeFileDetailPanelId(activePanelId, availablePanelIds);
@@ -1959,20 +2023,14 @@ export function FileDetailPage() {
     }
     const normalized = normalizeFileDetailPanelId(activePanelId, availablePanelIds);
     if (normalized !== activePanelId) {
-      setActivePanelId(normalized);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY, normalized);
-      }
+      setActivePanelState({ fileId, panelId: normalized });
     }
-  }, [activePanelId, availablePanelIds, error, file]);
+  }, [activePanelId, availablePanelIds, error, file, fileId]);
 
   const selectPanel = useCallback((panelId: FileDetailPanelId) => {
-    setActivePanelId(panelId);
+    setActivePanelState({ fileId, panelId });
     setIsMobileMenuOpen(false);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(FILE_DETAIL_ACTIVE_PANEL_STORAGE_KEY, panelId);
-    }
-  }, []);
+  }, [fileId]);
 
   const toggleNavCollapsed = useCallback(() => {
     setIsNavCollapsed((current) => {

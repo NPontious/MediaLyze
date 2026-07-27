@@ -40,6 +40,7 @@ import { FolderInputIcon } from "../components/FolderInputIcon";
 import { GitCompareArrowsIcon } from "../components/GitCompareArrowsIcon";
 import { DistributionList, type DistributionListEntry } from "../components/DistributionList";
 import { LibraryHistoryPanel } from "../components/LibraryHistoryPanel";
+import { JellyfinIcon } from "../components/JellyfinIcon";
 import { LoaderPinwheelIcon } from "../components/LoaderPinwheelIcon";
 import { SettingsIcon } from "../components/SettingsIcon";
 import { StatCard } from "../components/StatCard";
@@ -145,6 +146,7 @@ type GroupedAnalyzedFilesMetrics = {
   hdr_type: string | null;
   bitrate: number | null;
   audio_bitrate: number | null;
+  jellyfin_play_count?: number | null;
   bit_depth?: number | null;
   audio_codecs: string[];
   audio_spatial_profiles: string[];
@@ -222,6 +224,7 @@ type FilePageLoadBehavior = {
 
 type LibraryFileSearchFilters = Partial<Record<"file" | LibraryFileMetadataSearchField, string>>;
 type DuplicatePanelViewMode = "all" | "filehash" | "filename" | "hidden";
+type AnalyzedFileNameSource = "file" | "jellyfin";
 
 type LibraryDetailTableState = {
   sortKey: FileColumnKey;
@@ -520,6 +523,9 @@ function buildGroupedAnalyzedFilesMetrics(files: MediaFileRow[]): GroupedAnalyze
     hdr_type: commonScalar(files.map((file) => file.hdr_type ?? "sdr"), () => false),
     bitrate: averageNumber(files.map((file) => file.bitrate)),
     audio_bitrate: averageNumber(files.map((file) => file.audio_bitrate)),
+    jellyfin_play_count: files.some((file) => file.jellyfin_play_count !== null && file.jellyfin_play_count !== undefined)
+      ? files.reduce((sum, file) => sum + (file.jellyfin_play_count ?? 0), 0)
+      : null,
     bit_depth: commonScalar(files.map((file) => file.bit_depth), (value) => value == null),
     audio_codecs: commonArray(files.map((file) => file.audio_codecs)),
     audio_spatial_profiles: commonArray(files.map((file) => file.audio_spatial_profiles)),
@@ -542,6 +548,7 @@ function buildGroupedAnalyzedFilesMetricsFromSeries(entry: GroupedSeriesTableRow
     hdr_type: null,
     bitrate: entry.bitrate_average,
     audio_bitrate: entry.audio_bitrate_average,
+    jellyfin_play_count: entry.play_count_total,
     bit_depth: null,
     audio_codecs: [],
     audio_spatial_profiles: [],
@@ -807,6 +814,8 @@ export function buildFileColumns(
   hideQualityScoreMeter: boolean,
   libraryType?: string | null,
   inDepthDolbyVisionProfiles = false,
+  fileNameSource: AnalyzedFileNameSource = "file",
+  hideRootName = false,
 ): FileColumnDefinition[] {
   const audioCodecsLabelKey =
     libraryType === "music" || libraryType === "audiobooks" ? "fileTable.formatsAndCodecs" : "fileTable.audioCodecs";
@@ -851,7 +860,12 @@ export function buildFileColumns(
       sizing: { mode: "flex", minPx: 240, fr: 2.2, maxPx: 420 },
       sticky: true,
       hideable: false,
-      measureValue: (row) => (isGroupedAnalyzedFilesRow(row) ? row.title : row.filename),
+      measureValue: (row) =>
+        isGroupedAnalyzedFilesRow(row)
+          ? row.title
+          : fileNameSource === "jellyfin"
+            ? (row.jellyfin_title ?? row.filename)
+            : row.filename,
       render: (row) =>
         isGroupedAnalyzedFilesRow(row) ? (
           <button
@@ -874,9 +888,11 @@ export function buildFileColumns(
             <span className={`media-tree-indent media-tree-indent-${rowDepth(row)}`} aria-hidden="true" />
             <span className="media-file-cell-copy">
               <Link to={`/files/${row.id}`} className="file-link">
-                {row.filename}
+                {fileNameSource === "jellyfin" ? (row.jellyfin_title ?? row.filename) : row.filename}
               </Link>
-              {row.root_name ? <span className="media-tree-subtitle">{row.root_name}</span> : null}
+              {row.root_name && !hideRootName ? (
+                <span className="media-tree-subtitle">{row.root_name}</span>
+              ) : null}
             </span>
           </div>
         ),
@@ -975,6 +991,19 @@ export function buildFileColumns(
         formatBitrate(isGroupedAnalyzedFilesRow(row) ? row.metrics.audio_bitrate : row.audio_bitrate),
       render: (row) =>
         formatBitrate(isGroupedAnalyzedFilesRow(row) ? row.metrics.audio_bitrate : row.audio_bitrate),
+    },
+    {
+      key: "play_count",
+      labelKey: "libraryStatistics.items.playCount",
+      sizing: { mode: "content", minPx: 92, maxPx: 124 },
+      measureValue: (row) => {
+        const value = isGroupedAnalyzedFilesRow(row) ? row.metrics.jellyfin_play_count : row.jellyfin_play_count;
+        return value === null || value === undefined ? t("fileTable.na") : String(Math.trunc(value));
+      },
+      render: (row) => {
+        const value = isGroupedAnalyzedFilesRow(row) ? row.metrics.jellyfin_play_count : row.jellyfin_play_count;
+        return value === null || value === undefined ? t("fileTable.na") : String(Math.trunc(value));
+      },
     },
     {
       key: "bit_depth",
@@ -1571,6 +1600,7 @@ export function LibraryDetailPage() {
   const [libraryStatistics, setLibraryStatistics] = useState<LibraryStatistics | null>(null);
   const [knownHasVideoMetadata, setKnownHasVideoMetadata] = useState<boolean | undefined>(undefined);
   const [libraryHistory, setLibraryHistory] = useState<LibraryHistoryResponse | null>(null);
+  const [analyzedFileNameSource, setAnalyzedFileNameSource] = useState<AnalyzedFileNameSource>("file");
   const [expandedGroupedSeriesIds, setExpandedGroupedSeriesIds] = useState<Record<number, boolean>>({});
   const [expandedGroupedSeasonKeys, setExpandedGroupedSeasonKeys] = useState<Record<string, boolean>>({});
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroupPage | null>(null);
@@ -1622,7 +1652,9 @@ export function LibraryDetailPage() {
   const [filesError, setFilesError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(true);
   const [isStatisticsLoading, setIsStatisticsLoading] = useState(true);
+  const [isStatisticsRefreshing, setIsStatisticsRefreshing] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [isHistoryRefreshing, setIsHistoryRefreshing] = useState(false);
   const [isDuplicateGroupsLoading, setIsDuplicateGroupsLoading] = useState(true);
   const [isFilesLoading, setIsFilesLoading] = useState(true);
   const [isFilesRefreshing, setIsFilesRefreshing] = useState(false);
@@ -1670,6 +1702,8 @@ export function LibraryDetailPage() {
   const hadActiveJobRef = useRef(Boolean(activeJob));
   const fallbackSummary = findLibrarySummary(libraries, libraryId);
   const displayLibrary = librarySummary ?? fallbackSummary;
+  const linkedJellyfinLibrary = displayLibrary?.linked_jellyfin_library ?? null;
+  const hasPlaybackData = Boolean(linkedJellyfinLibrary);
   const activeLibraryType = displayLibrary?.type;
   const showMusicQualityScore = appSettings.feature_flags.show_music_quality_score;
   const hasVideoMetadata =
@@ -1727,8 +1761,19 @@ export function LibraryDetailPage() {
     setIsQuickScanStarting(true);
     setQuickScanError(null);
     try {
-      const job = await api.scanLibrary(displayLibrary.id, "incremental");
-      trackJob(job);
+      const [scanResult, jellyfinResult] = await Promise.allSettled([
+        api.scanLibrary(displayLibrary.id, "incremental"),
+        linkedJellyfinLibrary ? api.syncJellyfin() : Promise.resolve(null),
+      ] as const);
+      if (scanResult.status === "fulfilled") {
+        trackJob(scanResult.value);
+      }
+      const failures = [scanResult, jellyfinResult]
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+      if (failures.length > 0) {
+        throw new Error(failures.join(" · "));
+      }
     } catch (reason) {
       setQuickScanError((reason as Error).message);
     } finally {
@@ -1740,9 +1785,10 @@ export function LibraryDetailPage() {
       new Set<FileColumnKey>(
         getEnabledLibraryStatisticTableTooltipColumns(savedTableViewSettings, activeLibraryType, {
           showMusicQualityScore,
+          hasPlaybackProvider: hasPlaybackData,
         }),
       ),
-    [savedTableViewSettings, activeLibraryType, showMusicQualityScore],
+    [savedTableViewSettings, activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const fileColumns = useMemo(
     () => {
@@ -1758,6 +1804,8 @@ export function LibraryDetailPage() {
         hideQualityScoreMeter,
         activeLibraryType,
         inDepthDolbyVisionProfiles,
+        analyzedFileNameSource,
+        Boolean(linkedJellyfinLibrary),
       );
       // Filter columns by library type
       if (activeLibraryType) {
@@ -1782,18 +1830,23 @@ export function LibraryDetailPage() {
       t,
       tooltipEnabledColumns,
       activeLibraryType,
+      analyzedFileNameSource,
+      linkedJellyfinLibrary,
       showMusicQualityScore,
     ],
   );
   const baseSearchConfig = useMemo(() => getLibraryFileSearchConfig("file"), []);
   const BaseSearchIcon = baseSearchConfig.icon;
   const visibleStatisticColumns = useMemo(
-    () => getVisibleLibraryStatisticTableColumns(savedTableViewSettings, activeLibraryType, { showMusicQualityScore }),
-    [savedTableViewSettings, activeLibraryType, showMusicQualityScore],
+    () => getVisibleLibraryStatisticTableColumns(savedTableViewSettings, activeLibraryType, {
+      showMusicQualityScore,
+      hasPlaybackProvider: hasPlaybackData,
+    }),
+    [savedTableViewSettings, activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const availableComparisonFields = useMemo(
-    () => getComparisonFieldDefinitionsForLibraryType(activeLibraryType, { showMusicQualityScore }),
-    [activeLibraryType, showMusicQualityScore],
+    () => getComparisonFieldDefinitionsForLibraryType(activeLibraryType, { showMusicQualityScore, hasPlaybackData }),
+    [activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const visibleLayoutPanels = useMemo(
     () =>
@@ -1808,6 +1861,7 @@ export function LibraryDetailPage() {
             !isLibraryStatisticDefinitionVisibleForLibraryType(definition.statisticDefinition, activeLibraryType, {
               showMusicQualityScore,
               hasVideoMetadata,
+              hasPlaybackProvider: hasPlaybackData,
             })
           ) {
             return null;
@@ -1815,7 +1869,7 @@ export function LibraryDetailPage() {
           return { item, definition };
         })
         .filter((entry): entry is VisibleLibraryLayoutPanel => Boolean(entry)),
-    [activeStatisticLayout.items, activeLibraryType, hasVideoMetadata, showMusicQualityScore],
+    [activeStatisticLayout.items, activeLibraryType, hasPlaybackData, hasVideoMetadata, showMusicQualityScore],
   );
   const visibleLibraryStatisticPanelIds = useMemo(
     () =>
@@ -1843,11 +1897,12 @@ export function LibraryDetailPage() {
           const selection = item.comparisonSelection ?? getComparisonSelection("library");
           const normalizedSelection = normalizeComparisonSelectionForLibraryType(selection, activeLibraryType, {
             showMusicQualityScore,
+            hasPlaybackData,
           });
           return `${item.instanceId}:${normalizedSelection.xField}:${normalizedSelection.yField}`;
         })
         .join("|"),
-    [comparisonPanels, activeLibraryType, showMusicQualityScore],
+    [comparisonPanels, activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const availableStatisticPanelDefinitions = useMemo(
     () =>
@@ -1859,9 +1914,10 @@ export function LibraryDetailPage() {
         return isLibraryStatisticDefinitionVisibleForLibraryType(panelDefinition.statisticDefinition, activeLibraryType, {
           showMusicQualityScore,
           hasVideoMetadata,
+          hasPlaybackProvider: hasPlaybackData,
         });
       }),
-    [draftStatisticLayout, activeLibraryType, hasVideoMetadata, showMusicQualityScore],
+    [draftStatisticLayout, activeLibraryType, hasPlaybackData, hasVideoMetadata, showMusicQualityScore],
   );
   const activeColumns = useMemo(
     () => fileColumns.filter((column) => visibleColumns.includes(column.key)),
@@ -1923,9 +1979,13 @@ export function LibraryDetailPage() {
   const orderedMetadataFieldDefinitions = useMemo(
     () =>
       LIBRARY_METADATA_SEARCH_FIELDS
-        .filter((field) => !activeLibraryType || shouldShowField(field, activeLibraryType))
+        .filter((field) =>
+          field === "jellyfin_name"
+            ? Boolean(linkedJellyfinLibrary)
+            : !activeLibraryType || shouldShowField(field, activeLibraryType),
+        )
         .map((id) => ({ id })),
-    [activeLibraryType],
+    [activeLibraryType, linkedJellyfinLibrary],
   );
   const orderedSelectedMetadataFields = useMemo(
     () =>
@@ -2239,7 +2299,10 @@ export function LibraryDetailPage() {
 
     if (showLoading) {
       setIsStatisticsLoading(true);
+    } else {
+      setIsStatisticsRefreshing(true);
     }
+    setStatisticsError(null);
 
     try {
       const payload = await api.libraryStatistics(libraryId, controller.signal, visibleLibraryStatisticPanelIds);
@@ -2256,9 +2319,11 @@ export function LibraryDetailPage() {
     } finally {
       if (statisticsAbortRef.current === controller) {
         statisticsAbortRef.current = null;
-      }
-      if (showLoading) {
-        setIsStatisticsLoading(false);
+        if (showLoading) {
+          setIsStatisticsLoading(false);
+        } else {
+          setIsStatisticsRefreshing(false);
+        }
       }
     }
   });
@@ -2270,7 +2335,10 @@ export function LibraryDetailPage() {
 
     if (showLoading) {
       setIsHistoryLoading(true);
+    } else {
+      setIsHistoryRefreshing(true);
     }
+    setHistoryError(null);
 
     try {
       const payload = await api.libraryHistory(libraryId, controller.signal);
@@ -2286,9 +2354,11 @@ export function LibraryDetailPage() {
     } finally {
       if (historyAbortRef.current === controller) {
         historyAbortRef.current = null;
-      }
-      if (showLoading) {
-        setIsHistoryLoading(false);
+        if (showLoading) {
+          setIsHistoryLoading(false);
+        } else {
+          setIsHistoryRefreshing(false);
+        }
       }
     }
   });
@@ -2461,12 +2531,13 @@ export function LibraryDetailPage() {
       }
     } finally {
       inflightRequestGateRef.current.end(requestKey);
-      if (filesAbortRef.current === controller) {
+      const isActiveRequest = filesAbortRef.current === controller;
+      if (isActiveRequest) {
         filesAbortRef.current = null;
       }
       if (append) {
         setIsLoadingMore(false);
-      } else {
+      } else if (isActiveRequest) {
         setIsFilesLoading(false);
         setIsFilesRefreshing(false);
       }
@@ -2547,12 +2618,13 @@ export function LibraryDetailPage() {
       }
     } finally {
       inflightRequestGateRef.current.end(requestKey);
-      if (filesAbortRef.current === controller) {
+      const isActiveRequest = filesAbortRef.current === controller;
+      if (isActiveRequest) {
         filesAbortRef.current = null;
       }
       if (append) {
         setIsLoadingMore(false);
-      } else {
+      } else if (isActiveRequest) {
         setIsFilesLoading(false);
         setIsFilesRefreshing(false);
       }
@@ -2658,6 +2730,10 @@ export function LibraryDetailPage() {
   useEffect(() => {
     activeFileQueryKeyRef.current = fileQueryKey;
   }, [fileQueryKey]);
+
+  useEffect(() => {
+    setAnalyzedFileNameSource("file");
+  }, [libraryId]);
 
   useEffect(() => {
     const nextTableState = readLibraryDetailTableState(libraryId);
@@ -2856,17 +2932,19 @@ export function LibraryDetailPage() {
   }, [libraryStatistics]);
 
   useEffect(() => {
-    const cachedSummary =
+    const storedSummary =
       librarySummaryCache.get(libraryId) ??
       readLibrarySessionCache<LibrarySummary>("summary", libraryId) ??
-      fallbackSummary ??
       null;
+    const cachedSummary =
+      storedSummary && fallbackSummary
+      && storedSummary.linked_jellyfin_library?.id !== fallbackSummary.linked_jellyfin_library?.id
+        ? { ...storedSummary, linked_jellyfin_library: fallbackSummary.linked_jellyfin_library ?? null }
+        : storedSummary ?? fallbackSummary ?? null;
     const cachedHistory =
       libraryHistoryCache.get(libraryId) ??
       readLibrarySessionCache<LibraryHistoryResponse>("history", libraryId) ??
       null;
-    const duplicateGroupsCacheKey = buildDuplicateGroupsCacheKey(libraryId, includeSuppressedDuplicateGroups);
-    const cachedDuplicateGroups = libraryDuplicateGroupsCache.get(duplicateGroupsCacheKey) ?? null;
 
     setComparisonByPanel({});
     setComparisonErrorByPanel({});
@@ -2879,16 +2957,22 @@ export function LibraryDetailPage() {
     setSeriesDetailErrorById({});
     setExpandedGroupedSeriesIds({});
     setExpandedGroupedSeasonKeys({});
-    setDuplicateGroups(cachedDuplicateGroups);
     setSummaryError(null);
     setHistoryError(null);
-    setDuplicateGroupsError(null);
     setIsSummaryLoading(cachedSummary === null);
     setIsHistoryLoading(cachedHistory === null);
-    setIsDuplicateGroupsLoading(cachedDuplicateGroups === null);
+    setIsHistoryRefreshing(false);
 
     void loadLibrarySummary(cachedSummary === null);
     void loadLibraryHistory(cachedHistory === null);
+  }, [libraryId]);
+
+  useEffect(() => {
+    const duplicateGroupsCacheKey = buildDuplicateGroupsCacheKey(libraryId, includeSuppressedDuplicateGroups);
+    const cachedDuplicateGroups = libraryDuplicateGroupsCache.get(duplicateGroupsCacheKey) ?? null;
+    setDuplicateGroups(cachedDuplicateGroups);
+    setDuplicateGroupsError(null);
+    setIsDuplicateGroupsLoading(cachedDuplicateGroups === null);
     void loadDuplicateGroups(cachedDuplicateGroups === null);
   }, [includeSuppressedDuplicateGroups, libraryId]);
 
@@ -2902,6 +2986,7 @@ export function LibraryDetailPage() {
     setLibraryStatistics(cachedStatistics);
     setStatisticsError(null);
     setIsStatisticsLoading(cachedStatistics === null);
+    setIsStatisticsRefreshing(false);
     void loadLibraryStatistics(cachedStatistics === null);
   }, [libraryId, visibleLibraryStatisticPanelIdsKey]);
 
@@ -2979,14 +3064,18 @@ export function LibraryDetailPage() {
       const selection = normalizeComparisonSelectionForLibraryType(
         item.comparisonSelection ?? getComparisonSelection("library"),
         activeLibraryType,
-        { showMusicQualityScore },
+        { showMusicQualityScore, hasPlaybackData },
       );
       const queryKey = buildLibraryComparisonQueryKey(libraryId, selection);
       const cachedComparison = !force ? libraryComparisonCache.get(queryKey) ?? null : null;
 
       setComparisonErrorByPanel((current) => ({ ...current, [item.instanceId]: null }));
       setComparisonByPanel((current) =>
-        current[item.instanceId] === cachedComparison ? current : { ...current, [item.instanceId]: cachedComparison },
+        cachedComparison === null && force
+          ? current
+          : current[item.instanceId] === cachedComparison
+            ? current
+            : { ...current, [item.instanceId]: cachedComparison },
       );
       setComparisonLoadingByPanel((current) => ({
         ...current,
@@ -3020,8 +3109,8 @@ export function LibraryDetailPage() {
         .finally(() => {
           if (comparisonAbortRef.current.get(item.instanceId) === controller) {
             comparisonAbortRef.current.delete(item.instanceId);
+            setComparisonLoadingByPanel((current) => ({ ...current, [item.instanceId]: false }));
           }
-          setComparisonLoadingByPanel((current) => ({ ...current, [item.instanceId]: false }));
         });
     }
   });
@@ -3167,17 +3256,11 @@ export function LibraryDetailPage() {
 
   useEffect(() => {
     if (hadActiveJobRef.current && !activeJob) {
-      librarySummaryCache.delete(libraryId);
-      libraryStatisticsCache.delete(buildLibraryStatisticsCacheKey(libraryId, visibleLibraryStatisticPanelIds));
-      libraryHistoryCache.delete(libraryId);
-      deleteLibrarySessionCache("summary", libraryId);
-      deleteLibrarySessionCache("statistics", buildLibraryStatisticsCacheKey(libraryId, visibleLibraryStatisticPanelIds));
-      deleteLibrarySessionCache("history", libraryId);
       for (const { item } of comparisonPanels) {
         const selection = normalizeComparisonSelectionForLibraryType(
           item.comparisonSelection ?? getComparisonSelection("library"),
           activeLibraryType,
-          { showMusicQualityScore },
+          { showMusicQualityScore, hasPlaybackData },
         );
         libraryComparisonCache.delete(buildLibraryComparisonQueryKey(libraryId, selection));
       }
@@ -3297,7 +3380,7 @@ export function LibraryDetailPage() {
           renderer: sanitizeComparisonRenderer(nextSelection.xField, nextSelection.yField, nextSelection.renderer),
         },
         activeLibraryType,
-        { showMusicQualityScore },
+        { showMusicQualityScore, hasPlaybackData },
       ),
     );
     updateStatisticLayout(
@@ -3411,6 +3494,24 @@ export function LibraryDetailPage() {
         <div className="panel-title-row panel-title-row-with-actions">
           <div className="panel-title-row library-statistic-title-row">
             <h2>{displayLibrary?.name ?? t("libraryDetail.loading")}</h2>
+            {linkedJellyfinLibrary ? (
+              <TooltipTrigger
+                ariaLabel={t("jellyfin.linkedLibraryTooltipAria", { name: linkedJellyfinLibrary.name })}
+                className="library-jellyfin-icon-trigger"
+                content={(
+                  <span className="library-jellyfin-icon-tooltip">
+                    <strong>{t("jellyfin.linkedLibraryTooltip", { name: linkedJellyfinLibrary.name })}</strong>
+                    <span>
+                      {linkedJellyfinLibrary.last_synced_at
+                        ? t("jellyfin.lastSyncValue", { date: formatDate(linkedJellyfinLibrary.last_synced_at) })
+                        : t("jellyfin.notSynced")}
+                    </span>
+                  </span>
+                )}
+              >
+                <JellyfinIcon aria-hidden="true" />
+              </TooltipTrigger>
+            ) : null}
             {displayLibrary?.path ? (
               <TooltipTrigger ariaLabel={t("libraryDetail.libraryPathAria")} content={displayLibrary.path}>
                 ?
@@ -3544,7 +3645,7 @@ export function LibraryDetailPage() {
               const selection = normalizeComparisonSelectionForLibraryType(
                 panel.item.comparisonSelection ?? getComparisonSelection("library"),
                 activeLibraryType,
-                { showMusicQualityScore },
+                { showMusicQualityScore, hasPlaybackData },
               );
               content = (
                 <ComparisonChartPanel
@@ -3553,10 +3654,24 @@ export function LibraryDetailPage() {
                   availableFields={availableComparisonFields}
                   resizeToken={`${panel.item.width}:${panel.item.height}`}
                   loading={
-                    Boolean(comparisonLoadingByPanel[panel.item.instanceId]) ||
-                    (!comparisonByPanel[panel.item.instanceId] && !comparisonErrorByPanel[panel.item.instanceId])
+                    !comparisonByPanel[panel.item.instanceId] &&
+                    (Boolean(comparisonLoadingByPanel[panel.item.instanceId]) ||
+                      !comparisonErrorByPanel[panel.item.instanceId])
                   }
-                  error={comparisonErrorByPanel[panel.item.instanceId] ?? null}
+                  refreshing={
+                    Boolean(comparisonByPanel[panel.item.instanceId]) &&
+                    Boolean(comparisonLoadingByPanel[panel.item.instanceId])
+                  }
+                  refreshError={
+                    comparisonByPanel[panel.item.instanceId]
+                      ? comparisonErrorByPanel[panel.item.instanceId] ?? null
+                      : null
+                  }
+                  error={
+                    !comparisonByPanel[panel.item.instanceId]
+                      ? comparisonErrorByPanel[panel.item.instanceId] ?? null
+                      : null
+                  }
                   onChangeXField={(xField) =>
                     updateComparisonSelection(panel.item.instanceId, { ...selection, xField })
                   }
@@ -3598,7 +3713,9 @@ export function LibraryDetailPage() {
                   metricId={metricId}
                   resizeToken={`${panel.item.width}:${panel.item.height}`}
                   loading={isStatisticsLoading && !libraryStatistics && !statisticsError}
-                  error={statisticsError}
+                  refreshing={isStatisticsRefreshing && Boolean(libraryStatistics)}
+                  refreshError={libraryStatistics ? statisticsError : null}
+                  error={!libraryStatistics ? statisticsError : null}
                   interactive={!statisticsError && !libraryStatistics ? false : true}
                   onSelectBin={
                     statisticsError || !libraryStatistics
@@ -3632,7 +3749,9 @@ export function LibraryDetailPage() {
                   : statisticDefinition.panelFormatKind
                   ? formatCodecLabel(rawLabel, statisticDefinition.panelFormatKind)
                   : rawLabel;
-                const isFilterable = statisticDefinition.id !== "video_bit_depth";
+                const isFilterable =
+                  statisticDefinition.id !== "video_bit_depth" &&
+                  statisticDefinition.id !== "user_plays";
                 const isApplied = hasSearchValueTokens(fieldValues[statisticDefinition.id], filterValue);
                 return {
                   key: `${statisticDefinition.id}:${rawLabel}`,
@@ -3658,7 +3777,9 @@ export function LibraryDetailPage() {
                 <AsyncPanel
                   title={panelTitle}
                   loading={isStatisticsLoading && !libraryStatistics && !statisticsError}
-                  error={statisticsError}
+                  refreshing={isStatisticsRefreshing && Boolean(libraryStatistics)}
+                  refreshError={libraryStatistics ? statisticsError : null}
+                  error={!libraryStatistics ? statisticsError : null}
                   bodyClassName="async-panel-body-scroll"
                 >
                   <DistributionList items={formattedItems} maxVisibleRows={5} scrollable />
@@ -3668,8 +3789,14 @@ export function LibraryDetailPage() {
               content = (
                 <LibraryHistoryPanel
                   history={libraryHistory}
-                  loading={isHistoryLoading && !libraryHistory && !historyError}
-                  error={historyError}
+                  loading={
+                    !historyError &&
+                    ((isHistoryLoading && !libraryHistory) ||
+                      (isHistoryRefreshing && (libraryHistory?.points.length ?? 0) === 0))
+                  }
+                  refreshing={isHistoryRefreshing && Boolean(libraryHistory?.points.length)}
+                  refreshError={libraryHistory ? historyError : null}
+                  error={!libraryHistory ? historyError : null}
                   selectedMetric={selectedHistoryMetric}
                   onChangeMetric={setSelectedHistoryMetric}
                   collapsed={isHistoryPanelCollapsed}
@@ -3914,6 +4041,48 @@ export function LibraryDetailPage() {
                   bodyClassName="async-panel-body-scroll"
                   titleAddon={
                     <div className="analyzed-files-title-addon">
+                      {!isEditingTableView && linkedJellyfinLibrary ? (
+                        <div
+                          className="distribution-chart-mode-toggle analyzed-file-name-source-toggle"
+                          role="group"
+                          aria-label={t("libraryDetail.fileNameSource.label")}
+                        >
+                          <SlidingTogglePill
+                            activeKey={analyzedFileNameSource}
+                            className="nav-active-pill distribution-chart-mode-pill"
+                          />
+                          <button
+                            type="button"
+                            data-toggle-key="file"
+                            className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                              analyzedFileNameSource === "file" ? " active" : ""
+                            }`}
+                            aria-label={t("libraryDetail.fileNameSource.file")}
+                            title={t("libraryDetail.fileNameSource.file")}
+                            aria-pressed={analyzedFileNameSource === "file"}
+                            onClick={() => setAnalyzedFileNameSource("file")}
+                          >
+                            <span className="distribution-chart-mode-button-content">
+                              <FileText aria-hidden="true" className="distribution-chart-mode-icon" />
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            data-toggle-key="jellyfin"
+                            className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                              analyzedFileNameSource === "jellyfin" ? " active" : ""
+                            }`}
+                            aria-label={t("libraryDetail.fileNameSource.jellyfin")}
+                            title={t("libraryDetail.fileNameSource.jellyfin")}
+                            aria-pressed={analyzedFileNameSource === "jellyfin"}
+                            onClick={() => setAnalyzedFileNameSource("jellyfin")}
+                          >
+                            <span className="distribution-chart-mode-button-content">
+                              <JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" />
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
                       <StatisticPanelLayoutControls
                         availableDefinitions={[]}
                         isEditing={isEditingTableView}
@@ -4025,6 +4194,7 @@ export function LibraryDetailPage() {
                         libraryType={activeLibraryType}
                         showMusicQualityScore={showMusicQualityScore}
                         hasVideoMetadata={hasVideoMetadata}
+                        hasPlaybackProvider={hasPlaybackData}
                         onChange={(nextSettings) => setDraftTableViewSettings(cloneLibraryStatisticsSettings(nextSettings))}
                       />
                     ) : (

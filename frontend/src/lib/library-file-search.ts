@@ -12,6 +12,7 @@ import {
   HardDrive,
   Languages,
   Package,
+  Server,
   SlidersHorizontal,
   SunMedium,
   Waypoints,
@@ -22,7 +23,7 @@ import {
   type LibraryStatisticId,
 } from "./library-statistics-settings";
 
-export type LibraryFileMetadataSearchField = LibraryStatisticId;
+export type LibraryFileMetadataSearchField = LibraryStatisticId | "jellyfin_name";
 
 export type LibraryFileSearchConfig = {
   field: "file" | LibraryFileMetadataSearchField;
@@ -116,6 +117,13 @@ export const LIBRARY_FILE_SEARCH_CONFIGS: LibraryFileSearchConfig[] = [
     icon: FolderSearch,
     labelKey: "libraryDetail.searchFields.file.label",
     placeholderKey: "libraryDetail.searchFields.file.placeholder",
+    tooltipKey: TEXT_FILTER_TOOLTIP_KEY,
+  },
+  {
+    field: "jellyfin_name",
+    icon: Server,
+    labelKey: "libraryDetail.searchFields.jellyfinName.label",
+    placeholderKey: "libraryDetail.searchFields.jellyfinName.placeholder",
     tooltipKey: TEXT_FILTER_TOOLTIP_KEY,
   },
   {
@@ -333,7 +341,10 @@ export function deserializeLibraryFileSearchFilters(
     const parsed = JSON.parse(value) as Array<[string, string]>;
     const filters: Partial<Record<"file" | LibraryFileMetadataSearchField, string>> = {};
     for (const [field, fieldValue] of parsed) {
-      if ((field === "file" || LIBRARY_METADATA_SEARCH_FIELDS.includes(field as LibraryStatisticId)) && fieldValue) {
+      if (
+        (field === "file" || LIBRARY_METADATA_SEARCH_FIELDS.includes(field as LibraryFileMetadataSearchField))
+        && fieldValue
+      ) {
         filters[field as "file" | LibraryFileMetadataSearchField] = fieldValue;
       }
     }

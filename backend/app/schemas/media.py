@@ -197,6 +197,13 @@ class MediaFileTableRow(BaseModel):
     episode_number: int | None = None
     episode_number_end: int | None = None
     episode_title: str | None = None
+    jellyfin_title: str | None = None
+    jellyfin_production_year: int | None = None
+    jellyfin_date_created: UtcDateTime | None = None
+    jellyfin_series_name: str | None = None
+    jellyfin_season_name: str | None = None
+    jellyfin_play_count: int | None = None
+    jellyfin_played_user_count: int | None = None
 
 
 class MediaFileDetail(MediaFileTableRow):
@@ -321,6 +328,7 @@ class GroupedSeriesTableRowRead(BaseModel):
     quality_score_average: float | None = None
     bitrate_average: float | None = None
     audio_bitrate_average: float | None = None
+    play_count_total: int | None = None
     children_loaded: bool = False
 
 

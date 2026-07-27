@@ -82,6 +82,7 @@
     "collapseAria": "Згорнути {{title}}",
     "expandAria": "Розгорнути {{title}}",
     "loading": "Завантаження…",
+    "refreshing": "Оновлення…",
     "noDataYet": "Даних ще немає"
   },
   "releaseNotes": {
@@ -110,6 +111,10 @@
     "settingsNavigationLibraries": "Бібліотеки",
     "settingsNavigationAddLibrary": "Додати бібліотеку",
     "settingsNavigationPatternRecognition": "Розпізнавання шаблонів",
+    "settingsGroups": { "librariesSources": "Бібліотеки та джерела", "analysis": "Аналіз", "application": "Застосунок", "maintenanceDiagnostics": "Обслуговування та діагностика" },
+    "settingsSearchLabel": "Пошук у налаштуваннях",
+    "settingsSearchPlaceholder": "Пошук у налаштуваннях…",
+    "settingsSearchEmpty": "Немає налаштувань, що відповідають пошуку.",
     "quickActions": "Швидкі дії",
     "collapseSettingsNavigation": "Згорнути меню налаштувань",
     "expandSettingsNavigation": "Розгорнути меню налаштувань",
@@ -118,6 +123,13 @@
     "configured": "Налаштовані бібліотеки",
     "fullScan": "повне сканування",
     "addFirstLibrary": "Додати першу бібліотеку",
+    "expandLibrarySettings": "Показати налаштування для {{name}}",
+    "collapseLibrarySettings": "Сховати налаштування для {{name}}",
+    "sections": {
+      "jellyfin": { "title": "Призначення Jellyfin", "description": "Виберіть каталог Jellyfin для цієї бібліотеки MediaLyze. Якщо каталог уже призначено іншій бібліотеці, призначення буде перенесено сюди.", "pathMappingTitle": "Відповідність шляхів (необов’язково)", "pathMappingDescription": "Налаштовуйте лише тоді, коли Jellyfin і MediaLyze бачать ті самі файли в різних точках монтування. Зіставте кожен префікс джерела Jellyfin із відповідним шляхом MediaLyze.", "pathMappingDescriptionAria": "Пояснити відповідність шляхів", "enablePathMapping": "Увімкнути відповідність шляхів", "disablePathMapping": "Вимкнути відповідність шляхів", "pathMappingStateEnabled": "Увімкнено", "pathMappingStateDisabled": "Вимкнено", "pathMappingStatePartial": "Увімкнено частково", "pathMappingTargetRequired": "Перед увімкненням відповідності шляхів потрібно вказати шлях MediaLyze.", "useMediaLyzePath": "Використати {{path}}", "savePathMapping": "Зберегти відповідність", "removePathMapping": "Видалити відповідність", "noJellyfinPaths": "Jellyfin ще не повідомив шлях джерела для цієї бібліотеки." },
+      "source": { "title": "Джерело медіа", "description": "Керуйте локальними папками, які сканує MediaLyze. Зміна шляхів зберігає налаштування й історію бібліотеки." },
+      "analysis": { "title": "Сканування й аналіз", "description": "Налаштуйте розклад сканування, пошук дублікатів, історичні дати та профіль якості цієї бібліотеки." }
+    },
     "createTitle": "Створити бібліотеку",
     "createSubtitle": "Вибір шляху обмежений директоріями всередині MEDIA_ROOT.",
     "createSubtitleDesktop": "Виберіть локальну папку, підключений мережевий диск або UNC-шлях для аналізу.",
@@ -210,6 +222,7 @@
     "editNameAria": "Редагувати назву бібліотеки {{name}}",
     "editTypeAria": "Редагувати тип медіа бібліотеки {{name}}",
     "changePath": "Змінити шлях",
+    "mediaPaths": "Шляхи MediaLyze",
     "changePathTooltip": "Змінити папки бібліотеки",
     "changePathActiveScanTooltip": "Шлях бібліотеки можна змінити після завершення активного сканування.",
     "changePathTitle": "Змінити шлях для {{name}}",
@@ -374,6 +387,7 @@
       "showMusicQualityScore": "Показувати оцінку якості в музичних бібліотеках",
       "unlimitedPanelSize": "Необмежений розмір панелей",
       "inDepthDolbyVisionProfiles": "Детальні профілі Dolby Vision",
+      "showAllPlaybacksWhenUnstacked": "Показувати всі відтворення без групування",
       "showAnalyzedFilesCsvExportTooltipAria": "Пояснення функції експорту CSV",
       "showAnalyzedFilesCsvExportTooltip": "Показує кнопку експорту CSV у перегляді проаналізованих файлів для поточного відфільтрованого набору.",
       "showFullWidthAppShellTooltipAria": "Пояснення функції повної ширини",
@@ -385,7 +399,9 @@
       "unlimitedPanelSizeTooltipAria": "Пояснення необмеженого розміру панелей",
       "unlimitedPanelSizeTooltip": "Знімає обмеження у 4 рядки висоти панелей на дашборді та в бібліотеках. Ширина панелей залишається обмеженою сіткою.",
       "inDepthDolbyVisionProfilesTooltipAria": "Пояснення детальних профілів Dolby Vision",
-      "inDepthDolbyVisionProfilesTooltip": "Показує виявлений профіль Dolby Vision, рівень, сумісність та деталі шарів Profile 7 там, де їх надає ffprobe.\n\nКоли вимкнено, всі варіанти Dolby Vision групуються як звичайний Dolby Vision."
+      "inDepthDolbyVisionProfilesTooltip": "Показує виявлений профіль Dolby Vision, рівень, сумісність та деталі шарів Profile 7 там, де їх надає ffprobe.\n\nКоли вимкнено, всі варіанти Dolby Vision групуються як звичайний Dolby Vision.",
+      "showAllPlaybacksWhenUnstackedTooltipAria": "Пояснення показу всіх негрупованих відтворень",
+      "showAllPlaybacksWhenUnstackedTooltip": "Показує всі доступні події в таблиці без пагінації, коли вибрано негрупований режим. У згрупованому режимі пагінація зберігається."
     },
     "pathKinds": {
       "local": "Локальний шлях",
@@ -448,6 +464,9 @@
       "duration": "Тривалість",
       "bitrate": "Бітрейт",
       "audioBitrate": "Аудіобітрейт",
+      "playCount": "Кількість відтворень",
+      "usersPlayed": "Користувачі, які відтворювали",
+      "userPlays": "Відтворення за користувачем",
       "bitDepth": "Бітова глибина",
       "audioBitDepth": "Глибина аудіо",
       "audioCodecs": "Аудіокодеки",
@@ -565,6 +584,7 @@
     "audioBitrateDistribution": "Аудіобітрейт",
     "audioBitDepth": "Глибина аудіо",
     "comparisonPanel": "Порівняння метрик",
+    "userPlays": "Відтворення за користувачем",
     "audioCodecs": "Аудіокодеки",
     "formatsAndCodecs": "Формати та кодеки",
     "audioSpatialProfiles": "Просторовий звук",
@@ -592,6 +612,11 @@
     "tableView": {
       "edit": "Редагувати табличний вигляд"
     },
+    "fileNameSource": {
+      "label": "Відображувана назва файлу",
+      "file": "Показувати назви файлів",
+      "jellyfin": "Показувати назви Jellyfin"
+    },
     "export": {
       "aria": "Експортувати проаналізовані файли у CSV",
       "tooltip": "Експортувати повний відфільтрований набір проаналізованих файлів у CSV",
@@ -612,6 +637,10 @@
       "file": {
         "label": "Файл та шлях",
         "placeholder": "Пошук файлу та шляху"
+      },
+      "jellyfinName": {
+        "label": "Назва Jellyfin",
+        "placeholder": "Пошук назви Jellyfin"
       },
       "size": {
         "placeholder": "напр. >4GB",
@@ -791,6 +820,7 @@
       "title": "Історія медіабібліотеки",
       "subtitle": "Щоденні знімки трендів із завершених сканувань",
       "empty": "Тренди з'являться після завершення наступного сканування.",
+      "metricEmpty": "Для вибраної метрики немає даних.",
       "controls": {
         "metric": "Оберіть метрику історії",
         "range": "Оберіть діапазон історії"
@@ -1573,6 +1603,24 @@
       "releaseNotes": "Примітки до релізу",
       "header": "Заголовок"
     }
+  },
+  "jellyfin": {
+    "title": "Jellyfin", "connection": "Підключення", "connectionDescription": "Читання метаданих, бібліотек, зображень і стану відтворення користувачів з одного сервера Jellyfin.",
+    "enableIntegration": "Увімкнути інтеграцію", "disableIntegration": "Вимкнути інтеграцію", "disconnect": "Видалити підключення", "disconnectConfirm": "Видалити підключення Jellyfin і всі локально збережені дані Jellyfin?", "disconnected": "Підключення Jellyfin і локально збережені дані видалено.",
+    "serverUrl": "URL сервера", "apiKey": "API-ключ", "apiKeyConfigured": "API-ключ налаштовано", "syncInterval": "Інтервал синхронізації (хвилини)", "syncIntervalHelpAria": "Пояснити інтервал запланованої синхронізації", "syncIntervalHelp": "Введіть 0, щоб вимкнути заплановану синхронізацію. Ручна синхронізація залишиться доступною.",
+    "testConnection": "Перевірити підключення", "syncNow": "Синхронізувати", "cancelSync": "Скасувати синхронізацію", "cancelingSync": "Скасування синхронізації", "cancelingSyncDetail": "Поточний запит Jellyfin безпечно завершується.", "cancelRequested": "Скасування запитано. Поточна операція буде безпечно завершена.", "syncCanceled": "Синхронізацію Jellyfin скасовано.", "connectionSaved": "Підключення Jellyfin збережено.", "autoSave": { "saving": "Збереження змін…", "saved": "Збережено автоматично" }, "operation": { "testingConnection": "Перевірка підключення до Jellyfin…", "savingUsers": "Збереження вибору користувачів…", "updatingMapping": "Оновлення відповідності шляхів", "updatingMappingCompact": "Оновлення відповідності та збігів…", "updatingLibrary": "Оновлення зв’язку бібліотеки", "recalculatingMatches": "MediaLyze повторно обчислює відповідності. Для великих каталогів це може тривати деякий час." }, "backgroundUpdate": { "title": "Оновлення даних Jellyfin у фоновому режимі", "detail": "Ваші зміни вже збережено. Ви можете продовжувати роботу, поки MediaLyze оновлює доступ до шляхів і відповідності.", "error": "Помилка фонового оновлення: {{message}}" }, "autoSaveFailed": "Не вдалося автоматично зберегти.", "testFailed": "Не вдалося перевірити підключення.", "testSucceeded": "Підключено до {{name}} {{version}}.", "syncSucceeded": "Синхронізовано {{items}} елементів із {{libraries}} бібліотек.",
+    "syncProgress": "Перебіг синхронізації Jellyfin", "syncItemsProgress": "{{current}} із {{total}} елементів", "syncSteps": "Етапи синхронізації", "syncPhase": { "connecting": "Підключення до Jellyfin", "users": "Завантаження користувачів відтворення", "libraries": "Завантаження бібліотек Jellyfin", "items": "Отримання елементів Jellyfin", "saving": "Збереження елементів у MediaLyze", "cleanup": "Видалення застарілих записів", "matching": "Зіставлення елементів із файлами MediaLyze" }, "syncStep": { "connection": "Підключення", "catalog": "Каталог", "items": "Елементи", "matching": "Зіставлення" },
+    "lastSync": "Остання успішна синхронізація: {{date}}", "notSynced": "Ще не синхронізовано", "matchSummary": "Зіставлено {{matched}} із {{total}} елементів", "nextSync": "Наступна синхронізація: {{date}}", "status": { "never": "Не синхронізовано", "running": "Триває синхронізація", "success": "Синхронізовано", "canceled": "Синхронізацію скасовано", "error": "Помилка синхронізації" },
+    "catalogStatus": { "label": "Синхронізація каталогу", "current": "Каталог актуальний" },
+    "matchStatus": { "label": "Зіставлення локальних файлів", "percent": "{{percent}} % зіставлено локально", "zeroWarning": "Жоден елемент Jellyfin ще не зіставлено з локальними файлами MediaLyze.", "openPathMapping": "Відкрити відповідність шляхів", "openLibraries": "Відкрити призначення бібліотек" },
+    "users": "Користувачі відтворення", "usersEmpty": "Синхронізуйте Jellyfin, щоб знайти користувачів.", "usersSelected": "Вибрано {{selected}} із {{total}}", "userSearchLabel": "Пошук користувачів відтворення", "userSearchPlaceholder": "Пошук користувачів…", "userSearchEmpty": "За цим пошуком користувачів не знайдено.", "userBulkActions": "Масовий вибір користувачів відтворення", "selectAllUsers": "Вибрати всіх", "selectNoUsers": "Не вибирати нікого", "userGroups": { "selected": "Вибрані", "unselected": "Не вибрані" }, "pathMappings": "Відповідності шляхів", "jellyfinPath": "Шлях Jellyfin", "medialyzePath": "Шлях MediaLyze", "jellyfinPathPlaceholder": "/jellyfin/media", "medialyzePathPlaceholder": "/media", "addMapping": "Додати відповідність", "mappingEnabled": "Увімкнути цю відповідність",
+    "libraries": "Бібліотеки Jellyfin", "librariesEmpty": "Бібліотеки Jellyfin ще не синхронізовано.", "libraryAssignments": "Призначення бібліотек Jellyfin", "libraryAssignmentsDescription": "Призначте кожну виявлену бібліотеку Jellyfin бібліотеці MediaLyze, файли якої вона описує. Усі призначення керуються тут.", "addDetectedLibrary": "Додати виявлену бібліотеку Jellyfin", "addDetectedLibraryDescription": "Виберіть непризначену бібліотеку Jellyfin, щоб заповнити назву й тип, а потім виберіть локальний шлях до медіа.", "detectedLibrarySelected": "Бібліотеку Jellyfin буде автоматично пов’язано після створення бібліотеки MediaLyze.", "libraryItemCount_one": "{{count}} елемент Jellyfin", "libraryItemCount_other": "{{count}} елементів Jellyfin", "libraryCreatedLinkFailed": "Бібліотеку MediaLyze створено, але призначення Jellyfin не вдалося: {{message}}", "libraryStatus": { "linked": "Пов’язано", "unassigned": "Не призначено", "accessible": "Готово до додавання", "path_unmapped": "Шлях не зіставлено", "path_not_accessible": "Шлях недоступний", "updating": "Оновлення" }, "libraryMappingTarget": "Шлях MediaLyze для {{name}}",
+    "linkedLibrary": "Пов’язано з бібліотекою {{name}}", "associatedMedialyzeLibrary": "Пов’язана бібліотека MediaLyze", "associatedJellyfinLibrary": "Пов’язана бібліотека Jellyfin", "noAssociatedLibrary": "Немає пов’язаної бібліотеки", "libraryAssociationHelpAria": "Пояснити зв’язок бібліотеки Jellyfin", "libraryAssociationHelp": "Виберіть, який каталог Jellyfin належить цій бібліотеці MediaLyze. Це не залежить від зіставлення шляхів для окремих файлів.", "linkMethod": { "manual": "Вибрано вручну", "path": "Визначено зіставленням шляхів" }, "linkedSource": "Джерело Jellyfin", "linkedLibraryTooltipAria": "Пов’язано з бібліотекою Jellyfin {{name}}", "linkedLibraryTooltip": "Пов’язано з бібліотекою Jellyfin {{name}}", "addAsLibrary": "Додати як бібліотеку MediaLyze", "addAsLibraryUnavailable": "Спочатку налаштуйте доступне зіставлення шляхів, щоб додати цю бібліотеку.", "libraryCreated": "Бібліотеку MediaLyze створено з Jellyfin.",
+    "historySource": "Історична дата додавання", "historySourceHelpAria": "Пояснити джерело дати", "historySourceHelp": "Використовує DateCreated Jellyfin для зіставлених файлів і дати MediaLyze для решти.", "historySourceMedialyze": "MediaLyze / файлова система", "historySourceJellyfin": "DateCreated Jellyfin",
+    "streaming": "Стримінг", "originalTitle": "Оригінальна назва", "productionYear": "Рік виробництва", "coverSource": "Обкладинка Jellyfin", "embeddedCoverSource": "Вбудована обкладинка", "coverAlt": "Обкладинка Jellyfin для {{title}}", "noCover": "Обкладинка недоступна", "lastSyncLabel": "Остання синхронізація", "lastSyncValue": "Остання синхронізація: {{date}}", "pureLibraryTitle": "Бібліотека Jellyfin", "pureLibraryDescription": "Ця бібліотека наразі використовує лише метадані Jellyfin. Налаштуйте доступ до шляху для повного аналізу MediaLyze.",
+    "filePanel": "Метадані Jellyfin", "noMatch": "Для цього файлу немає зіставленого елемента Jellyfin.", "seasonNumber": "Сезон {{number}}", "episodeNumber": "Епізод {{number}}", "released": "Випущено {{date}}", "added": "Додано {{date}}", "playCount_one": "Відтворено {{count}} раз", "playCount_other": "Відтворено {{count}} разів", "position": "Позиція {{duration}}", "neverPlayed": "Не відтворювалося", "noPlaybackData": "Немає даних відтворення для вибраних користувачів.",
+    "playbackHistory": { "range": "Період", "users": "Користувачі", "provider": "Провайдер", "allProviders": "Усі провайдери", "availabilityHelpAria": "Пояснити доступність окремих відтворень", "availabilityHelp": "Jellyfin зберігає окремі початки відтворень у журналі активності лише протягом обмеженого часу. Тому MediaLyze може розділяти відтворення лише від найранішої синхронізованої події; старіші дані Jellyfin залишаються зведеним значенням для кожного користувача. Точну межу позначено на часовій шкалі.", "individualHistoryFrom": "Окремі відтворення доступні від {{date}}", "scopeNote": "На часовій шкалі показано окремі початки відтворень зі збереженого журналу активності Jellyfin. Різниця із загальним лічильником Jellyfin для користувача зберігається нижче без окремої часової позначки. Тривалість і завершення не показуються, бо Jellyfin не надає їх для цих записів.", "aggregateScopeNote": "Jellyfin наразі надає лише останню часову позначку та зведений лічильник для кожного користувача. Останнє відоме відтворення показано на шкалі, а всі інші збережено нижче без окремої часової позначки.", "coverageSummary": "З часовою позначкою: {{timestamped}} з {{total}} · Без окремого часу: {{undated}}", "unknownTimestamp": "Час невідомий", "unknownTimeTitle": "Відтворення без визначеного часу", "unknownTimeDescription": "Ці відтворення походять із загального лічильника Jellyfin для користувача, але не можуть бути пов’язані з окремою подією. Вони залишаються видимими незалежно від вибраного періоду.", "unknownPlayCount_one": "{{count}} відтворення", "unknownPlayCount_other": "{{count}} відтворень", "noTimestampedPlaybacks": "Немає відтворень з окремою часовою позначкою. Усі відомі лічильники наведено нижче.", "noTimestampedResults": "Немає відтворень із часом для вибраного періоду та фільтрів.", "timeline": "Часова шкала відтворень", "firstVisible": "Початок періоду", "visibleRange": "Видимі дані", "latestVisible": "Кінець періоду", "latestCount_one": "{{count}} відтворення", "latestCount_other": "{{count}} відтворень", "groupCount_one": "{{count}} група відтворень", "groupCount_other": "{{count}} груп відтворень", "displayMode": "Відображення часової шкали", "stacking": "Групування відтворень", "stackingTooltipAria": "Пояснення групування відтворень", "stackingTooltip": "Без групування показується кожен доступний початок. Групування об’єднує послідовні події одного користувача, якщо проміжок менший за чверть тривалості медіа, або 10 хвилин без відомої тривалості.", "stackingUnavailableTooltip": "Наразі доступна лише одна зведена позначка на користувача, тому перемикання може не змінити вигляд. Вибір застосовуватиметься після синхронізації окремих подій.", "showIndividual": "Показати кожне відтворення", "showIndividualTooltip": "Показати кожну доступну подію окремо.", "availableTimestamps": "Показати доступні часові позначки відтворень", "groupNearby": "Групувати близькі відтворення", "groupNearbyTooltip": "Об’єднувати послідовні відтворення одного користувача лише за проміжку меншого за чверть тривалості, або 10 хвилин без тривалості.", "groupUnavailable": "Для групування потрібні окремі події; наразі перемикання може не мати видимого ефекту", "groupedEventLabel": "{{user}}, {{count}} близьких відтворень від {{start}} до {{end}}", "search": "Пошук даних відтворення", "export": "Експорт", "lastPlayback": "Останнє відтворення", "user": "Користувач", "plays": "Кількість відтворень", "state": "Стан", "resumePosition": "Позиція продовження", "completed": "Відтворено", "notCompleted": "Не завершено", "openDetail": "Відкрити деталі відтворення", "detail": "Деталі відтворення", "noResults": "Немає даних відтворення для вибраного періоду та фільтрів.", "previous": "Попередня сторінка", "next": "Наступна сторінка", "page": "Сторінка {{current}} з {{total}}" },
+    "catalog": { "metadataOnly": "Лише метадані Jellyfin", "library": "Бібліотека Jellyfin", "libraries": "Бібліотеки", "item": "Елемент Jellyfin", "items": "Елементи", "lastSync": "Остання синхронізація: {{date}}", "configureAccess": "Налаштувати доступ до шляху", "limitedTitle": "Обмежений аналіз каталогу", "limitedDescription": "MediaLyze може аналізувати лише метадані Jellyfin. Надайте доступ до файлової системи та зіставте бібліотеку для повного технічного аналізу.", "itemScopeDescription": "Цей перегляд містить метадані каталогу й відтворення Jellyfin, а не технічний аналіз файлу.", "overview": "Огляд каталогу Jellyfin", "knownStorage": "Відомий обсяг", "knownDuration": "Відома тривалість", "coverage": "Покриття тривалості", "itemTypes": "Типи", "productionYears": "Роки виробництва", "addedTimeline": "Час додавання", "playback": "Стан відтворення", "played": "Відтворено", "unplayed": "Не відтворено", "catalog": "Каталог", "resultCount": "Елементів: {{count}}", "search": "Пошук у Jellyfin", "typeFilter": "Фільтр типу", "allTypes": "Усі типи", "userFilter": "Користувач", "allUsers": "Усі користувачі", "playedFilter": "Фільтр відтворення", "allPlayback": "Усі стани", "sortBy": "Сортувати каталог", "toggleSort": "Змінити порядок", "title": "Назва", "type": "Тип", "year": "Рік", "added": "Додано", "duration": "Тривалість", "size": "Розмір", "plays": "Відтворення", "release": "Випуск", "empty": "Немає елементів за цими фільтрами.", "loading": "Завантаження каталогу Jellyfin…", "previous": "Попередня сторінка", "next": "Наступна сторінка", "back": "Назад", "openFullAnalysis": "Відкрити повний аналіз MediaLyze", "dashboardTitle": "Каталог Jellyfin", "notIncluded": "Окремо від технічних підсумків MediaLyze" }
   },
   "common": {
     "close": "Закрити",

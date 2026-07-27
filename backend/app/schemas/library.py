@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.app.models.entities import DuplicateDetectionMode, LibraryType, ScanMode
+from backend.app.models.entities import DuplicateDetectionMode, HistoryAddedDateSource, LibraryType, ScanMode
 from backend.app.schemas.media import DistributionItem, NumericDistribution, NumericDistributionMetricId
 from backend.app.schemas.quality import QualityProfile
 from backend.app.schemas._time import UtcDateTime
@@ -15,6 +15,12 @@ class LibraryRootRead(BaseModel):
     path_key: str
 
 
+class LinkedJellyfinLibraryRead(BaseModel):
+    id: int
+    name: str
+    last_synced_at: UtcDateTime
+
+
 class LibraryCreate(BaseModel):
     name: str
     path: str
@@ -26,6 +32,7 @@ class LibraryCreate(BaseModel):
     quality_profile: QualityProfile = Field(default_factory=QualityProfile)
     quality_profile_id: int | None = None
     show_on_dashboard: bool = True
+    history_added_date_source: HistoryAddedDateSource = HistoryAddedDateSource.medialyze
 
 
 class LibraryUpdate(BaseModel):
@@ -39,6 +46,7 @@ class LibraryUpdate(BaseModel):
     quality_profile: QualityProfile | None = None
     quality_profile_id: int | None = None
     show_on_dashboard: bool | None = None
+    history_added_date_source: HistoryAddedDateSource | None = None
 
 
 class LibrarySummary(BaseModel):
@@ -58,11 +66,13 @@ class LibrarySummary(BaseModel):
     quality_profile: QualityProfile = Field(default_factory=QualityProfile)
     quality_profile_id: int | None = None
     show_on_dashboard: bool = True
+    history_added_date_source: HistoryAddedDateSource = HistoryAddedDateSource.medialyze
     file_count: int = 0
     total_size_bytes: int = 0
     total_duration_seconds: float = 0
     ready_files: int = 0
     pending_files: int = 0
+    linked_jellyfin_library: LinkedJellyfinLibraryRead | None = None
 
 
 class LibraryStatistics(BaseModel):
@@ -93,4 +103,5 @@ class LibraryStatistics(BaseModel):
     subtitle_language_distribution: list[DistributionItem]
     subtitle_codec_distribution: list[DistributionItem]
     subtitle_source_distribution: list[DistributionItem]
+    user_play_count_distribution: list[DistributionItem]
     numeric_distributions: dict[NumericDistributionMetricId, NumericDistribution]

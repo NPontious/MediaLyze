@@ -11,6 +11,7 @@ import {
   type CompatibilityEvaluation,
   type CompatibilityProfile,
   type HardwareProfile,
+  type JellyfinFileOverlay,
   type MediaFileDetail,
   type MediaFileHistory,
   type MediaFileQualityScoreDetail,
@@ -49,6 +50,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
     },
     ...restOverrides,
@@ -463,6 +465,135 @@ afterEach(() => {
 });
 
 describe("FileDetailPage", () => {
+  it("places matched Jellyfin metadata in overview, streaming, and cover while hiding it without a match", async () => {
+    const file = createFileDetail();
+    const overlay: JellyfinFileOverlay = {
+      match: {
+        id: 5,
+        media_file_id: file.id,
+        jellyfin_item_id: 11,
+        match_method: "path",
+        confidence: 1,
+        status: "matched",
+        mismatch_reason: null,
+      },
+      item: {
+        id: 11,
+        jellyfin_item_id: "jf-11",
+        item_type: "Movie",
+        path: "/media/movie.mkv",
+        title: "Jellyfin title",
+        original_title: "Original title",
+        series_name: null,
+        season_name: null,
+        index_number: null,
+        parent_index_number: null,
+        date_created: "2026-01-01T00:00:00Z",
+        premiere_date: "2025-04-01T00:00:00Z",
+        production_year: 2025,
+        overview: "Jellyfin overview text.",
+        provider_ids: { Imdb: "tt123" },
+        image_tags: { Primary: "cover-tag" },
+        backdrop_image_tags: [],
+        match_status: "matched",
+        mismatch_reason: null,
+      },
+      user_data: [{
+        jellyfin_user_id: "user-1",
+        user_name: "Frederik",
+        play_count: 3,
+        played: true,
+        playback_position_ticks: 120_000_000,
+        last_played_date: "2026-07-14T12:00:00Z",
+        is_favorite: false,
+      }],
+      playback_events: [
+        {
+          jellyfin_activity_id: 41,
+          jellyfin_user_id: "user-1",
+          user_name: "Frederik",
+          played_at: "2026-07-14T12:00:00Z",
+        },
+        {
+          jellyfin_activity_id: 40,
+          jellyfin_user_id: "user-1",
+          user_name: "Frederik",
+          played_at: "2026-07-14T11:45:00Z",
+        },
+        {
+          jellyfin_activity_id: 39,
+          jellyfin_user_id: "user-1",
+          user_name: "Frederik",
+          played_at: "2026-07-10T08:00:00Z",
+        },
+      ],
+      individual_playback_history_start_at: "2026-07-10T08:00:00Z",
+    };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileJellyfin").mockResolvedValue(overlay);
+
+    const { container } = renderPage(file.id);
+
+    expect(await screen.findByText("Jellyfin overview text.")).toBeInTheDocument();
+    expect(screen.getByText("Production year")).toBeInTheDocument();
+    const topBadges = container.querySelector(".file-detail-overview-badges");
+    expect(topBadges).not.toBeNull();
+    expect(within(topBadges as HTMLElement).getByText("Jellyfin")).toBeInTheDocument();
+    expect(within(topBadges as HTMLElement).getByText("Movie")).toBeInTheDocument();
+    expect(container.querySelector(".file-detail-jellyfin-overview .badge")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Jellyfin metadata" })).not.toBeInTheDocument();
+
+    await selectFileDetailPanel("Streaming");
+    expect(screen.getAllByText("Frederik")).not.toHaveLength(0);
+    expect(screen.getByRole("group", { name: "History range" })).toBeInTheDocument();
+    const playbackTable = screen.getByRole("table");
+    expect(playbackTable).toBeInTheDocument();
+    expect(within(playbackTable).getAllByText("1")).toHaveLength(3);
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(3);
+    expect(
+      screen.getByText("Timestamped: 3 of 3 · Without an individual timestamp: 0"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".playback-history-availability-boundary")).not.toBeNull();
+    expect(screen.getByText(/Individual playbacks available from/)).toBeInTheDocument();
+    const availabilityHelp = screen.getByRole("button", {
+      name: "Explain individual playback availability",
+    });
+    expect(availabilityHelp).toHaveTextContent("?");
+    fireEvent.click(availabilityHelp);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /separate playbacks only from the earliest event it has synchronized/,
+    );
+    expect(screen.getByText(/Individual playback starts imported/)).toBeInTheDocument();
+    expect(within(playbackTable).queryByText("Playback state")).not.toBeInTheDocument();
+    expect(screen.queryByText("Matched by path")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "This match is wrong" })).not.toBeInTheDocument();
+
+    await selectFileDetailPanel("Cover");
+    expect(screen.getByRole("img", { name: "Jellyfin cover for Jellyfin title" })).toBeInTheDocument();
+  });
+
+  it("does not expose Jellyfin-specific UI for an unmatched MediaLyze file", async () => {
+    const file = createFileDetail();
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileJellyfin").mockResolvedValue({
+      match: null,
+      item: null,
+      user_data: [],
+      playback_events: [],
+      individual_playback_history_start_at: null,
+    });
+
+    renderPage(file.id);
+
+    expect(await screen.findByText(file.filename)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Streaming" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Production year")).not.toBeInTheDocument();
+  });
+
   it("groups favorite compatibility results into expandable hardware, software, and combination sections", async () => {
     const file: MediaFileDetail = {
       ...createFileDetail(),
@@ -1066,7 +1197,7 @@ describe("FileDetailPage", () => {
     expect(entries[3]).toHaveTextContent("Skipped");
   });
 
-  it("falls back to overview when the stored active panel is the retired format panel", async () => {
+  it("always opens on overview even when an old active-panel preference exists", async () => {
     const file = createFileDetail();
     window.localStorage.setItem("medialyze-file-detail-active-panel", "format");
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
@@ -1078,10 +1209,10 @@ describe("FileDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Format" })).not.toBeInTheDocument();
     expect(screen.getByText("Matroska")).toBeInTheDocument();
-    await waitFor(() => expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("overview"));
+    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("format");
   });
 
-  it("persists active navigation selection across file detail pages", async () => {
+  it("starts each opened file on overview instead of carrying over navigation position", async () => {
     const file = createFileDetail();
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
@@ -1091,13 +1222,12 @@ describe("FileDetailPage", () => {
 
     await selectFileDetailPanel("Video streams");
     expect(await screen.findByRole("heading", { name: "Video streams" })).toBeInTheDocument();
-    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("videoStreams");
+    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBeNull();
 
     cleanup();
     renderPage(file.id + 1);
 
-    expect(await screen.findByRole("heading", { name: "Video streams" })).toBeInTheDocument();
-    expect(screen.getAllByText("Main 10").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
   });
 
   it("persists collapsed navigation state", async () => {
@@ -1275,7 +1405,7 @@ describe("FileDetailPage", () => {
     renderPage(file.id);
 
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
-    await waitFor(() => expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("overview"));
+    expect(window.localStorage.getItem("medialyze-file-detail-active-panel")).toBe("chapters");
     expect(screen.queryByRole("button", { name: "Chapters" })).not.toBeInTheDocument();
   });
 

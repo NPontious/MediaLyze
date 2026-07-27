@@ -23,6 +23,8 @@ type TooltipTriggerProps = {
   onClick?: MouseEventHandler<HTMLButtonElement>;
   disabled?: boolean;
   pinOnClick?: boolean;
+  ariaPressed?: boolean;
+  dataToggleKey?: string;
   children?: ReactNode;
 };
 
@@ -44,6 +46,8 @@ export function TooltipTrigger({
   onClick,
   disabled = false,
   pinOnClick = true,
+  ariaPressed,
+  dataToggleKey,
   children = "?",
 }: TooltipTriggerProps) {
   const tooltipId = useId();
@@ -274,6 +278,8 @@ export function TooltipTrigger({
         aria-label={ariaLabel}
         aria-describedby={isOpen ? tooltipId : undefined}
         aria-expanded={isOpen}
+        aria-pressed={ariaPressed}
+        data-toggle-key={dataToggleKey}
         disabled={disabled}
         className={["tooltip-trigger", className ?? ""].filter(Boolean).join(" ")}
         onMouseEnter={() => {

@@ -156,3 +156,7 @@ Output:
 - `npm run dist` creates the platform installer format configured in `desktop/package.json`.
 - The desktop build also regenerates the native app icons from `frontend/public/favicon.svg`.
 - GitHub release builds use the same packaging flow and attach the resulting desktop artifacts to the release automatically.
+
+## GitHub Actions
+
+Automatic release packaging, manual development builds, workflow inputs, caching, and failure recovery are documented in [GitHub Actions](github_actions.md).

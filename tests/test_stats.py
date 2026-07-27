@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
@@ -21,6 +21,73 @@ from backend.app.models.entities import (
     VideoStream,
 )
 from backend.app.services.stats import build_dashboard
+
+
+def test_dashboard_requested_panels_skip_unrelated_queries_and_keep_full_cache_independent() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement.lower())
+
+    with session_factory() as db:
+        library = Library(
+            name="Panel-scoped dashboard",
+            path="/tmp/panel-scoped-dashboard",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        media_file = MediaFile(
+            library_id=library.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=100,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+            quality_score=5,
+        )
+        db.add(media_file)
+        db.flush()
+        db.add(VideoStream(media_file_id=media_file.id, stream_index=0, codec="h264", width=1920, height=1080))
+        db.commit()
+
+        statements.clear()
+        container_only = build_dashboard(db, requested_panels=["container"])
+
+        assert container_only.container_distribution
+        assert container_only.video_codec_distribution == []
+        assert container_only.numeric_distributions == {}
+        assert not any("video_streams" in statement for statement in statements)
+        assert not any("audio_streams" in statement for statement in statements)
+        assert not any("subtitle_streams" in statement for statement in statements)
+
+        complete = build_dashboard(db)
+        statements.clear()
+        from_complete_cache = build_dashboard(db, requested_panels=["container"])
+
+    assert complete.video_codec_distribution
+    assert from_complete_cache.container_distribution
+    assert from_complete_cache.video_codec_distribution == []
+    assert statements == []
+
+
+def test_dashboard_panel_cache_normalizes_requested_panel_order() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        first = build_dashboard(db, requested_panels=["video_codec", "container"])
+        second = build_dashboard(db, requested_panels=["container", "video_codec"])
+
+    assert second is first
 
 
 def test_dashboard_counts_primary_video_only() -> None:

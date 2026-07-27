@@ -3,9 +3,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_app_settings, get_db_session, get_scan_runtime
@@ -28,6 +28,35 @@ from backend.app.schemas.duplicates import (
 )
 from backend.app.schemas.history import HistoryReconstructionStatusRead, HistoryStorageRead
 from backend.app.schemas.library import LibraryCreate, LibraryStatistics, LibrarySummary, LibraryUpdate
+from backend.app.schemas.jellyfin import (
+    JellyfinConnectionRead,
+    JellyfinConnectionUpdate,
+    JellyfinCatalogSummaryRead,
+    JellyfinFileOverlayRead,
+    JellyfinItemDetailRead,
+    JellyfinItemRead,
+    JellyfinLibraryItemPageRead,
+    JellyfinLibraryLinkUpdate,
+    JellyfinLibraryOverviewRead,
+    JellyfinLibraryRead,
+    JellyfinMatchCreate,
+    JellyfinMatchRecomputeStatusRead,
+    JellyfinMatchRead,
+    JellyfinPathMappingCreate,
+    JellyfinPathMappingBatchUpdate,
+    JellyfinPathMappingRead,
+    JellyfinPathMappingUpdate,
+    JellyfinPlaybackEventRead,
+    JellyfinSyncCancelRead,
+    JellyfinSyncStartRead,
+    JellyfinSyncStatusRead,
+    JellyfinTestRead,
+    JellyfinTestRequest,
+    JellyfinUnmatchedRead,
+    JellyfinUserItemDataRead,
+    JellyfinUserRead,
+    JellyfinUsersUpdate,
+)
 from backend.app.schemas.library_history import DashboardHistoryResponse, LibraryHistoryResponse
 from backend.app.schemas.media import (
     DashboardResponse,
@@ -46,7 +75,6 @@ from backend.app.schemas.path_access import PathInspectRequest, PathInspectRespo
 from backend.app.schemas.quality_profiles import QualityProfileCreate, QualityProfileRead, QualityProfileUpdate
 from backend.app.schemas.scan import (
     RecentScanJobPageRead,
-    RecentScanJobRead,
     ScanCancelResponse,
     ScanJobDetailRead,
     ScanJobRead,
@@ -55,8 +83,18 @@ from backend.app.schemas.scan import (
 from backend.app.schemas.update_status import UpdateStatusRead
 from backend.app.models.entities import (
     DuplicateDetectionMode,
+    JellyfinConnection,
+    JellyfinItem,
+    JellyfinLibrary,
+    JellyfinMediaMatch,
+    JellyfinPathMapping,
+    JellyfinPlaybackEvent,
+    JellyfinUser,
+    JellyfinUserItemData,
     JobStatus,
     Library,
+    LibraryType,
+    MediaFile,
     ScanJob,
     ScanTriggerSource,
 )
@@ -93,6 +131,23 @@ from backend.app.services.library_service import (
     list_libraries,
     update_library_settings,
 )
+from backend.app.services.jellyfin_client import JellyfinClient, JellyfinError
+from backend.app.services.jellyfin_catalog import (
+    catalog_summary as get_jellyfin_catalog_summary,
+    library_items as get_jellyfin_library_items,
+    library_overview as get_jellyfin_library_overview,
+    library_read as get_jellyfin_library_read,
+    item_duration as get_jellyfin_item_duration,
+    item_size as get_jellyfin_item_size,
+)
+from backend.app.services.jellyfin_images import JELLYFIN_IMAGE_CACHE
+from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
+from backend.app.services.jellyfin_jobs import (
+    get_active_jellyfin_sync_job,
+    get_latest_jellyfin_sync_job,
+)
+from backend.app.services.jellyfin_progress import get_jellyfin_progress
+from backend.app.services.jellyfin_sync import get_or_create_jellyfin_connection
 from backend.app.services.media_search import LibraryFileSearchFilters, SearchValidationError
 from backend.app.services.media_service import (
     generate_media_chapters_csv_export,
@@ -128,6 +183,7 @@ from backend.app.services.scan_jobs import (
 )
 from backend.app.services.stat_comparisons import get_dashboard_comparison, get_library_comparison
 from backend.app.services.stats import build_dashboard
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.telemetry import build_telemetry_payload, send_current_telemetry_snapshot
 from backend.app.services.update_status import get_or_check_update_status
 
@@ -166,6 +222,7 @@ def _library_file_search_filters(
     search_audio_codecs: str = "",
     search_audio_spatial_profiles: str = "",
     search_audio_languages: str = "",
+    search_jellyfin_name: str = "",
     search_audio_title: str = "",
     search_audio_artist: str = "",
     search_audio_album: str = "",
@@ -211,6 +268,7 @@ def _library_file_search_filters(
         search_audio_codecs=search_audio_codecs,
         search_audio_spatial_profiles=search_audio_spatial_profiles,
         search_audio_languages=search_audio_languages,
+        search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -531,6 +589,642 @@ def cancel_active_scan_jobs(
     return ScanCancelResponse(canceled_jobs=len(canceled_ids))
 
 
+def _jellyfin_connection_read(
+    connection: JellyfinConnection | None,
+    runtime: ScanRuntimeManager | None = None,
+    settings: Settings | None = None,
+) -> JellyfinConnectionRead:
+    if connection is None:
+        return JellyfinConnectionRead()
+    next_run = None
+    if runtime is not None:
+        job = runtime.scheduler.get_job("jellyfin-sync")
+        next_run = job.next_run_time if job else None
+    return JellyfinConnectionRead(
+        base_url=connection.base_url,
+        enabled=connection.enabled,
+        sync_interval_minutes=connection.sync_interval_minutes,
+        api_key_configured=bool(
+            read_jellyfin_api_key(connection, settings.jellyfin_api_key_file if settings else None)
+        ),
+        server_name=connection.server_name,
+        server_version=connection.server_version,
+        last_status=connection.last_status,
+        last_error=connection.last_error,
+        last_sync_started_at=connection.last_sync_started_at,
+        last_sync_finished_at=connection.last_sync_finished_at,
+        last_successful_sync_at=connection.last_successful_sync_at,
+        next_scheduled_sync_at=next_run,
+    )
+
+
+def _jellyfin_item_read(item: JellyfinItem) -> JellyfinItemRead:
+    return JellyfinItemRead(
+        id=item.id,
+        jellyfin_item_id=item.jellyfin_item_id,
+        item_type=item.item_type,
+        path=item.path,
+        title=item.title,
+        original_title=item.original_title,
+        series_name=item.series_name,
+        season_name=item.season_name,
+        index_number=item.index_number,
+        parent_index_number=item.parent_index_number,
+        date_created=item.date_created,
+        premiere_date=item.premiere_date,
+        production_year=item.production_year,
+        overview=item.overview,
+        provider_ids=item.provider_ids or {},
+        image_tags=item.image_tags or {},
+        backdrop_image_tags=item.backdrop_image_tags or [],
+        match_status=item.match_status,
+        mismatch_reason=item.mismatch_reason,
+    )
+
+
+@router.get("/jellyfin/connection", response_model=JellyfinConnectionRead)
+def jellyfin_connection_get(
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
+) -> JellyfinConnectionRead:
+    return _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime, settings)
+
+
+@router.patch("/jellyfin/connection", response_model=JellyfinConnectionRead)
+def jellyfin_connection_update(
+    payload: JellyfinConnectionUpdate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
+) -> JellyfinConnectionRead:
+    connection = get_or_create_jellyfin_connection(db)
+    previous_base_url = connection.base_url
+    previous_api_key = connection.api_key
+    if payload.base_url is not None:
+        connection.base_url = payload.base_url
+    if payload.clear_api_key:
+        connection.api_key = ""
+    elif payload.api_key is not None and payload.api_key.strip():
+        connection.api_key = payload.api_key.strip()
+    if payload.enabled is not None:
+        connection.enabled = payload.enabled
+    if payload.sync_interval_minutes is not None:
+        connection.sync_interval_minutes = payload.sync_interval_minutes
+    if connection.enabled and (
+        not connection.base_url
+        or not read_jellyfin_api_key(connection, settings.jellyfin_api_key_file)
+    ):
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Jellyfin URL and API key are required before enabling sync")
+    db.commit()
+    db.refresh(connection)
+    if connection.base_url != previous_base_url or connection.api_key != previous_api_key:
+        JELLYFIN_IMAGE_CACHE.clear()
+    runtime.refresh_jellyfin_schedule()
+    return _jellyfin_connection_read(connection, runtime, settings)
+
+
+@router.delete("/jellyfin/connection", status_code=204)
+def jellyfin_connection_delete(
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> None:
+    if get_active_jellyfin_sync_job(db) is not None:
+        raise HTTPException(status_code=409, detail="Cancel the active Jellyfin sync before disconnecting")
+    db.execute(delete(JellyfinMediaMatch))
+    db.execute(delete(JellyfinUserItemData))
+    db.execute(delete(JellyfinItem))
+    db.execute(delete(JellyfinLibrary))
+    db.execute(delete(JellyfinPathMapping))
+    db.execute(delete(JellyfinUser))
+    connection = db.get(JellyfinConnection, 1)
+    if connection is not None:
+        connection.base_url = ""
+        connection.api_key = ""
+        connection.enabled = False
+        connection.server_name = None
+        connection.server_version = None
+        connection.last_status = "never"
+        connection.last_error = None
+        connection.last_sync_started_at = None
+        connection.last_sync_finished_at = None
+        connection.last_successful_sync_at = None
+    db.commit()
+    JELLYFIN_IMAGE_CACHE.clear()
+    runtime.refresh_jellyfin_schedule()
+
+
+@router.post("/jellyfin/test", response_model=JellyfinTestRead)
+def jellyfin_test(
+    payload: JellyfinTestRequest,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> JellyfinTestRead:
+    stored = db.get(JellyfinConnection, 1)
+    base_url = payload.base_url or (stored.base_url if stored else "")
+    api_key = payload.api_key or read_jellyfin_api_key(stored, settings.jellyfin_api_key_file)
+    try:
+        with JellyfinClient(base_url, api_key) as jellyfin_client:
+            info = jellyfin_client.get_system_info()
+    except JellyfinError as exc:
+        return JellyfinTestRead(ok=False, error=str(exc))
+    return JellyfinTestRead(
+        ok=True,
+        server_name=info.get("ServerName"),
+        server_version=info.get("Version"),
+    )
+
+
+@router.post("/jellyfin/sync", response_model=JellyfinSyncStartRead, status_code=202)
+def jellyfin_sync(
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinSyncStartRead:
+    try:
+        return JellyfinSyncStartRead.model_validate(runtime.request_jellyfin_sync())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/jellyfin/sync/cancel", response_model=JellyfinSyncCancelRead)
+def jellyfin_sync_cancel(
+    job_id: int | None = Query(default=None, ge=1),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinSyncCancelRead:
+    return JellyfinSyncCancelRead.model_validate(runtime.cancel_jellyfin_sync(job_id))
+
+
+@router.get("/jellyfin/sync/status", response_model=JellyfinSyncStatusRead)
+def jellyfin_sync_status(
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
+) -> JellyfinSyncStatusRead:
+    connection = _jellyfin_connection_read(db.get(JellyfinConnection, 1), runtime, settings)
+    progress = get_jellyfin_progress()
+    job = get_active_jellyfin_sync_job(db) or get_latest_jellyfin_sync_job(db)
+    job_active = bool(job and job.active_lock == 1 and job.status in {JobStatus.queued, JobStatus.running})
+    persisted_progress = bool(job and job.progress_phase is not None)
+    return JellyfinSyncStatusRead(
+        **connection.model_dump(),
+        sync_job_id=job.id if job else None,
+        sync_job_status=job.status.value if job else None,
+        sync_trigger_source=job.trigger_source.value if job else None,
+        sync_job_active=job_active,
+        sync_job_error=job.error if job else None,
+        sync_heartbeat_at=job.heartbeat_at if job else None,
+        sync_summary=dict(job.sync_summary or {}) if job else {},
+        sync_phase=job.progress_phase if persisted_progress else progress["phase"],
+        sync_phase_detail=job.progress_detail if persisted_progress else progress["detail"],
+        sync_current=int(job.progress_current or 0) if persisted_progress else int(progress["current"] or 0),
+        sync_total=(
+            int(job.progress_total) if persisted_progress and job.progress_total is not None
+            else int(progress["total"]) if not persisted_progress and progress["total"] is not None
+            else None
+        ),
+        sync_progress_tracks=(
+            progress["tracks"]
+            if (job is None and progress["job_id"] is None)
+            or (job is not None and progress["job_id"] == job.id)
+            else []
+        ),
+        cancellation_requested=bool(
+            (job.cancellation_requested if job else False)
+            or progress["cancellation_requested"]
+        ),
+        item_count=db.scalar(select(func.count(JellyfinItem.id))) or 0,
+        matched_item_count=db.scalar(
+            select(func.count(JellyfinItem.id)).where(JellyfinItem.match_status == "matched")
+        ) or 0,
+        unmatched_item_count=db.scalar(
+            select(func.count(JellyfinItem.id)).where(JellyfinItem.match_status != "matched")
+        ) or 0,
+        library_count=db.scalar(select(func.count(JellyfinLibrary.id))) or 0,
+        user_count=db.scalar(select(func.count(JellyfinUser.jellyfin_user_id))) or 0,
+    )
+
+
+@router.get("/jellyfin/users", response_model=list[JellyfinUserRead])
+def jellyfin_users(db: Session = Depends(get_db_session)) -> list[JellyfinUser]:
+    return list(db.scalars(select(JellyfinUser).order_by(JellyfinUser.name.asc())))
+
+
+@router.patch("/jellyfin/users", response_model=list[JellyfinUserRead])
+def jellyfin_users_update(
+    payload: JellyfinUsersUpdate,
+    db: Session = Depends(get_db_session),
+) -> list[JellyfinUser]:
+    enabled_ids = set(payload.enabled_user_ids)
+    users = list(db.scalars(select(JellyfinUser).order_by(JellyfinUser.name.asc())))
+    known_ids = {user.jellyfin_user_id for user in users}
+    if enabled_ids - known_ids:
+        raise HTTPException(status_code=400, detail="Unknown Jellyfin user id")
+    for user in users:
+        user.enabled_for_sync = user.jellyfin_user_id in enabled_ids
+    disabled_ids = [user.jellyfin_user_id for user in users if not user.enabled_for_sync]
+    if disabled_ids:
+        db.execute(
+            delete(JellyfinUserItemData).where(
+                JellyfinUserItemData.jellyfin_user_id.in_(disabled_ids)
+            )
+        )
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+    return users
+
+
+@router.get("/jellyfin/path-mappings", response_model=list[JellyfinPathMappingRead])
+def jellyfin_path_mappings(db: Session = Depends(get_db_session)) -> list[JellyfinPathMapping]:
+    return list(db.scalars(select(JellyfinPathMapping).order_by(JellyfinPathMapping.id.asc())))
+
+
+def _queue_jellyfin_mapping_refresh(
+    db: Session,
+    runtime: ScanRuntimeManager,
+) -> None:
+    for library in db.scalars(
+        select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id.is_(None))
+    ):
+        library.mapped_status = "updating"
+    db.commit()
+    runtime.request_jellyfin_match_recompute()
+
+
+@router.put("/jellyfin/path-mappings/batch", response_model=list[JellyfinPathMappingRead])
+def jellyfin_path_mappings_batch_update(
+    payload: JellyfinPathMappingBatchUpdate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> list[JellyfinPathMapping]:
+    update_ids = {item.id for item in payload.mappings if item.id is not None}
+    requested_ids = update_ids | set(payload.delete_ids)
+    existing_by_id = {
+        mapping.id: mapping
+        for mapping in db.scalars(
+            select(JellyfinPathMapping).where(JellyfinPathMapping.id.in_(requested_ids))
+        )
+    } if requested_ids else {}
+    missing_ids = sorted(requested_ids - set(existing_by_id))
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Path mapping not found: {missing_ids[0]}",
+        )
+
+    updated_mappings: list[JellyfinPathMapping] = []
+    try:
+        for item in payload.mappings:
+            mapping = existing_by_id.get(item.id) if item.id is not None else JellyfinPathMapping()
+            mapping.jellyfin_path_prefix = item.jellyfin_path_prefix
+            mapping.medialyze_path_prefix = item.medialyze_path_prefix
+            mapping.enabled = item.enabled
+            if item.id is None:
+                db.add(mapping)
+            updated_mappings.append(mapping)
+        for mapping_id in payload.delete_ids:
+            db.delete(existing_by_id[mapping_id])
+
+        for library in db.scalars(
+            select(JellyfinLibrary).where(JellyfinLibrary.linked_library_id.is_(None))
+        ):
+            library.mapped_status = "updating"
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    runtime.request_jellyfin_match_recompute()
+    for mapping in updated_mappings:
+        db.refresh(mapping)
+    return updated_mappings
+
+
+@router.post("/jellyfin/path-mappings", response_model=JellyfinPathMappingRead, status_code=201)
+def jellyfin_path_mapping_create(
+    payload: JellyfinPathMappingCreate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinPathMapping:
+    mapping = JellyfinPathMapping(**payload.model_dump())
+    db.add(mapping)
+    _queue_jellyfin_mapping_refresh(db, runtime)
+    db.refresh(mapping)
+    return mapping
+
+
+@router.patch("/jellyfin/path-mappings/{mapping_id}", response_model=JellyfinPathMappingRead)
+def jellyfin_path_mapping_update(
+    mapping_id: int,
+    payload: JellyfinPathMappingUpdate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinPathMapping:
+    mapping = db.get(JellyfinPathMapping, mapping_id)
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="Path mapping not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(mapping, key, value)
+    _queue_jellyfin_mapping_refresh(db, runtime)
+    db.refresh(mapping)
+    return mapping
+
+
+@router.delete("/jellyfin/path-mappings/{mapping_id}", status_code=204)
+def jellyfin_path_mapping_delete(
+    mapping_id: int,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> None:
+    mapping = db.get(JellyfinPathMapping, mapping_id)
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="Path mapping not found")
+    db.delete(mapping)
+    _queue_jellyfin_mapping_refresh(db, runtime)
+
+
+@router.get(
+    "/jellyfin/matches/recompute/status",
+    response_model=JellyfinMatchRecomputeStatusRead,
+)
+def jellyfin_match_recompute_status(
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinMatchRecomputeStatusRead:
+    return JellyfinMatchRecomputeStatusRead.model_validate(
+        runtime.get_jellyfin_match_recompute_status()
+    )
+
+
+@router.get("/jellyfin/libraries", response_model=list[JellyfinLibraryRead])
+def jellyfin_libraries(db: Session = Depends(get_db_session)) -> list[JellyfinLibraryRead]:
+    return [
+        get_jellyfin_library_read(db, library)
+        for library in db.scalars(select(JellyfinLibrary).order_by(JellyfinLibrary.name.asc()))
+    ]
+
+
+@router.patch(
+    "/jellyfin/libraries/{jellyfin_library_id}/link",
+    response_model=JellyfinLibraryRead,
+)
+def jellyfin_library_link_update(
+    jellyfin_library_id: int,
+    payload: JellyfinLibraryLinkUpdate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> JellyfinLibraryRead:
+    source = _jellyfin_library_or_404(db, jellyfin_library_id)
+    if payload.linked_library_id is not None and db.get(Library, payload.linked_library_id) is None:
+        raise HTTPException(status_code=404, detail="MediaLyze library not found")
+
+    if payload.linked_library_id is not None:
+        for other in db.scalars(
+            select(JellyfinLibrary).where(
+                JellyfinLibrary.id != source.id,
+                JellyfinLibrary.linked_library_id == payload.linked_library_id,
+            )
+        ):
+            other.linked_library_id = None
+            other.link_method = "manual"
+            other.mapped_status = "updating"
+
+    source.linked_library_id = payload.linked_library_id
+    source.link_method = "manual"
+    if payload.linked_library_id is not None:
+        source.mapped_status = "linked"
+    else:
+        source.mapped_status = "updating"
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+    runtime.request_jellyfin_match_recompute()
+    db.refresh(source)
+    return get_jellyfin_library_read(db, source)
+
+
+@router.get("/jellyfin/catalog/summary", response_model=JellyfinCatalogSummaryRead)
+def jellyfin_catalog_summary(db: Session = Depends(get_db_session)) -> JellyfinCatalogSummaryRead:
+    return get_jellyfin_catalog_summary(db)
+
+
+def _jellyfin_library_or_404(db: Session, library_id: int) -> JellyfinLibrary:
+    library = db.get(JellyfinLibrary, library_id)
+    if library is None:
+        raise HTTPException(status_code=404, detail="Jellyfin library not found")
+    return library
+
+
+def _validate_jellyfin_user(db: Session, user_id: str | None) -> None:
+    if user_id is None:
+        return
+    user = db.get(JellyfinUser, user_id)
+    if user is None or not user.enabled_for_sync:
+        raise HTTPException(status_code=400, detail="Unknown or disabled Jellyfin user")
+
+
+@router.get(
+    "/jellyfin/libraries/{jellyfin_library_id}/overview",
+    response_model=JellyfinLibraryOverviewRead,
+)
+def jellyfin_library_overview(
+    jellyfin_library_id: int,
+    user_id: str | None = Query(default=None),
+    db: Session = Depends(get_db_session),
+) -> JellyfinLibraryOverviewRead:
+    library = _jellyfin_library_or_404(db, jellyfin_library_id)
+    _validate_jellyfin_user(db, user_id)
+    return get_jellyfin_library_overview(db, library, user_id)
+
+
+@router.get(
+    "/jellyfin/libraries/{jellyfin_library_id}/items",
+    response_model=JellyfinLibraryItemPageRead,
+)
+def jellyfin_library_items(
+    jellyfin_library_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    search: str | None = Query(default=None, max_length=512),
+    item_type: str | None = Query(default=None, max_length=64),
+    production_year: int | None = Query(default=None, ge=0, le=9999),
+    played: bool | None = Query(default=None),
+    user_id: str | None = Query(default=None),
+    sort_key: Literal["title", "year", "added", "duration", "size", "play_count"] = "title",
+    sort_direction: Literal["asc", "desc"] = "asc",
+    db: Session = Depends(get_db_session),
+) -> JellyfinLibraryItemPageRead:
+    library = _jellyfin_library_or_404(db, jellyfin_library_id)
+    _validate_jellyfin_user(db, user_id)
+    return get_jellyfin_library_items(
+        db,
+        library,
+        offset=offset,
+        limit=limit,
+        search=search,
+        item_type=item_type,
+        production_year=production_year,
+        played=played,
+        user_id=user_id,
+        sort_key=sort_key,
+        sort_direction=sort_direction,
+    )
+
+
+def _jellyfin_library_type(collection_type: str | None) -> LibraryType:
+    return {
+        "movies": LibraryType.movies,
+        "tvshows": LibraryType.series,
+        "music": LibraryType.music,
+        "books": LibraryType.audiobooks,
+        "mixed": LibraryType.mixed,
+    }.get((collection_type or "").casefold(), LibraryType.other)
+
+
+@router.post(
+    "/jellyfin/libraries/{jellyfin_library_id}/create-medialyze-library",
+    response_model=LibrarySummary,
+    status_code=201,
+)
+def jellyfin_library_create_medialyze(
+    jellyfin_library_id: int,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> LibrarySummary:
+    source = db.get(JellyfinLibrary, jellyfin_library_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Jellyfin library not found")
+    if source.linked_library_id is not None:
+        raise HTTPException(status_code=409, detail="Jellyfin library is already linked")
+    if source.mapped_status != "accessible" or not source.mapped_locations:
+        raise HTTPException(status_code=400, detail="Mapped Jellyfin library path is not accessible")
+    if db.scalar(select(Library.id).where(Library.name == source.name)) is not None:
+        raise HTTPException(status_code=409, detail="A MediaLyze library with this name already exists")
+    paths = list(source.mapped_locations)
+    if not settings.is_desktop:
+        try:
+            paths = [str(Path(path).resolve().relative_to(settings.media_root.resolve())) for path in paths]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Mapped path must be below MEDIA_ROOT") from exc
+    try:
+        library = create_library(
+            db,
+            settings,
+            LibraryCreate(
+                name=source.name,
+                path=paths[0],
+                paths=paths,
+                type=_jellyfin_library_type(source.collection_type),
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    source.linked_library_id = library.id
+    source.link_method = "manual"
+    source.mapped_status = "linked"
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+    runtime.sync_library(library.id)
+    result = get_library_summary(db, library.id)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Failed to load created library")
+    return result
+
+
+@router.get("/jellyfin/unmatched", response_model=list[JellyfinUnmatchedRead])
+def jellyfin_unmatched(
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db_session),
+) -> list[JellyfinUnmatchedRead]:
+    items = list(
+        db.scalars(
+            select(JellyfinItem)
+            .where(JellyfinItem.match_status != "matched")
+            .order_by(JellyfinItem.title.asc())
+            .limit(limit)
+        )
+    )
+    suggested_names = dict(
+        db.execute(
+            select(MediaFile.id, MediaFile.filename).where(
+                MediaFile.id.in_([item.suggested_media_file_id for item in items if item.suggested_media_file_id])
+            )
+        ).all()
+    )
+    return [
+        JellyfinUnmatchedRead(
+            item=_jellyfin_item_read(item),
+            suggested_media_file_id=item.suggested_media_file_id,
+            suggested_media_file_name=suggested_names.get(item.suggested_media_file_id),
+        )
+        for item in items
+    ]
+
+
+@router.post("/jellyfin/matches", response_model=JellyfinMatchRead, status_code=201)
+def jellyfin_match_create(
+    payload: JellyfinMatchCreate,
+    db: Session = Depends(get_db_session),
+) -> JellyfinMediaMatch:
+    item = db.get(JellyfinItem, payload.jellyfin_item_id)
+    media_file = db.get(MediaFile, payload.media_file_id)
+    if item is None or media_file is None:
+        raise HTTPException(status_code=404, detail="Jellyfin item or media file not found")
+    displaced_matches = list(
+        db.scalars(
+            select(JellyfinMediaMatch).where(
+                (JellyfinMediaMatch.jellyfin_item_id == item.id)
+                | (JellyfinMediaMatch.media_file_id == media_file.id)
+            )
+        )
+    )
+    displaced_item_ids = {
+        match.jellyfin_item_id for match in displaced_matches if match.jellyfin_item_id != item.id
+    }
+    db.execute(
+        delete(JellyfinMediaMatch).where(
+            (JellyfinMediaMatch.jellyfin_item_id == item.id)
+            | (JellyfinMediaMatch.media_file_id == media_file.id)
+        )
+    )
+    match = JellyfinMediaMatch(
+        media_file_id=media_file.id,
+        jellyfin_item_id=item.id,
+        match_method="manual",
+        confidence=1.0,
+        status="matched",
+    )
+    db.add(match)
+    item.match_status = "matched"
+    item.mismatch_reason = None
+    item.suggested_media_file_id = None
+    if displaced_item_ids:
+        for displaced_item in db.scalars(
+            select(JellyfinItem).where(JellyfinItem.id.in_(displaced_item_ids))
+        ):
+            displaced_item.match_status = "unmatched"
+            displaced_item.mismatch_reason = "manual_match_reassigned"
+            displaced_item.suggested_media_file_id = None
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+    db.refresh(match)
+    return match
+
+
+@router.delete("/jellyfin/matches/{match_id}", status_code=204)
+def jellyfin_match_delete(match_id: int, db: Session = Depends(get_db_session)) -> None:
+    match = db.get(JellyfinMediaMatch, match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Jellyfin match not found")
+    item = db.get(JellyfinItem, match.jellyfin_item_id)
+    db.delete(match)
+    if item is not None:
+        item.match_status = "ignored"
+        item.mismatch_reason = "manual_rejected"
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+
+
 @router.get("/libraries", response_model=list[LibrarySummary])
 def libraries(db: Session = Depends(get_db_session)) -> list[LibrarySummary]:
     return list_libraries(db)
@@ -700,6 +1394,7 @@ def library_series_grouped_detail(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -752,6 +1447,7 @@ def library_series_grouped_detail(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -870,6 +1566,7 @@ def library_files(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -905,6 +1602,7 @@ def library_files(
         "size",
         "bitrate",
         "audio_bitrate",
+        "play_count",
         "bit_depth",
         "audio_title",
         "audio_artist",
@@ -972,6 +1670,7 @@ def library_files(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -1033,6 +1732,7 @@ def library_grouped_files(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -1068,6 +1768,7 @@ def library_grouped_files(
         "size",
         "bitrate",
         "audio_bitrate",
+        "play_count",
         "bit_depth",
         "audio_title",
         "audio_artist",
@@ -1137,6 +1838,7 @@ def library_grouped_files(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -1193,6 +1895,7 @@ def library_files_export_csv(
     search_audio_codecs: str = Query(default="", max_length=200),
     search_audio_spatial_profiles: str = Query(default="", max_length=200),
     search_audio_languages: str = Query(default="", max_length=200),
+    search_jellyfin_name: str = Query(default="", max_length=512),
     search_audio_title: str = Query(default="", max_length=512),
     search_audio_artist: str = Query(default="", max_length=512),
     search_audio_album: str = Query(default="", max_length=512),
@@ -1228,6 +1931,7 @@ def library_files_export_csv(
         "size",
         "bitrate",
         "audio_bitrate",
+        "play_count",
         "bit_depth",
         "audio_title",
         "audio_artist",
@@ -1296,6 +2000,7 @@ def library_files_export_csv(
                 search_audio_codecs=search_audio_codecs,
                 search_audio_spatial_profiles=search_audio_spatial_profiles,
                 search_audio_languages=search_audio_languages,
+                search_jellyfin_name=search_jellyfin_name,
         search_audio_title=search_audio_title,
         search_audio_artist=search_audio_artist,
         search_audio_album=search_audio_album,
@@ -1400,6 +2105,192 @@ def file_detail(file_id: int, db: Session = Depends(get_db_session)) -> MediaFil
     if not media_file:
         raise HTTPException(status_code=404, detail="Media file not found")
     return media_file
+
+
+@router.get("/files/{file_id}/jellyfin", response_model=JellyfinFileOverlayRead)
+def file_jellyfin_overlay(
+    file_id: int,
+    db: Session = Depends(get_db_session),
+) -> JellyfinFileOverlayRead:
+    if db.get(MediaFile, file_id) is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    match = db.scalar(
+        select(JellyfinMediaMatch).where(
+            JellyfinMediaMatch.media_file_id == file_id,
+            JellyfinMediaMatch.status == "matched",
+        )
+    )
+    if match is None:
+        return JellyfinFileOverlayRead()
+    item = db.get(JellyfinItem, match.jellyfin_item_id)
+    if item is None:
+        return JellyfinFileOverlayRead()
+    user_rows = db.execute(
+        select(JellyfinUserItemData, JellyfinUser.name)
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
+        .where(
+            JellyfinUserItemData.jellyfin_item_id == item.id,
+            JellyfinUser.enabled_for_sync.is_(True),
+        )
+        .order_by(JellyfinUser.name.asc())
+    ).all()
+    playback_event_rows = db.execute(
+        select(JellyfinPlaybackEvent, JellyfinUser.name)
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinPlaybackEvent.jellyfin_user_id)
+        .where(
+            JellyfinPlaybackEvent.jellyfin_item_id == item.id,
+            JellyfinUser.enabled_for_sync.is_(True),
+        )
+        .order_by(JellyfinPlaybackEvent.played_at.desc())
+    ).all()
+    individual_playback_history_start_at = db.scalar(
+        select(func.min(JellyfinPlaybackEvent.played_at))
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinPlaybackEvent.jellyfin_user_id)
+        .where(JellyfinUser.enabled_for_sync.is_(True))
+    )
+    return JellyfinFileOverlayRead(
+        match=JellyfinMatchRead(
+            id=match.id,
+            media_file_id=match.media_file_id,
+            jellyfin_item_id=match.jellyfin_item_id,
+            match_method=match.match_method,
+            confidence=match.confidence,
+            status=match.status,
+            mismatch_reason=match.mismatch_reason,
+        ),
+        item=_jellyfin_item_read(item),
+        user_data=[
+            JellyfinUserItemDataRead(
+                jellyfin_user_id=data.jellyfin_user_id,
+                user_name=user_name,
+                play_count=data.play_count,
+                played=data.played,
+                playback_position_ticks=data.playback_position_ticks,
+                last_played_date=data.last_played_date,
+                is_favorite=data.is_favorite,
+            )
+            for data, user_name in user_rows
+        ],
+        playback_events=[
+            JellyfinPlaybackEventRead(
+                jellyfin_activity_id=event.jellyfin_activity_id,
+                jellyfin_user_id=event.jellyfin_user_id,
+                user_name=user_name,
+                played_at=event.played_at,
+            )
+            for event, user_name in playback_event_rows
+        ],
+        individual_playback_history_start_at=individual_playback_history_start_at,
+    )
+
+
+@router.get("/jellyfin/items/{item_id}", response_model=JellyfinItemDetailRead)
+def jellyfin_item_detail(
+    item_id: int,
+    db: Session = Depends(get_db_session),
+) -> JellyfinItemDetailRead:
+    item = db.get(JellyfinItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Jellyfin item not found")
+    library = (
+        db.get(JellyfinLibrary, item.library_id)
+        if item.library_id is not None
+        else db.scalar(select(JellyfinLibrary).where(JellyfinLibrary.name == item.library_name))
+    )
+    match = db.scalar(
+        select(JellyfinMediaMatch).where(JellyfinMediaMatch.jellyfin_item_id == item.id)
+    )
+    user_rows = list(
+        db.execute(
+            select(JellyfinUserItemData, JellyfinUser.name)
+            .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
+            .where(
+                JellyfinUserItemData.jellyfin_item_id == item.id,
+                JellyfinUser.enabled_for_sync.is_(True),
+            )
+            .order_by(JellyfinUser.name.asc())
+        )
+    )
+    return JellyfinItemDetailRead(
+        item=_jellyfin_item_read(item),
+        library_id=library.id if library else None,
+        library_name=item.library_name,
+        size_bytes=get_jellyfin_item_size(item),
+        duration_seconds=get_jellyfin_item_duration(item),
+        match=(
+            JellyfinMatchRead(
+                id=match.id,
+                media_file_id=match.media_file_id,
+                jellyfin_item_id=match.jellyfin_item_id,
+                match_method=match.match_method,
+                confidence=match.confidence,
+                status=match.status,
+                mismatch_reason=match.mismatch_reason,
+            )
+            if match
+            else None
+        ),
+        user_data=[
+            JellyfinUserItemDataRead(
+                jellyfin_user_id=data.jellyfin_user_id,
+                user_name=user_name,
+                play_count=data.play_count,
+                played=data.played,
+                playback_position_ticks=data.playback_position_ticks,
+                last_played_date=data.last_played_date,
+                is_favorite=data.is_favorite,
+            )
+            for data, user_name in user_rows
+        ],
+    )
+
+
+@router.get("/jellyfin/images/{item_id}/{image_type}")
+def jellyfin_image(
+    item_id: int,
+    image_type: Literal["Primary", "Backdrop", "Thumb"],
+    request: Request,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> Response:
+    item = db.get(JellyfinItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Jellyfin item not found")
+    connection = db.get(JellyfinConnection, 1)
+    api_key = read_jellyfin_api_key(connection, settings.jellyfin_api_key_file)
+    if connection is None or not connection.base_url or not api_key:
+        raise HTTPException(status_code=503, detail="Jellyfin connection is not configured")
+    if image_type == "Backdrop":
+        tag = next(iter(item.backdrop_image_tags or []), None)
+    else:
+        tag = (item.image_tags or {}).get(image_type)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Jellyfin image is not available")
+    etag = f'"{tag}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(
+            status_code=304,
+            headers={"ETag": etag, "Cache-Control": "private, max-age=3600"},
+        )
+    try:
+        with JellyfinClient(connection.base_url, api_key) as jellyfin_client:
+            image = JELLYFIN_IMAGE_CACHE.get(
+                jellyfin_client,
+                item.jellyfin_item_id,
+                image_type,
+                tag,
+            )
+    except JellyfinError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return StreamingResponse(
+        io.BytesIO(image.content),
+        media_type=image.content_type,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/compatibility/hardware-profiles", response_model=list[HardwareProfile])

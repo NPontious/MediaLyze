@@ -7,6 +7,7 @@ import {
   AudioLines,
   CalendarDays,
   Check,
+  CircleStop,
   ChevronDown,
   ChevronRight,
   Columns3,
@@ -22,6 +23,7 @@ import {
   FileExclamationPoint,
   FilePlusCorner,
   FileSearchCorner,
+  FileText,
   FileVideo,
   Folder,
   GitCompare,
@@ -42,6 +44,7 @@ import {
   SaveOff,
   Search,
   Settings,
+  Server,
   SlidersHorizontal,
   Sparkles,
   SquareArrowOutUpRight,
@@ -62,6 +65,8 @@ import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
 import { GitCompareArrowsIcon } from "../components/GitCompareArrowsIcon";
 import { GithubIcon } from "../components/GithubIcon";
+import { JellyfinIcon } from "../components/JellyfinIcon";
+import { JellyfinStreamingDetails } from "../components/JellyfinMetadataDetails";
 import { AudioStreamPrimaryToggle, type AudioStreamPrimaryMode } from "../components/AudioStreamPrimaryToggle";
 import { PanelEmptyState } from "../components/PanelEmptyState";
 import { PathBrowser } from "../components/PathBrowser";
@@ -460,20 +465,57 @@ function SettingsNavigationFixture({ collapsed = false }: { collapsed?: boolean 
             <PanelLeftToggleIcon aria-hidden="true" collapsed={collapsed} className="settings-navigation-toggle-icon" size={24} />
           </button>
         </div>
+        {!collapsed ? (
+          <label className="settings-navigation-search">
+            <span className="sr-only">Search settings</span>
+            <Search aria-hidden="true" />
+            <input type="search" placeholder="Search settings…" />
+          </label>
+        ) : null}
         <nav className="settings-navigation-list">
-          <button type="button" className="settings-navigation-item active" aria-current="page" aria-label="Libraries" data-settings-panel-id="configuredLibraries">
-            <span className="nav-active-pill" />
-            <span className="settings-navigation-item-content">
-              <Folder className="nav-icon" aria-hidden="true" />
-              {!collapsed ? <span>Libraries</span> : null}
-            </span>
-          </button>
-          <button type="button" className="settings-navigation-item" aria-label="App settings" data-settings-panel-id="appSettings">
-            <span className="settings-navigation-item-content">
-              <Settings className="nav-icon" aria-hidden="true" />
-              {!collapsed ? <span>App settings</span> : null}
-            </span>
-          </button>
+          <div className="settings-navigation-group">
+            {!collapsed ? <div className="settings-navigation-group-label">Libraries &amp; Sources</div> : null}
+            <button type="button" className="settings-navigation-item active" aria-current="page" aria-label="Libraries" data-settings-panel-id="configuredLibraries">
+              <span className="nav-active-pill" />
+              <span className="settings-navigation-item-content">
+                <Folder className="nav-icon" aria-hidden="true" />
+                {!collapsed ? <span>Libraries</span> : null}
+              </span>
+            </button>
+            <button type="button" className="settings-navigation-item" aria-label="Jellyfin" data-settings-panel-id="jellyfin">
+              <span className="settings-navigation-item-content">
+                <Server className="nav-icon" aria-hidden="true" />
+                {!collapsed ? <span>Jellyfin</span> : null}
+              </span>
+            </button>
+          </div>
+          <div className="settings-navigation-group">
+            {!collapsed ? <div className="settings-navigation-group-label">Analysis</div> : null}
+            <button type="button" className="settings-navigation-item" aria-label="Quality profiles" data-settings-panel-id="qualityProfiles">
+              <span className="settings-navigation-item-content">
+                <SlidersHorizontal className="nav-icon" aria-hidden="true" />
+                {!collapsed ? <span>Quality profiles</span> : null}
+              </span>
+            </button>
+          </div>
+          <div className="settings-navigation-group">
+            {!collapsed ? <div className="settings-navigation-group-label">Application</div> : null}
+            <button type="button" className="settings-navigation-item" aria-label="App settings" data-settings-panel-id="appSettings">
+              <span className="settings-navigation-item-content">
+                <Settings className="nav-icon" aria-hidden="true" />
+                {!collapsed ? <span>App settings</span> : null}
+              </span>
+            </button>
+          </div>
+          <div className="settings-navigation-group">
+            {!collapsed ? <div className="settings-navigation-group-label">Maintenance &amp; Diagnostics</div> : null}
+            <button type="button" className="settings-navigation-item" aria-label="Recent scan logs" data-settings-panel-id="recentScans">
+              <span className="settings-navigation-item-content">
+                <History className="nav-icon" aria-hidden="true" />
+                {!collapsed ? <span>Recent scan logs</span> : null}
+              </span>
+            </button>
+          </div>
         </nav>
         <div className="settings-navigation-quick-actions">
           <div className="settings-navigation-divider" />
@@ -497,6 +539,7 @@ function TableViewSettingsFixture() {
       libraryType="movies"
       showMusicQualityScore
       hasVideoMetadata
+      hasPlaybackProvider
       onChange={setSettings}
     />
   );
@@ -1163,7 +1206,7 @@ export function UiElementsPage() {
               <VariantCard title="Settings sidebar" source={`${settings} > Navigation`} classes={["settings-navigation-panel", "settings-navigation-item", "settings-navigation-quick-action"]} wide>
                 <SettingsNavigationFixture />
               </VariantCard>
-              <VariantCard title="Compatibility profile list" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-list", "compatibility-profile-list-row", "compatibility-profile-quick-actions"]} wide>
+              <VariantCard title="Compatibility profile list" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-list", "compatibility-profile-search", "compatibility-profile-list-row", "compatibility-profile-quick-actions"]} wide>
                 <div className="compatibility-profile-list">
                   <div className="compatibility-profile-search">
                     <Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" />
@@ -1466,12 +1509,103 @@ export function UiElementsPage() {
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />
               </VariantCard>
+              <VariantCard title="Jellyfin connection lifecycle, catalog status, local matching, and playback users" source={`${settings} > Jellyfin`} classes={["jellyfin-form-grid", "jellyfin-actions", "jellyfin-sync-progress", "jellyfin-status-grid", "jellyfin-user-selection", "jellyfin-user-selection-toolbar", "jellyfin-user-groups"]} wide>
+                <div className="jellyfin-settings-section">
+                  <div className="jellyfin-section-heading"><Server aria-hidden="true" /><div><h3>Connection</h3><p>Read-only external metadata source.</p></div></div>
+                  <div className="jellyfin-form-grid"><label><span>Server URL</span><input defaultValue="http://jellyfin:8096" /></label><label><span>API key</span><input type="password" defaultValue="configured-key" /></label><div className="jellyfin-form-field"><span className="jellyfin-field-label"><label htmlFor="catalog-jellyfin-sync-interval">Sync interval</label><TooltipTrigger ariaLabel="Explain sync interval" content="Enter 0 to disable scheduled synchronization.">?</TooltipTrigger></span><input id="catalog-jellyfin-sync-interval" type="number" min="0" defaultValue="0" /></div></div>
+                  <div className="jellyfin-actions"><button type="button" className="secondary small">Disable integration</button><button type="button" className="secondary small">Test connection</button><button type="button" className="secondary small">Sync now</button><button type="button" className="secondary small"><CircleStop aria-hidden="true" />Cancel sync</button><button type="button" className="secondary small danger"><Trash2 aria-hidden="true" />Remove connection</button><span className="jellyfin-auto-save-status status-saved"><Check aria-hidden="true" />Saved automatically</span></div>
+                  <div className="jellyfin-sync-progress is-canceling"><div className="jellyfin-sync-progress-heading"><LoaderCircle className="is-spinning" aria-hidden="true" /><div><strong>Canceling synchronization</strong><span>The current Jellyfin requests are being finished safely.</span></div></div><div className="jellyfin-sync-progress-tracks"><div className="jellyfin-sync-progress-item"><div className="jellyfin-sync-progress-item-heading"><strong>Alice</strong><b>62%</b></div><div className="jellyfin-sync-progress-track"><span style={{ width: "62%" }} /></div><span className="jellyfin-sync-progress-count">8,734 of 13,977 items</span></div><div className="jellyfin-sync-progress-item"><div className="jellyfin-sync-progress-item-heading"><strong>Bob</strong><b>34%</b></div><div className="jellyfin-sync-progress-track"><span style={{ width: "34%" }} /></div><span className="jellyfin-sync-progress-count">4,751 of 13,977 items</span></div></div><ol className="jellyfin-sync-steps"><li className="is-complete"><span>✓</span>Connection</li><li className="is-complete"><span>✓</span>Catalog</li><li className="is-active"><span>3</span>Items</li><li><span>4</span>Matching</li></ol></div>
+                  <div className="jellyfin-status-grid">
+                    <div className="jellyfin-sync-summary status-success"><Check aria-hidden="true" /><div><span className="jellyfin-status-eyebrow">Catalog synchronization</span><strong>Catalog current</strong><span>Last successful sync: today</span></div></div>
+                    <div className="jellyfin-sync-summary status-warning"><AlertTriangle aria-hidden="true" /><div><span className="jellyfin-status-eyebrow">Local file association</span><strong>0% locally matched</strong><span>0 of 1,901 items matched</span><div className="jellyfin-match-warning"><span>No Jellyfin items are associated with local files yet.</span><a href="#path-mapping">Open path mapping <ArrowUpRight aria-hidden="true" /></a></div></div></div>
+                  </div>
+                  <div className="jellyfin-section-heading jellyfin-users-heading">
+                    <div><h3>Playback users</h3><p className="jellyfin-users-count">7 of 22 selected</p></div>
+                  </div>
+                  <div className="jellyfin-user-selection">
+                    <div className="jellyfin-user-selection-toolbar">
+                      <label className="jellyfin-user-search"><span className="sr-only">Search playback users</span><Search aria-hidden="true" /><input type="search" placeholder="Search users…" /></label>
+                      <div className="jellyfin-user-bulk-actions" role="group" aria-label="Playback user bulk selection"><button type="button" className="secondary small jellyfin-user-bulk-button">Select all</button><button type="button" className="secondary small jellyfin-user-bulk-button">Select none</button></div>
+                    </div>
+                    <div className="jellyfin-user-groups">
+                      <section className="jellyfin-user-group" aria-labelledby="catalog-jellyfin-selected-users"><div className="jellyfin-user-group-heading"><h4 id="catalog-jellyfin-selected-users">Selected</h4><span className="badge">7</span></div><div className="jellyfin-user-list"><label><input type="checkbox" defaultChecked /> Alice</label><label><input type="checkbox" defaultChecked /> Bob</label></div></section>
+                      <section className="jellyfin-user-group" aria-labelledby="catalog-jellyfin-unselected-users"><div className="jellyfin-user-group-heading"><h4 id="catalog-jellyfin-unselected-users">Not selected</h4><span className="badge">15</span></div><div className="jellyfin-user-list"><label><input type="checkbox" /> Guest</label></div></section>
+                    </div>
+                  </div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Collapsed MediaLyze library settings with active scan" source={`${settings} > Libraries`} classes={["library-settings-card", "is-collapsed", "library-settings-chevron", "library-scan-progress"]} wide>
+                <article className="media-card library-settings-card is-collapsed">
+                  <div className="library-settings-header">
+                    <div className="item-meta">
+                      <div className="library-title-row">
+                        <div className="library-title-meta">
+                          <div className="library-title-main">
+                            <div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Show settings for Movies" aria-expanded="false"><ChevronRight aria-hidden="true" className="nav-icon" /></button><h3>Movies</h3></div>
+                            <div className="meta-tags library-title-tags"><span className="badge">Movies</span><span className="badge">Manual</span></div>
+                          </div>
+                        </div>
+                        <div className="library-title-actions">
+                          <button type="button" className="secondary icon-only-button" aria-label="Delete Movies"><Trash2 aria-hidden="true" /></button>
+                          <button type="button" className="small library-scan-button">Manual scan</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="progress library-scan-progress"><span style={{ width: "42%" }} /></div>
+                </article>
+              </VariantCard>
+              <VariantCard title="Expanded MediaLyze library settings" source={`${settings} > Libraries`} classes={["library-settings-card", "is-expanded", "library-settings-body", "library-settings-section"]} wide>
+                <article className="media-card library-settings-card is-expanded">
+                  <div className="library-settings-header">
+                    <div className="item-meta"><div className="library-title-row"><div className="library-title-meta"><div className="library-title-main"><div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Hide settings for Movies" aria-expanded="true"><ChevronDown aria-hidden="true" className="nav-icon" /></button><h3>Movies</h3></div><div className="meta-tags library-title-tags"><span className="badge">Movies</span><span className="badge">Manual</span></div></div></div><div className="library-title-actions"><button type="button" className="small library-scan-button">Manual scan</button></div></div></div>
+                  </div>
+                  <div className="library-settings-body">
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Jellyfin association</h4><p>Choose the Jellyfin catalog that enriches this MediaLyze library.</p></div><div className="library-settings-section-grid is-single-column"><div className="field"><label htmlFor="catalog-medialyze-jellyfin-link">Associated Jellyfin library</label><select id="catalog-medialyze-jellyfin-link" defaultValue="movies"><option value="">No associated library</option><option value="movies">Movies</option><option value="archive">Archive (Archive library)</option></select></div><div id="path-mapping" className="library-jellyfin-path-mappings"><div className="library-jellyfin-path-mappings-heading"><div className="library-jellyfin-path-mappings-title"><h5>Path mapping (optional)</h5><TooltipTrigger ariaLabel="Explain path mapping" content="Use this when Jellyfin and MediaLyze see the same files under different mount points.">?</TooltipTrigger><span className="library-jellyfin-path-mapping-state is-partial">Partially enabled</span></div><label className="library-jellyfin-path-mapping-switch is-partial" title="Enable all path mappings"><input type="checkbox" role="switch" aria-label="Enable all path mappings" aria-checked="mixed" /><span className="library-jellyfin-path-mapping-switch-track" aria-hidden="true"><span className="library-jellyfin-path-mapping-switch-thumb" /></span></label></div><div className="library-jellyfin-path-mapping-row"><div className="field library-jellyfin-path-source"><span className="field-label">Jellyfin path</span><code>/jellyfin/movies</code></div><span className="library-jellyfin-path-arrow" aria-hidden="true">→</span><div className="field library-jellyfin-path-target"><label htmlFor="catalog-jellyfin-path-target">MediaLyze path</label><input id="catalog-jellyfin-path-target" className="settings-choice-input" defaultValue="/media/movies" /></div><div className="library-jellyfin-path-mapping-actions"><button type="button" className="secondary icon-only-button library-jellyfin-path-save-button is-dirty" aria-label="Save mapping" title="Save mapping"><Save aria-hidden="true" /></button></div></div></div></div></section>
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Media source</h4><p>Review or change the local folders scanned by MediaLyze.</p></div><div className="library-settings-section-grid is-single-column"><div className="field library-source-field"><div className="field-label-row"><span>MediaLyze paths</span><button type="button" className="secondary small">Change path</button></div><div className="library-source-paths"><code>/media/movies</code></div></div></div></section>
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Scanning and analysis</h4><p>Configure when this library is scanned and how its files are evaluated.</p></div><div className="library-settings-form"><div className="field"><label htmlFor="catalog-library-scan-mode">Scan mode</label><select id="catalog-library-scan-mode" defaultValue="manual"><option value="manual">Manual</option></select></div><div className="field"><label htmlFor="catalog-library-duplicates">Duplicate detection</label><select id="catalog-library-duplicates" defaultValue="off"><option value="off">Off</option></select></div></div></section>
+                  </div>
+                </article>
+              </VariantCard>
+              <VariantCard title="Create library from detected Jellyfin catalog" source={`${settings} > Libraries > Add library`} classes={["jellyfin-create-library-options", "jellyfin-create-library-option"]} wide>
+                <section className="jellyfin-create-library-options"><div><h3>Add a detected Jellyfin library</h3><p className="field-hint">Select a catalog, then choose its local media path.</p></div><div className="jellyfin-create-library-option-list"><button type="button" className="jellyfin-create-library-option is-selected" aria-pressed="true"><strong>Archive</strong><span>420 Jellyfin items</span></button><button type="button" className="jellyfin-create-library-option" aria-pressed="false"><strong>Concerts</strong><span>88 Jellyfin items</span></button></div><div className="notice success">The Jellyfin library will be linked automatically after creation.</div></section>
+              </VariantCard>
+              <VariantCard title="Jellyfin-linked MediaLyze library" source="LibraryDetailPage" classes={["library-jellyfin-icon-trigger", "analyzed-file-name-source-toggle"]} wide>
+                <div className="stack">
+                  <section className="panel stack statistic-layout-header-panel library-statistic-layout-header-panel">
+                    <div className="panel-title-row library-statistic-title-row"><h2>Movies</h2><TooltipTrigger ariaLabel="Connected to Jellyfin library Movies" className="library-jellyfin-icon-trigger" content={<span className="library-jellyfin-icon-tooltip"><strong>Connected to Jellyfin library Movies</strong><span>Last synchronization: today</span></span>}><JellyfinIcon aria-hidden="true" /></TooltipTrigger><TooltipTrigger ariaLabel="Show library path" content="/media/movies">?</TooltipTrigger></div>
+                    <div className="card-grid grid"><StatCard label="Files" value="248" /><StatCard label="Storage" value="1.2 TB" tone="teal" /><StatCard label="Duration" value="19d 4h" tone="blue" /><StatCard label="Last scan" value="Today" /></div>
+                  </section>
+                  <section className="panel">
+                    <div className="panel-title-row">
+                      <h2>Analyzed files</h2>
+                      <div className="analyzed-files-title-addon">
+                        <div className="distribution-chart-mode-toggle analyzed-file-name-source-toggle" role="group" aria-label="Displayed file name">
+                          <SlidingTogglePill activeKey="file" className="nav-active-pill distribution-chart-mode-pill" />
+                          <button type="button" data-toggle-key="file" className="distribution-chart-mode-button analyzed-file-name-source-button active" aria-label="Show file names" aria-pressed="true"><span className="distribution-chart-mode-button-content"><FileText aria-hidden="true" className="distribution-chart-mode-icon" /></span></button>
+                          <button type="button" data-toggle-key="jellyfin" className="distribution-chart-mode-button analyzed-file-name-source-button" aria-label="Show Jellyfin names" aria-pressed="false"><span className="distribution-chart-mode-button-content"><JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" /></span></button>
+                        </div>
+                        <button type="button" className="secondary icon-only-button statistic-layout-action-button" aria-label="Edit table view"><Settings aria-hidden="true" /></button>
+                      </div>
+                    </div>
+                    <div className="media-data-table" role="table">
+                      <div className="media-data-row" role="row">
+                        <div className="media-data-cell media-file-cell" role="cell">
+                          <span className="media-file-cell-copy">
+                            <span className="file-link">Arrival.2016.UHD.mkv</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
             </VariantGroup>
           </CatalogSection>
 
           <CatalogSection definition={catalogSections[3]}>
             <VariantGroup title="Form families">
-              <VariantCard title="Basic form grid" source={`${settings} > Create library`} classes={["form-grid", "field", "field-hint"]}>
+              <VariantCard title="Basic form grid and feature flag" source={`${settings} > Create library / App settings`} classes={["form-grid", "field", "field-hint", "app-settings-flag-row", "app-settings-flag-toggle"]}>
                 <div className="form-grid ui-elements-form-grid">
                   <div className="field">
                     <label htmlFor="ui-library-name">Name</label>
@@ -1485,13 +1619,21 @@ export function UiElementsPage() {
                       <option value="series">Series</option>
                     </select>
                   </div>
-                  <label className="app-settings-flag-row">
-                    <input type="checkbox" defaultChecked />
-                    <span>Show on dashboard</span>
-                  </label>
+                  <div className="app-settings-flag-row">
+                    <label className="app-settings-flag-toggle">
+                      <input type="checkbox" defaultChecked />
+                      <span>Show all playbacks when unstacked</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel="Explain showing all unstacked playbacks"
+                      content="Shows every available playback event without table pagination in the unstacked view."
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Structured search" source={`${libraryDetail} > Analyzed files`} classes={["metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
+              <VariantCard title="Structured search" source={`${libraryDetail} > Analyzed files`} classes={["async-panel-header-status", "metadata-search-fields", "metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
                 <div className="stack">
                   <div className="library-layout-panel-analyzed-files">
                     <div className="panel-header">
@@ -1515,7 +1657,7 @@ export function UiElementsPage() {
               <VariantCard title="Ignore pattern rows" source={`${settings} > Ignore patterns`} classes={["ignore-pattern-section", "ignore-pattern-row", "ignore-pattern-action-button"]} wide>
                 <IgnorePatternFixture />
               </VariantCard>
-              <VariantCard title="Quality picker and profile editor" source={`${settings} > Quality profiles`} classes={["quality-picker-field", "quality-profile-metric-item", "quality-profile-weight-input"]} wide>
+              <VariantCard title="Quality picker and profile editor" source={`${settings} > Quality profiles`} classes={["quality-picker-field", "quality-profile-picker-control", "quality-profile-metric-item", "quality-profile-weight-input"]} wide>
                 <QualityProfileFixture />
               </VariantCard>
             </VariantGroup>
@@ -1571,6 +1713,9 @@ export function UiElementsPage() {
                     <DistributionList items={distributionItems} />
                   </AsyncPanel>
                   <AsyncPanel title="Loading panel" loading><span /></AsyncPanel>
+                  <AsyncPanel title="Refreshing panel" refreshing>
+                    <DistributionList items={distributionItems} />
+                  </AsyncPanel>
                   <AsyncPanel title="Error panel" error="Example error"><span /></AsyncPanel>
                   <AsyncPanel
                     title="Collapsed panel"
@@ -1649,10 +1794,21 @@ export function UiElementsPage() {
               <VariantCard title="Distribution list" source={`${dashboard} / ${libraryDetail}`} classes={["distribution-list", "distribution-item", "distribution-bar"]}>
                 <DistributionList items={distributionItems} />
               </VariantCard>
+              <VariantCard title="Playback by user" source={`${libraryDetail} > Linked Jellyfin library`} classes={["async-panel", "distribution-list", "distribution-row"]}>
+                <AsyncPanel title="Plays by user">
+                  <DistributionList
+                    items={[
+                      { label: "Frederik", value: 18 },
+                      { label: "Louise", value: 11 },
+                      { label: "Kids", value: 6 },
+                    ]}
+                  />
+                </AsyncPanel>
+              </VariantCard>
               <VariantCard title="Distribution chart panel" source={`${libraryDetail} > Numeric panel`} classes={["async-panel", "distribution-chart-mode-toggle", "distribution-chart-canvas"]} wide>
                 <DistributionChartPanel title="Quality score" distribution={numericDistribution} metricId="quality_score" />
               </VariantCard>
-              <VariantCard title="Comparison chart panel" source={`${dashboard} / ${libraryDetail} > Metric comparison`} classes={["async-panel", "comparison-chart-toolbar", "comparison-chart-select", "comparison-chart-content"]} wide>
+              <VariantCard title="Comparison chart panel with Jellyfin playback axes" source={`${dashboard} / ${libraryDetail} > Metric comparison`} classes={["async-panel", "comparison-chart-toolbar", "comparison-chart-select", "comparison-chart-content"]} wide>
                 <ComparisonChartFixture />
               </VariantCard>
             </VariantGroup>
@@ -1707,6 +1863,41 @@ export function UiElementsPage() {
                   <div className="quality-detail-item">
                     <strong>Audio codec</strong>
                     <ScoreMeter value={76} />
+                  </div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-streaming-availability-tooltip", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-data-summary", "playback-history-timeline-axis", "playback-history-availability-boundary", "playback-history-availability-note", "playback-history-timestamp", "playback-history-undated", "playback-history-undated-list", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
+                <div className="file-detail-overview">
+                  <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
+                  <div className="meta-tags file-detail-overview-badges"><span className="badge">HEVC</span><span className="badge">UHD</span><div className="jellyfin-overview-badge-group is-separated"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div></div>
+                  <div className="file-detail-jellyfin-overview"><div className="jellyfin-overview-details"><div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Production year</span><strong className="format-details-value">2016</strong></div></div></div><p className="jellyfin-overview">Jellyfin catalog metadata is shown alongside the technical analysis.</p></div></div>
+                  <div className="panel-title-row">
+                    <h2>Streaming</h2>
+                    <TooltipTrigger
+                      className="file-detail-streaming-availability-tooltip"
+                      ariaLabel="Explain individual playback availability"
+                      content="Jellyfin retains individual playback starts for a limited history. The exact synchronized boundary is marked on the timeline."
+                    />
+                  </div>
+                  <div className="jellyfin-file-panel jellyfin-streaming-panel">
+                    <JellyfinStreamingDetails
+                      durationSeconds={7198}
+                      userData={[
+                        { jellyfin_user_id: "catalog-frederik", user_name: "Frederik", play_count: 3, played: true, playback_position_ticks: 0, last_played_date: "2026-07-27T20:41:13Z", is_favorite: false },
+                        { jellyfin_user_id: "catalog-louise", user_name: "Louise", play_count: 2, played: false, playback_position_ticks: 13510000000, last_played_date: "2026-07-24T17:58:50Z", is_favorite: false },
+                        { jellyfin_user_id: "catalog-mads", user_name: "Mads", play_count: 1, played: true, playback_position_ticks: 0, last_played_date: "2026-07-22T11:16:41Z", is_favorite: false },
+                        { jellyfin_user_id: "catalog-sara", user_name: "Sara", play_count: 4, played: false, playback_position_ticks: 19970000000, last_played_date: "2026-07-19T14:44:02Z", is_favorite: false },
+                      ]}
+                      playbackEvents={[
+                        { jellyfin_activity_id: 101, jellyfin_user_id: "catalog-frederik", user_name: "Frederik", played_at: "2026-07-27T20:41:13Z" },
+                        { jellyfin_activity_id: 100, jellyfin_user_id: "catalog-frederik", user_name: "Frederik", played_at: "2026-07-27T20:18:07Z" },
+                        { jellyfin_activity_id: 99, jellyfin_user_id: "catalog-louise", user_name: "Louise", played_at: "2026-07-24T17:58:50Z" },
+                        { jellyfin_activity_id: 98, jellyfin_user_id: "catalog-mads", user_name: "Mads", played_at: "2026-07-22T11:16:41Z" },
+                        { jellyfin_activity_id: 97, jellyfin_user_id: "catalog-sara", user_name: "Sara", played_at: "2026-07-19T14:44:02Z" },
+                      ]}
+                      individualPlaybackHistoryStartAt="2026-07-19T14:44:02Z"
+                      showAllPlaybacksWhenUnstacked
+                    />
                   </div>
                 </div>
               </VariantCard>
@@ -2019,7 +2210,7 @@ export function UiElementsPage() {
                     <div className="library-title-row">
                       <div className="library-title-meta">
                         <div className="library-title-main">
-                          <h3><span className="file-link">Movies</span></h3>
+                          <div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Show settings for Movies" aria-expanded="false" disabled><ChevronRight aria-hidden="true" className="nav-icon" /></button><h3><span className="file-link">Movies</span></h3></div>
                           <div className="meta-tags library-title-tags">
                             <span className="badge">Movies</span>
                             <span className="badge">Manual</span>

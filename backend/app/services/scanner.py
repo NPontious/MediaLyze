@@ -23,7 +23,6 @@ from backend.app.models.entities import (
     ExternalSubtitle,
     JobStatus,
     Library,
-    LibraryRoot,
     MediaContentCategory,
     MediaChapter,
     MediaFile,
@@ -44,7 +43,7 @@ from backend.app.services.duplicates import (
     get_duplicate_group_counts,
     normalize_filename_signature,
 )
-from backend.app.services.app_settings import get_app_settings, get_ignore_patterns
+from backend.app.services.app_settings import get_app_settings
 from backend.app.services.ffprobe_parser import normalize_ffprobe_payload, run_ffprobe
 from backend.app.services.history_snapshots import (
     create_media_file_history_entry_if_changed,
@@ -1774,7 +1773,6 @@ def run_scan(
         if job.status == JobStatus.canceled:
             raise ScanCanceled()
         library.last_scan_at = utc_now()
-        job.status = JobStatus.completed
         job.finished_at = utc_now()
         _sync_live_progress(discovery_complete_override=True)
         job.scan_summary = _build_current_scan_summary(include_duplicate_counts=True)
@@ -1787,15 +1785,8 @@ def run_scan(
         )
         db.commit()
         stats_cache.invalidate(cache_key, job.library_id)
-        from backend.app.services.library_service import get_library_statistics, get_library_summary
-        from backend.app.services.library_history_service import get_dashboard_history, get_library_history
-        from backend.app.services.stats import build_dashboard
-
-        get_library_summary(db, job.library_id)
-        get_library_statistics(db, job.library_id)
-        get_library_history(db, job.library_id)
-        build_dashboard(db)
-        get_dashboard_history(db)
+        job.status = JobStatus.completed
+        db.commit()
         db.refresh(job)
         return job
     except ScanCanceled:
@@ -1891,18 +1882,11 @@ def run_quality_recompute(
     db.refresh(job)
     if job.status == JobStatus.canceled:
         raise ScanCanceled()
-    job.status = JobStatus.failed if job.errors else JobStatus.completed
+    terminal_status = JobStatus.failed if job.errors else JobStatus.completed
     job.finished_at = utc_now()
     db.commit()
     stats_cache.invalidate(cache_key, library_id)
-    from backend.app.services.library_service import get_library_statistics, get_library_summary
-    from backend.app.services.library_history_service import get_dashboard_history, get_library_history
-    from backend.app.services.stats import build_dashboard
-
-    get_library_summary(db, library_id)
-    get_library_statistics(db, library_id)
-    get_library_history(db, library_id)
-    build_dashboard(db)
-    get_dashboard_history(db)
+    job.status = terminal_status
+    db.commit()
     db.refresh(job)
     return job

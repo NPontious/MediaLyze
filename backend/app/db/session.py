@@ -54,11 +54,48 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "quality_profile": "ALTER TABLE libraries ADD COLUMN quality_profile JSON NOT NULL DEFAULT '{}'",
         "quality_profile_id": "ALTER TABLE libraries ADD COLUMN quality_profile_id INTEGER",
         "show_on_dashboard": "ALTER TABLE libraries ADD COLUMN show_on_dashboard BOOLEAN NOT NULL DEFAULT 1",
+        "history_added_date_source": (
+            "ALTER TABLE libraries ADD COLUMN history_added_date_source "
+            "VARCHAR(16) NOT NULL DEFAULT 'medialyze'"
+        ),
         "created_at": "ALTER TABLE libraries ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "updated_at": "ALTER TABLE libraries ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     },
     "quality_profiles": {
         "is_builtin": "ALTER TABLE quality_profiles ADD COLUMN is_builtin BOOLEAN NOT NULL DEFAULT 0",
+    },
+    "jellyfin_libraries": {
+        "link_method": "ALTER TABLE jellyfin_libraries ADD COLUMN link_method VARCHAR(16)",
+        "remote_item_id": "ALTER TABLE jellyfin_libraries ADD COLUMN remote_item_id VARCHAR(128)",
+    },
+    "jellyfin_items": {
+        "library_id": "ALTER TABLE jellyfin_items ADD COLUMN library_id INTEGER REFERENCES jellyfin_libraries(id) ON DELETE SET NULL",
+        "size_bytes": "ALTER TABLE jellyfin_items ADD COLUMN size_bytes INTEGER",
+        "duration_seconds": "ALTER TABLE jellyfin_items ADD COLUMN duration_seconds FLOAT",
+    },
+    "jellyfin_sync_jobs": {
+        "trigger_source": (
+            "ALTER TABLE jellyfin_sync_jobs ADD COLUMN trigger_source "
+            "VARCHAR(9) NOT NULL DEFAULT 'manual'"
+        ),
+        "active_lock": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN active_lock INTEGER",
+        "cancellation_requested": (
+            "ALTER TABLE jellyfin_sync_jobs ADD COLUMN cancellation_requested "
+            "BOOLEAN NOT NULL DEFAULT 0"
+        ),
+        "heartbeat_at": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN heartbeat_at DATETIME",
+        "progress_phase": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_phase VARCHAR(64)",
+        "progress_detail": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_detail VARCHAR(512)",
+        "progress_current": (
+            "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_current INTEGER NOT NULL DEFAULT 0"
+        ),
+        "progress_total": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN progress_total INTEGER",
+        "started_at": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN started_at DATETIME",
+        "finished_at": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN finished_at DATETIME",
+        "error": "ALTER TABLE jellyfin_sync_jobs ADD COLUMN error VARCHAR(2048)",
+        "sync_summary": (
+            "ALTER TABLE jellyfin_sync_jobs ADD COLUMN sync_summary JSON NOT NULL DEFAULT '{}'"
+        ),
     },
     "media_files": {
         "library_root_id": "ALTER TABLE media_files ADD COLUMN library_root_id INTEGER",
@@ -285,6 +322,9 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_scan_jobs_status ON scan_jobs (status)",
     "CREATE INDEX IF NOT EXISTS ix_scan_jobs_library_id ON scan_jobs (library_id)",
     "CREATE INDEX IF NOT EXISTS ix_libraries_quality_profile_id ON libraries (quality_profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_jellyfin_items_library_name ON jellyfin_items (library_name)",
+    "CREATE INDEX IF NOT EXISTS ix_jellyfin_items_library_id ON jellyfin_items (library_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_jellyfin_libraries_remote_item_id ON jellyfin_libraries (remote_item_id)",
     (
         "CREATE INDEX IF NOT EXISTS ix_media_file_history_library_path_captured_at "
         "ON media_file_history (library_id, relative_path, captured_at)"
@@ -799,9 +839,42 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
         _rebuild_libraries_table_without_unique_path(connection)
         _ensure_library_roots_backfill(connection)
         _drop_sqlite_index_if_exists(connection, "ix_media_files_library_relative_path")
+        # Library names are display data in Jellyfin and can change or collide.
+        # Identity is carried by remote_item_id instead.
+        _drop_sqlite_index_if_exists(connection, "ix_jellyfin_libraries_name")
 
         for statement in SQLITE_INDEX_STATEMENTS:
             connection.execute(text(statement))
+
+        if _sqlite_has_table(connection, "jellyfin_libraries"):
+            connection.execute(
+                text(
+                    "UPDATE jellyfin_libraries "
+                    "SET remote_item_id = 'legacy:' || id "
+                    "WHERE remote_item_id IS NULL OR remote_item_id = ''"
+                )
+            )
+            connection.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_jellyfin_libraries_name ON jellyfin_libraries (name)")
+            )
+        if _sqlite_has_table(connection, "jellyfin_items"):
+            connection.execute(
+                text(
+                    "UPDATE jellyfin_items SET library_id = ("
+                    "SELECT jellyfin_libraries.id FROM jellyfin_libraries "
+                    "WHERE jellyfin_libraries.name = jellyfin_items.library_name "
+                    "ORDER BY jellyfin_libraries.id LIMIT 1"
+                    ") WHERE library_id IS NULL AND library_name IS NOT NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE jellyfin_items SET "
+                    "size_bytes = CAST(json_extract(raw_limited_payload, '$.Size') AS INTEGER), "
+                    "duration_seconds = CAST(json_extract(raw_limited_payload, '$.RunTimeTicks') AS FLOAT) / 10000000.0 "
+                    "WHERE size_bytes IS NULL OR duration_seconds IS NULL"
+                )
+            )
 
         if _sqlite_has_table(connection, "libraries"):
             connection.execute(

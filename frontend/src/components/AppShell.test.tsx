@@ -46,6 +46,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
     },
     telemetry: {
@@ -226,6 +227,7 @@ describe("AppShell", () => {
     renderShell();
 
     expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /v0\.16\.1/i }));
     expect(screen.getByRole("link", { name: "#162" })).toHaveAttribute(
       "href",
       "https://github.com/frederikemmer/MediaLyze/issues/162",

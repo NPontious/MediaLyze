@@ -16,7 +16,16 @@ from watchdog.observers import Observer
 
 from backend.app.core.config import Settings
 from backend.app.db.session import SessionLocal
-from backend.app.models.entities import JobStatus, Library, ScanJob, ScanMode, ScanTriggerSource
+from backend.app.models.entities import (
+    JellyfinConnection,
+    JellyfinSyncTriggerSource,
+    JobStatus,
+    Library,
+    MediaFile,
+    ScanJob,
+    ScanMode,
+    ScanTriggerSource,
+)
 from backend.app.services.app_settings import get_app_settings
 from backend.app.services.history_retention import (
     HistoryRetentionResult,
@@ -26,9 +35,28 @@ from backend.app.services.history_retention import (
 from backend.app.services.history_storage import get_history_storage
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.library_history_service import get_dashboard_history, get_library_history
-from backend.app.services.library_service import get_library_statistics, get_library_summary, list_libraries
+from backend.app.services.library_service import get_library_summary
+from backend.app.services.jellyfin_matching import (
+    recompute_jellyfin_matches,
+    refresh_jellyfin_mapping_state,
+)
+from backend.app.services.jellyfin_jobs import (
+    cancel_queued_jellyfin_sync_job,
+    create_or_get_jellyfin_sync_job,
+    finish_jellyfin_sync_job,
+    get_active_jellyfin_sync_job,
+    mark_jellyfin_sync_cancellation_requested,
+    mark_jellyfin_sync_job_running,
+    recover_orphaned_jellyfin_sync_jobs,
+)
+from backend.app.services.jellyfin_progress import (
+    request_jellyfin_cancellation,
+    reset_jellyfin_cancellation,
+)
+from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
+from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.path_access import is_watch_supported_for_library
-from backend.app.services.stats import build_dashboard
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.telemetry import (
     send_current_telemetry_snapshot,
     send_initial_telemetry_snapshot,
@@ -106,6 +134,10 @@ class ScanRuntimeManager:
         self.stats_warmup_timer: Timer | None = None
         self.telemetry_send_timer: Timer | None = None
         self.history_reconstruction_status = HistoryReconstructionStatusRead()
+        self.jellyfin_match_recompute_submitted = False
+        self.jellyfin_match_recompute_rerun = False
+        self.jellyfin_match_recompute_status = "idle"
+        self.jellyfin_match_recompute_last_error: str | None = None
         self.started = False
 
     def start(self) -> None:
@@ -118,6 +150,8 @@ class ScanRuntimeManager:
         self._ensure_history_maintenance_job()
         self._ensure_telemetry_job()
         self._ensure_update_check_jobs()
+        self._recover_orphaned_jellyfin_sync_jobs()
+        self.refresh_jellyfin_schedule()
         self._recover_orphaned_jobs()
         self.request_update_check()
         self.sync_all_libraries()
@@ -311,6 +345,199 @@ class ScanRuntimeManager:
             return
         self.maintenance_executor.submit(self._run_update_check)
 
+    def request_jellyfin_sync(
+        self,
+        trigger_source: JellyfinSyncTriggerSource = JellyfinSyncTriggerSource.manual,
+    ) -> dict[str, int | str | bool]:
+        with self.lock:
+            if not self.started:
+                raise RuntimeError("Scan runtime is not started")
+
+        db = SessionLocal()
+        try:
+            connection = db.get(JellyfinConnection, 1)
+            if connection is None or not connection.enabled:
+                raise ValueError("Jellyfin integration is disabled")
+            if not connection.base_url or not read_jellyfin_api_key(
+                connection,
+                getattr(getattr(self, "settings", None), "jellyfin_api_key_file", None),
+            ):
+                raise ValueError("Jellyfin URL and API key are required before synchronization")
+            job, accepted = create_or_get_jellyfin_sync_job(db, trigger_source)
+            result: dict[str, int | str | bool] = {
+                "job_id": job.id,
+                "status": job.status.value,
+                "trigger_source": job.trigger_source.value,
+                "accepted": accepted,
+            }
+        finally:
+            db.close()
+
+        if accepted:
+            reset_jellyfin_cancellation()
+            try:
+                self.maintenance_executor.submit(self._run_jellyfin_sync, job.id)
+            except Exception as exc:
+                failed_db = SessionLocal()
+                try:
+                    finish_jellyfin_sync_job(
+                        failed_db,
+                        job.id,
+                        JobStatus.failed,
+                        error=str(exc),
+                    )
+                finally:
+                    failed_db.close()
+                raise
+        return result
+
+    def request_scheduled_jellyfin_sync(self) -> dict[str, int | str | bool]:
+        return self.request_jellyfin_sync(JellyfinSyncTriggerSource.scheduled)
+
+    def cancel_jellyfin_sync(self, job_id: int | None = None) -> dict[str, int | str | bool | None]:
+        db = SessionLocal()
+        try:
+            job = get_active_jellyfin_sync_job(db)
+            if job is None or (job_id is not None and job.id != job_id):
+                return {
+                    "job_id": job.id if job else None,
+                    "status": job.status.value if job else None,
+                    "cancellation_requested": False,
+                }
+            if job.status == JobStatus.queued:
+                canceled = cancel_queued_jellyfin_sync_job(db, job.id)
+                return {
+                    "job_id": job.id,
+                    "status": JobStatus.canceled.value if canceled else job.status.value,
+                    "cancellation_requested": canceled,
+                }
+            requested = mark_jellyfin_sync_cancellation_requested(db, job.id)
+            if requested:
+                request_jellyfin_cancellation(job.id)
+            return {
+                "job_id": job.id,
+                "status": job.status.value,
+                "cancellation_requested": requested,
+            }
+        finally:
+            db.close()
+
+    def request_jellyfin_match_recompute(self) -> bool:
+        with self.lock:
+            if not self.started:
+                return False
+            if self.jellyfin_match_recompute_submitted:
+                self.jellyfin_match_recompute_rerun = True
+                return False
+            self.jellyfin_match_recompute_submitted = True
+            self.jellyfin_match_recompute_status = "queued"
+            self.jellyfin_match_recompute_last_error = None
+        self.maintenance_executor.submit(self._run_jellyfin_match_recompute)
+        return True
+
+    def get_jellyfin_match_recompute_status(self) -> dict[str, str | bool | None]:
+        with self.lock:
+            return {
+                "status": self.jellyfin_match_recompute_status,
+                "active": self.jellyfin_match_recompute_submitted,
+                "rerun_pending": self.jellyfin_match_recompute_rerun,
+                "last_error": self.jellyfin_match_recompute_last_error,
+            }
+
+    def _run_jellyfin_match_recompute(self) -> None:
+        while True:
+            with self.lock:
+                self.jellyfin_match_recompute_status = "running"
+                self.jellyfin_match_recompute_rerun = False
+            db = SessionLocal()
+            error: str | None = None
+            try:
+                refresh_jellyfin_mapping_state(db)
+                recompute_jellyfin_matches(db, commit_batch_size=250)
+                stats_cache.invalidate(str(id(db.get_bind())))
+            except Exception as exc:
+                db.rollback()
+                error = str(exc)[:2048]
+                logger.exception("Failed to recompute Jellyfin mapping state and matches")
+            finally:
+                db.close()
+
+            with self.lock:
+                if self.jellyfin_match_recompute_rerun:
+                    self.jellyfin_match_recompute_status = "queued"
+                    continue
+                self.jellyfin_match_recompute_submitted = False
+                self.jellyfin_match_recompute_status = "error" if error else "success"
+                self.jellyfin_match_recompute_last_error = error
+                return
+
+    def refresh_jellyfin_schedule(self) -> None:
+        job_id = "jellyfin-sync"
+        db = SessionLocal()
+        try:
+            connection = db.get(JellyfinConnection, 1)
+            enabled = bool(
+                connection
+                and connection.enabled
+                and connection.base_url
+                and read_jellyfin_api_key(
+                    connection,
+                    getattr(getattr(self, "settings", None), "jellyfin_api_key_file", None),
+                )
+                and connection.sync_interval_minutes > 0
+            )
+            interval = max(5, int(connection.sync_interval_minutes)) if connection else 60
+        finally:
+            db.close()
+        if not enabled:
+            if self.scheduler.get_job(job_id):
+                self.scheduler.remove_job(job_id)
+            return
+        self.scheduler.add_job(
+            self.request_scheduled_jellyfin_sync,
+            trigger="interval",
+            minutes=interval,
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+    def _run_jellyfin_sync(self, job_id: int) -> None:
+        db = SessionLocal()
+        try:
+            job = mark_jellyfin_sync_job_running(db, job_id)
+            if job is None:
+                return
+            try:
+                summary = run_jellyfin_sync(db, job_id=job_id)
+            except Exception as exc:
+                finish_jellyfin_sync_job(
+                    db,
+                    job_id,
+                    JobStatus.failed,
+                    error=str(exc),
+                )
+                logger.exception("Jellyfin sync job %s failed", job_id)
+                return
+            status = (
+                JobStatus.canceled
+                if summary.get("status") == "canceled"
+                else JobStatus.completed
+            )
+            finish_jellyfin_sync_job(db, job_id, status, summary=summary)
+        finally:
+            db.close()
+
+    def _recover_orphaned_jellyfin_sync_jobs(self) -> None:
+        db = SessionLocal()
+        try:
+            recovered = recover_orphaned_jellyfin_sync_jobs(db)
+            if recovered:
+                logger.warning("Canceled %s orphaned Jellyfin sync job(s)", recovered)
+        finally:
+            db.close()
+
     def request_initial_telemetry_send(self) -> None:
         with self.lock:
             if not self.started:
@@ -362,6 +589,25 @@ class ScanRuntimeManager:
         try:
             execute_scan_job(job_id, self.settings, is_cancel_requested=self.is_job_cancel_requested)
         finally:
+            match_db = SessionLocal()
+            try:
+                job = match_db.get(ScanJob, job_id)
+                changed_ids = set(
+                    match_db.scalars(
+                        select(MediaFile.id).where(
+                            MediaFile.library_id == library_id,
+                            MediaFile.last_analyzed_at.is_not(None),
+                            MediaFile.last_analyzed_at >= job.started_at,
+                        )
+                    )
+                ) if job and job.started_at else set()
+                if changed_ids:
+                    recompute_jellyfin_matches(match_db, media_file_ids=changed_ids)
+            except Exception:
+                match_db.rollback()
+                logger.exception("Failed to refresh Jellyfin matches after scan %s", job_id)
+            finally:
+                match_db.close()
             should_attempt_compaction = False
             with self.lock:
                 self.submitted_job_ids.discard(job_id)
@@ -859,18 +1105,16 @@ class ScanRuntimeManager:
             # Favor the just-mutated library first, then use idle time to warm the rest.
             library_ids = [library_id] if library_id is not None else []
             library_ids.extend(
-                summary.id
-                for summary in list_libraries(db)
-                if summary.id != library_id
+                candidate_library_id
+                for candidate_library_id in db.scalars(select(Library.id).order_by(Library.id.asc()))
+                if candidate_library_id != library_id
             )
             for candidate_library_id in library_ids:
                 with self.lock:
                     if self.active_library_ids:
                         return
                 get_library_summary(db, candidate_library_id)
-                get_library_statistics(db, candidate_library_id)
                 get_library_history(db, candidate_library_id)
-            build_dashboard(db)
             get_dashboard_history(db)
         except Exception:
             logger.exception("Failed to warm statistics caches")

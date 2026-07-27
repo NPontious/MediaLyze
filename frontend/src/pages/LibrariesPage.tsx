@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Archive,
@@ -17,6 +17,8 @@ import {
   Proportions,
   Radio,
   Save,
+  Search,
+  Server,
   Settings,
   SlidersHorizontal,
   SquareArrowOutUpRight,
@@ -27,6 +29,8 @@ import {
 import { AsyncPanel } from "../components/AsyncPanel";
 import { CheckIcon } from "../components/CheckIcon";
 import { CompatibilityProfilesPanel } from "../components/CompatibilityProfilesPanel";
+import { JellyfinSettingsPanel } from "../components/JellyfinSettingsPanel";
+import { JellyfinLibraryPathMappings } from "../components/JellyfinLibraryPathMappings";
 import { CopyIcon } from "../components/CopyIcon";
 import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
@@ -45,7 +49,10 @@ import {
   type DuplicateDetectionMode,
   type HistoryReconstructionStatus,
   type HistoryReconstructionResult,
+  type HistoryAddedDateSource,
   type HistoryStorage,
+  type JellyfinLibrary,
+  type JellyfinPathMapping,
   type LibraryType,
   type LibrarySummary,
   type PathInspection,
@@ -78,6 +85,8 @@ import {
   hasStoredActiveSettingsPanelPreference,
   saveActiveSettingsPanel,
   saveSettingsNavCollapsed,
+  settingsPanelFromSection,
+  settingsSectionForPanel,
   type SettingsPanelId,
 } from "../lib/settings-panel-state";
 import {
@@ -111,6 +120,16 @@ function createEmptyForm(isDesktop: boolean): CreateLibraryForm {
     ...EMPTY_FORM,
     path: isDesktop ? "" : EMPTY_FORM.path,
   };
+}
+
+function jellyfinCollectionTypeToLibraryType(collectionType: string | null): LibraryType {
+  return ({
+    movies: "movies",
+    tvshows: "series",
+    music: "music",
+    books: "audiobooks",
+    mixed: "mixed",
+  } as Record<string, LibraryType>)[collectionType?.toLowerCase() ?? ""] ?? "other";
 }
 
 function appendSelectedLibraryPaths(currentPaths: string[], nextPaths: string[]): string[] {
@@ -724,21 +743,56 @@ function networkWatchFallbackApplied(inspection: PathInspection | null | undefin
   return Boolean(inspection && !inspection.watch_supported && scanMode === "scheduled");
 }
 
-const SETTINGS_NAV_ITEMS: Array<{
+type SettingsNavigationItem = {
   id: SettingsPanelId;
   labelKey: string;
   icon: typeof Settings;
-}> = [
-  { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
-  { id: "qualityProfiles", labelKey: "libraries.qualityProfiles.title", icon: SlidersHorizontal },
-  { id: "compatibilityProfiles", labelKey: "compatibilityProfiles.navigationTitle", icon: Cpu },
-  { id: "appSettings", labelKey: "libraries.appSettings", icon: Settings },
-  { id: "resolutionCategories", labelKey: "libraries.resolutionCategories.title", icon: Proportions },
-  { id: "patternRecognition", labelKey: "libraries.settingsNavigationPatternRecognition", icon: FingerprintPattern },
-  { id: "historyRetention", labelKey: "libraries.historyRetention.title", icon: History },
-  { id: "recentScanLogs", labelKey: "scanLogs.title", icon: Archive },
-  { id: "telemetry", labelKey: "telemetry.panel.title", icon: Radio },
+};
+
+type SettingsNavigationGroup = {
+  id: "librariesSources" | "analysis" | "application" | "maintenanceDiagnostics";
+  labelKey: string;
+  items: SettingsNavigationItem[];
+};
+
+const SETTINGS_NAV_GROUPS: SettingsNavigationGroup[] = [
+  {
+    id: "librariesSources",
+    labelKey: "libraries.settingsGroups.librariesSources",
+    items: [
+      { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
+      { id: "jellyfin", labelKey: "jellyfin.title", icon: Server },
+    ],
+  },
+  {
+    id: "analysis",
+    labelKey: "libraries.settingsGroups.analysis",
+    items: [
+      { id: "qualityProfiles", labelKey: "libraries.qualityProfiles.title", icon: SlidersHorizontal },
+      { id: "compatibilityProfiles", labelKey: "compatibilityProfiles.navigationTitle", icon: Cpu },
+      { id: "resolutionCategories", labelKey: "libraries.resolutionCategories.title", icon: Proportions },
+      { id: "patternRecognition", labelKey: "libraries.settingsNavigationPatternRecognition", icon: FingerprintPattern },
+    ],
+  },
+  {
+    id: "application",
+    labelKey: "libraries.settingsGroups.application",
+    items: [
+      { id: "appSettings", labelKey: "libraries.appSettings", icon: Settings },
+    ],
+  },
+  {
+    id: "maintenanceDiagnostics",
+    labelKey: "libraries.settingsGroups.maintenanceDiagnostics",
+    items: [
+      { id: "historyRetention", labelKey: "libraries.historyRetention.title", icon: History },
+      { id: "recentScanLogs", labelKey: "scanLogs.title", icon: Archive },
+      { id: "telemetry", labelKey: "telemetry.panel.title", icon: Radio },
+    ],
+  },
 ];
+
+const SETTINGS_NAV_ITEMS: SettingsNavigationItem[] = SETTINGS_NAV_GROUPS.flatMap((group) => group.items);
 
 const QUALITY_METRICS_BY_MEDIA_TYPE: Record<QualityProfileMediaType, string[]> = {
   video: ["resolution", "visual_density", "video_codec", "audio_channels", "audio_codec", "dynamic_range", "language_preferences"],
@@ -762,6 +816,7 @@ const QUALITY_METRIC_DEFAULT_WEIGHTS: Record<string, number> = {
 };
 
 export function LibrariesPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const desktopBridge = getDesktopBridge();
   const desktopApp = isDesktopApp();
@@ -770,9 +825,12 @@ export function LibrariesPage() {
     appSettingsLoaded,
     libraries,
     librariesLoaded,
+    jellyfinLibraries,
+    jellyfinLibrariesLoaded,
     loadAppSettings,
     loadDashboard,
     loadLibraries,
+    loadJellyfinLibraries,
     setAppSettings,
     upsertLibrary,
     removeLibrary: removeLibraryFromStore,
@@ -782,7 +840,7 @@ export function LibrariesPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [settingsForms, setSettingsForms] = useState<Record<number, LibrarySettingsForm>>({});
-  const [qualitySectionOpen, setQualitySectionOpen] = useState<Record<number, boolean>>({});
+  const [expandedLibrarySettings, setExpandedLibrarySettings] = useState<Record<number, boolean>>({});
   const [qualityPickerOpenKey, setQualityPickerOpenKey] = useState<string | null>(null);
   const [qualityLanguageDrafts, setQualityLanguageDrafts] = useState<Record<string, string>>({});
   const [qualityLanguageErrors, setQualityLanguageErrors] = useState<Record<string, string | null>>({});
@@ -803,15 +861,34 @@ export function LibrariesPage() {
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [libraryIdentityForms, setLibraryIdentityForms] = useState<Record<number, LibraryIdentityForm>>({});
   const [libraryIdentityPending, setLibraryIdentityPending] = useState<Record<number, boolean>>({});
+  const [jellyfinLinkPending, setJellyfinLinkPending] = useState<Record<number, boolean>>({});
+  const [jellyfinPathMappings, setJellyfinPathMappings] = useState<JellyfinPathMapping[]>([]);
+  const [jellyfinPathMappingsError, setJellyfinPathMappingsError] = useState<string | null>(null);
+  const [selectedJellyfinLibraryId, setSelectedJellyfinLibraryId] = useState<number | null>(null);
   const [isRunningFullScanAll, setIsRunningFullScanAll] = useState(false);
   const [isCreateLibraryDialogOpen, setIsCreateLibraryDialogOpen] = useState(false);
   const [libraryPendingDeletion, setLibraryPendingDeletion] = useState<LibrarySummary | null>(null);
   const [deleteConfirmationInput, setDeleteConfirmationInput] = useState("");
   const [deletingLibraryIds, setDeletingLibraryIds] = useState<Record<number, boolean>>({});
   const [dashboardVisibilityPending, setDashboardVisibilityPending] = useState<Record<number, boolean>>({});
+  const [historySourcePending, setHistorySourcePending] = useState<Record<number, boolean>>({});
   const [activeSettingsPanelId, setActiveSettingsPanelId] = useState<SettingsPanelId>(() =>
-    getActiveSettingsPanel("configuredLibraries"),
+    settingsPanelFromSection(searchParams.get("section"))
+      ?? getActiveSettingsPanel("configuredLibraries"),
   );
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
+  useEffect(() => {
+    const requestedPanel = settingsPanelFromSection(searchParams.get("section"));
+    if (requestedPanel) {
+      setActiveSettingsPanelId((current) => (
+        current === requestedPanel ? current : saveActiveSettingsPanel(requestedPanel)
+      ));
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("section", settingsSectionForPanel(activeSettingsPanelId));
+    setSearchParams(nextParams, { replace: true });
+  }, [activeSettingsPanelId, searchParams, setSearchParams]);
   const [isSettingsNavCollapsed, setIsSettingsNavCollapsed] = useState(() => getSettingsNavCollapsed());
   const [isSettingsMobileMenuOpen, setIsSettingsMobileMenuOpen] = useState(false);
   const [recentScanJobs, setRecentScanJobs] = useState<RecentScanJob[]>([]);
@@ -858,6 +935,7 @@ export function LibrariesPage() {
   const [showMusicQualityScore, setShowMusicQualityScore] = useState(false);
   const [unlimitedPanelSize, setUnlimitedPanelSize] = useState(false);
   const [inDepthDolbyVisionProfiles, setInDepthDolbyVisionProfiles] = useState(false);
+  const [showAllPlaybacksWhenUnstacked, setShowAllPlaybacksWhenUnstacked] = useState(false);
   const [scanWorkerCountInput, setScanWorkerCountInput] = useState("4");
   const [parallelScanJobsInput, setParallelScanJobsInput] = useState("2");
   const [comparisonScatterPointLimitInput, setComparisonScatterPointLimitInput] = useState("5000");
@@ -903,6 +981,11 @@ export function LibrariesPage() {
   const persistedResolutionCategories = useRef<ResolutionCategory[]>(normalizeResolutionCategories(appSettings.resolution_categories));
   const ignorePatternsRequestId = useRef(0);
   const ignorePatternsSuccessId = useRef(0);
+  const jellyfinPathMappingsLoadedRef = useRef(false);
+  const qualityProfilesLoadedRef = useRef(false);
+  const recentScanJobsLoadedRef = useRef(false);
+  const historyStorageLoadedRef = useRef(false);
+  const historyReconstructionLoadedRef = useRef(false);
   const persistedIgnorePatterns = useRef<PersistedIgnorePatterns>({ user: [], default: [] });
   const seededDefaultIgnorePatterns = useRef<string[] | null>(null);
   const libraryNameInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
@@ -940,6 +1023,23 @@ export function LibrariesPage() {
   const activeSettingsNavItem =
     SETTINGS_NAV_ITEMS.find((item) => item.id === activeSettingsPanelId) ?? SETTINGS_NAV_ITEMS[0];
   const ActiveSettingsNavIcon = activeSettingsNavItem.icon;
+  const normalizedSettingsSearchQuery = settingsSearchQuery.trim().toLocaleLowerCase(i18n.resolvedLanguage);
+  const visibleSettingsNavigationGroups = SETTINGS_NAV_GROUPS.map((group) => {
+    const groupMatches = t(group.labelKey).toLocaleLowerCase(i18n.resolvedLanguage)
+      .includes(normalizedSettingsSearchQuery);
+    return {
+      ...group,
+      items: normalizedSettingsSearchQuery
+        ? group.items.filter((item) => (
+          groupMatches
+          || t(item.labelKey).toLocaleLowerCase(i18n.resolvedLanguage)
+            .includes(normalizedSettingsSearchQuery)
+        ))
+        : group.items,
+    };
+  }).filter((group) => group.items.length);
+  const targetLibraryId = Number(searchParams.get("library") || 0);
+  const focusedSettingsControl = searchParams.get("focus");
 
   useEffect(() => {
     return () => {
@@ -948,6 +1048,29 @@ export function LibrariesPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      activeSettingsPanelId !== "configuredLibraries"
+      || !targetLibraryId
+      || !libraries.some((library) => library.id === targetLibraryId)
+    ) return;
+    setExpandedLibrarySettings((current) => (
+      current[targetLibraryId] ? current : { ...current, [targetLibraryId]: true }
+    ));
+    const frame = window.requestAnimationFrame(() => {
+      const targetId = focusedSettingsControl === "path-mapping"
+        ? `library-path-mapping-${targetLibraryId}`
+        : `library-settings-card-${targetLibraryId}`;
+      document.getElementById(targetId)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeSettingsPanelId,
+    focusedSettingsControl,
+    libraries,
+    targetLibraryId,
+  ]);
 
   async function openTelemetryStatsPage() {
     const desktopBridge = getDesktopBridge();
@@ -980,6 +1103,9 @@ export function LibrariesPage() {
     setShowMusicQualityScore(updated.feature_flags.show_music_quality_score);
     setUnlimitedPanelSize(updated.feature_flags.unlimited_panel_size);
     setInDepthDolbyVisionProfiles(updated.feature_flags.in_depth_dolby_vision_profiles);
+    setShowAllPlaybacksWhenUnstacked(
+      updated.feature_flags.show_all_playbacks_when_unstacked,
+    );
     const updatedScanPerformance = updated.scan_performance ?? DEFAULT_SCAN_PERFORMANCE;
     scanWorkerCountInputRef.current = String(updatedScanPerformance.scan_worker_count);
     parallelScanJobsInputRef.current = String(updatedScanPerformance.parallel_scan_jobs);
@@ -1372,16 +1498,54 @@ export function LibrariesPage() {
   };
 
   useEffect(() => {
+    if (activeSettingsPanelId !== "configuredLibraries") {
+      return;
+    }
     if (librariesLoaded) {
       setIsLoadingLibraries(false);
       return;
     }
     void refreshLibraries(true).catch(() => undefined);
-  }, [librariesLoaded]);
+  }, [activeSettingsPanelId, librariesLoaded]);
 
   useEffect(() => {
-    void refreshQualityProfiles(true).catch(() => undefined);
-  }, []);
+    if (
+      (activeSettingsPanelId === "configuredLibraries" || activeSettingsPanelId === "jellyfin")
+      && !jellyfinLibrariesLoaded
+    ) {
+      void loadJellyfinLibraries().catch(() => undefined);
+    }
+  }, [activeSettingsPanelId, jellyfinLibrariesLoaded, loadJellyfinLibraries]);
+
+  useEffect(() => {
+    if (activeSettingsPanelId !== "configuredLibraries" || jellyfinPathMappingsLoadedRef.current) {
+      return;
+    }
+    let active = true;
+    api.jellyfinPathMappings()
+      .then((mappings) => {
+        if (!active) return;
+        jellyfinPathMappingsLoadedRef.current = true;
+        setJellyfinPathMappings(mappings);
+        setJellyfinPathMappingsError(null);
+      })
+      .catch((reason: Error) => {
+        if (active) setJellyfinPathMappingsError(reason.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeSettingsPanelId]);
+
+  useEffect(() => {
+    if (activeSettingsPanelId !== "qualityProfiles" || qualityProfilesLoadedRef.current) {
+      return;
+    }
+    qualityProfilesLoadedRef.current = true;
+    void refreshQualityProfiles(true).catch(() => {
+      qualityProfilesLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
     if (!isRenamingQualityProfile) {
@@ -1399,16 +1563,34 @@ export function LibrariesPage() {
   }, [libraries.length, librariesLoaded]);
 
   useEffect(() => {
-    void refreshRecentScanJobs(true).catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "recentScanLogs" || recentScanJobsLoadedRef.current) {
+      return;
+    }
+    recentScanJobsLoadedRef.current = true;
+    void refreshRecentScanJobs(true).catch(() => {
+      recentScanJobsLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
-    void refreshHistoryStorage(true).catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "historyRetention" || historyStorageLoadedRef.current) {
+      return;
+    }
+    historyStorageLoadedRef.current = true;
+    void refreshHistoryStorage(true).catch(() => {
+      historyStorageLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
-    void refreshHistoryReconstructionStatus().catch(() => undefined);
-  }, []);
+    if (activeSettingsPanelId !== "historyRetention" || historyReconstructionLoadedRef.current) {
+      return;
+    }
+    historyReconstructionLoadedRef.current = true;
+    void refreshHistoryReconstructionStatus().catch(() => {
+      historyReconstructionLoadedRef.current = false;
+    });
+  }, [activeSettingsPanelId]);
 
   useEffect(() => {
     if (!isHistoryReconstructionActive) {
@@ -1671,6 +1853,9 @@ export function LibrariesPage() {
     setShowMusicQualityScore(appSettings.feature_flags.show_music_quality_score);
     setUnlimitedPanelSize(appSettings.feature_flags.unlimited_panel_size);
     setInDepthDolbyVisionProfiles(appSettings.feature_flags.in_depth_dolby_vision_profiles);
+    setShowAllPlaybacksWhenUnstacked(
+      appSettings.feature_flags.show_all_playbacks_when_unstacked,
+    );
     scanWorkerCountInputRef.current = String(appScanPerformance.scan_worker_count);
     parallelScanJobsInputRef.current = String(appScanPerformance.parallel_scan_jobs);
     comparisonScatterPointLimitInputRef.current = String(appScanPerformance.comparison_scatter_point_limit);
@@ -1748,10 +1933,22 @@ export function LibrariesPage() {
         paths: selectedPaths,
       });
       upsertLibrary(created);
+      if (selectedJellyfinLibraryId !== null) {
+        try {
+          await api.updateJellyfinLibraryLink(selectedJellyfinLibraryId, created.id);
+          await loadJellyfinLibraries(true);
+        } catch (reason) {
+          setSelectedJellyfinLibraryId(null);
+          setForm(createEmptyForm(desktopApp));
+          setSubmitError(t("jellyfin.libraryCreatedLinkFailed", { message: (reason as Error).message }));
+          return;
+        }
+      }
       setForm(createEmptyForm(desktopApp));
       setFormPathInspection(null);
       setFormPathInspectionError(null);
       setSubmitError(null);
+      setSelectedJellyfinLibraryId(null);
       setIsCreateLibraryDialogOpen(false);
     } catch (reason) {
       setSubmitError((reason as Error).message);
@@ -1762,6 +1959,7 @@ export function LibrariesPage() {
 
   function openCreateLibraryDialog() {
     setSubmitError(null);
+    setSelectedJellyfinLibraryId(null);
     setIsCreateLibraryDialogOpen(true);
   }
 
@@ -1885,6 +2083,79 @@ export function LibrariesPage() {
     } finally {
       setIsSavingPathDialog(false);
     }
+  }
+
+  async function updateLibraryJellyfinLink(library: LibrarySummary, jellyfinLibraryId: number | null) {
+    const current = jellyfinLibraries.find((candidate) => candidate.linked_library_id === library.id);
+    const selected = jellyfinLibraries.find((candidate) => candidate.id === jellyfinLibraryId);
+    if ((current?.id ?? null) === jellyfinLibraryId) return;
+    setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: true }));
+    setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    try {
+      let updatedLink: JellyfinLibrary | null = null;
+      if (jellyfinLibraryId === null) {
+        if (current) await api.updateJellyfinLibraryLink(current.id, null);
+      } else {
+        updatedLink = await api.updateJellyfinLibraryLink(jellyfinLibraryId, library.id);
+      }
+      for (const candidate of libraries) {
+        if (candidate.id === library.id) {
+          upsertLibrary({
+            ...candidate,
+            linked_jellyfin_library: updatedLink
+              ? {
+                  id: updatedLink.id,
+                  name: updatedLink.name,
+                  last_synced_at: updatedLink.last_synced_at,
+                }
+              : null,
+          });
+        } else if (selected?.linked_library_id === candidate.id) {
+          upsertLibrary({ ...candidate, linked_jellyfin_library: null });
+        }
+      }
+      await loadJellyfinLibraries(true);
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    } finally {
+      setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: false }));
+    }
+  }
+
+  function applyJellyfinPathMappingChange(mapping: JellyfinPathMapping | null, removedId?: number) {
+    if (mapping) {
+      setJellyfinPathMappings((current) => {
+        const exists = current.some((candidate) => candidate.id === mapping.id);
+        return exists
+          ? current.map((candidate) => candidate.id === mapping.id ? mapping : candidate)
+          : [...current, mapping];
+      });
+    } else if (removedId !== undefined) {
+      setJellyfinPathMappings((current) => current.filter((candidate) => candidate.id !== removedId));
+    }
+    setJellyfinPathMappingsError(null);
+    void loadJellyfinLibraries(true).catch(() => undefined);
+  }
+
+  async function applyJellyfinPathMappingBatchChange(mappings: JellyfinPathMapping[]) {
+    setJellyfinPathMappings((current) => {
+      const updatedById = new Map(mappings.map((mapping) => [mapping.id, mapping]));
+      const merged = current.map((mapping) => updatedById.get(mapping.id) ?? mapping);
+      const knownIds = new Set(current.map((mapping) => mapping.id));
+      return [...merged, ...mappings.filter((mapping) => !knownIds.has(mapping.id))];
+    });
+    setJellyfinPathMappingsError(null);
+    await loadJellyfinLibraries(true);
+  }
+
+  function selectJellyfinLibraryForCreation(jellyfinLibrary: JellyfinLibrary) {
+    setSelectedJellyfinLibraryId(jellyfinLibrary.id);
+    setForm((current) => ({
+      ...current,
+      name: jellyfinLibrary.name,
+      type: jellyfinCollectionTypeToLibraryType(jellyfinLibrary.collection_type),
+    }));
+    setSubmitError(null);
   }
 
   function updateLibraryForm(
@@ -2067,7 +2338,26 @@ export function LibrariesPage() {
     }
   }
 
+  async function updateLibraryHistorySource(library: LibrarySummary, source: HistoryAddedDateSource) {
+    if (historySourcePending[library.id] || source === library.history_added_date_source) return;
+    setHistorySourcePending((current) => ({ ...current, [library.id]: true }));
+    try {
+      const updated = await api.updateLibrarySettings(library.id, { history_added_date_source: source });
+      upsertLibrary(updated);
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    } finally {
+      setHistorySourcePending((current) => {
+        const next = { ...current };
+        delete next[library.id];
+        return next;
+      });
+    }
+  }
+
   function startEditingLibraryIdentity(library: LibrarySummary) {
+    setExpandedLibrarySettings((current) => ({ ...current, [library.id]: true }));
     setLibraryIdentityForms((current) => ({
       ...current,
       [library.id]: toLibraryIdentityForm(library),
@@ -2216,7 +2506,15 @@ export function LibrariesPage() {
 
   function selectSettingsPanel(panelId: SettingsPanelId) {
     setActiveSettingsPanelId(saveActiveSettingsPanel(panelId));
+    setSettingsSearchQuery("");
     setIsSettingsMobileMenuOpen(false);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("section", settingsSectionForPanel(panelId));
+    if (panelId !== "configuredLibraries") {
+      nextParams.delete("library");
+      nextParams.delete("focus");
+    }
+    setSearchParams(nextParams);
   }
 
   function toggleSettingsNavCollapsed() {
@@ -2299,6 +2597,7 @@ export function LibrariesPage() {
         show_music_quality_score: nextShowMusicQualityScore,
         unlimited_panel_size: nextUnlimitedPanelSize,
         in_depth_dolby_vision_profiles: nextInDepthDolbyVisionProfiles,
+        show_all_playbacks_when_unstacked: showAllPlaybacksWhenUnstacked,
       },
     });
   }
@@ -2533,6 +2832,25 @@ export function LibrariesPage() {
       void refreshHistoryStorage().catch(() => undefined);
     } catch (reason) {
       setInDepthDolbyVisionProfiles(previousValue);
+      setFeatureFlagsStatus((reason as Error).message);
+    } finally {
+      setIsSavingFeatureFlags(false);
+    }
+  }
+
+  async function toggleShowAllPlaybacksWhenUnstacked(enabled: boolean) {
+    const previousValue = showAllPlaybacksWhenUnstacked;
+    setShowAllPlaybacksWhenUnstacked(enabled);
+    setFeatureFlagsStatus(null);
+    setIsSavingFeatureFlags(true);
+    try {
+      const updated = await api.updateAppSettings({
+        feature_flags: { show_all_playbacks_when_unstacked: enabled },
+      });
+      applyUpdatedAppSettingsState(updated);
+      setFeatureFlagsStatus(null);
+    } catch (reason) {
+      setShowAllPlaybacksWhenUnstacked(previousValue);
       setFeatureFlagsStatus((reason as Error).message);
     } finally {
       setIsSavingFeatureFlags(false);
@@ -4602,6 +4920,33 @@ export function LibrariesPage() {
 
     return (
       <form className="form-grid" onSubmit={handleSubmit}>
+        {jellyfinLibraries.filter((library) => library.linked_library_id === null).length ? (
+          <section className="jellyfin-create-library-options field-span-full" aria-labelledby={`${idPrefix}-jellyfin-libraries-title`}>
+            <div>
+              <h3 id={`${idPrefix}-jellyfin-libraries-title`}>{t("jellyfin.addDetectedLibrary")}</h3>
+              <p className="field-hint">{t("jellyfin.addDetectedLibraryDescription")}</p>
+            </div>
+            <div className="jellyfin-create-library-option-list">
+              {jellyfinLibraries
+                .filter((library) => library.linked_library_id === null)
+                .map((library) => (
+                  <button
+                    type="button"
+                    className={`jellyfin-create-library-option${selectedJellyfinLibraryId === library.id ? " is-selected" : ""}`}
+                    aria-pressed={selectedJellyfinLibraryId === library.id}
+                    key={library.id}
+                    onClick={() => selectJellyfinLibraryForCreation(library)}
+                  >
+                    <strong>{library.name}</strong>
+                    <span>{t("jellyfin.libraryItemCount", { count: library.item_count })}</span>
+                  </button>
+                ))}
+            </div>
+            {selectedJellyfinLibraryId !== null ? (
+              <div className="notice success">{t("jellyfin.detectedLibrarySelected")}</div>
+            ) : null}
+          </section>
+        ) : null}
         <p className="field-hint field-span-full">
           {desktopApp ? t("libraries.createSubtitleDesktop") : t("libraries.createSubtitle")}
         </p>
@@ -5229,28 +5574,47 @@ export function LibrariesPage() {
             className={`settings-mobile-navigation-menu${isSettingsMobileMenuOpen ? " is-open" : ""}`}
             aria-hidden={!isSettingsMobileMenuOpen}
           >
+            <label className="settings-navigation-search settings-mobile-navigation-search">
+              <Search aria-hidden="true" className="nav-icon" />
+              <span className="sr-only">{t("libraries.settingsSearchLabel")}</span>
+              <input
+                type="search"
+                value={settingsSearchQuery}
+                placeholder={t("libraries.settingsSearchPlaceholder")}
+                tabIndex={isSettingsMobileMenuOpen ? 0 : -1}
+                onChange={(event) => setSettingsSearchQuery(event.target.value)}
+              />
+            </label>
             <nav className="settings-mobile-navigation-list" aria-label={t("libraries.mobileSettingsNavigation")}>
-              {SETTINGS_NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const label = t(item.labelKey);
-                const active = activeSettingsPanelId === item.id;
-                return (
-                  <button
-                    type="button"
-                    key={item.id}
-                    className={`settings-navigation-item settings-mobile-navigation-item${active ? " active" : ""}`}
-                    aria-current={active ? "page" : undefined}
-                    tabIndex={isSettingsMobileMenuOpen ? 0 : -1}
-                    onClick={() => selectSettingsPanel(item.id)}
-                  >
-                    {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
-                    <span className="settings-navigation-item-content">
-                      <Icon aria-hidden="true" className="nav-icon" />
-                      <span>{label}</span>
-                    </span>
-                  </button>
-                );
-              })}
+              {visibleSettingsNavigationGroups.map((group) => (
+                <div className="settings-navigation-group" key={group.id}>
+                  <div className="settings-navigation-group-label">{t(group.labelKey)}</div>
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const label = t(item.labelKey);
+                    const active = activeSettingsPanelId === item.id;
+                    return (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={`settings-navigation-item settings-mobile-navigation-item${active ? " active" : ""}`}
+                        aria-current={active ? "page" : undefined}
+                        tabIndex={isSettingsMobileMenuOpen ? 0 : -1}
+                        onClick={() => selectSettingsPanel(item.id)}
+                      >
+                        {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
+                        <span className="settings-navigation-item-content">
+                          <Icon aria-hidden="true" className="nav-icon" />
+                          <span>{label}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+              {!visibleSettingsNavigationGroups.length ? (
+                <div className="settings-navigation-empty">{t("libraries.settingsSearchEmpty")}</div>
+              ) : null}
             </nav>
             <div className="settings-mobile-navigation-quick-actions">
               <div className="settings-navigation-section-label">{t("libraries.quickActions")}</div>
@@ -5297,30 +5661,52 @@ export function LibrariesPage() {
               />
             </button>
           </div>
+          {!isSettingsNavCollapsed ? (
+            <label className="settings-navigation-search">
+              <Search aria-hidden="true" className="nav-icon" />
+              <span className="sr-only">{t("libraries.settingsSearchLabel")}</span>
+              <input
+                type="search"
+                value={settingsSearchQuery}
+                placeholder={t("libraries.settingsSearchPlaceholder")}
+                onChange={(event) => setSettingsSearchQuery(event.target.value)}
+              />
+            </label>
+          ) : null}
           <nav className="settings-navigation-list">
-            {SETTINGS_NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const label = t(item.labelKey);
-              const active = activeSettingsPanelId === item.id;
-              return (
-                <button
-                  type="button"
-                  key={item.id}
-                  className={`settings-navigation-item${active ? " active" : ""}`}
-                  aria-current={active ? "page" : undefined}
-                  aria-label={label}
-                  title={isSettingsNavCollapsed ? label : undefined}
-                  data-settings-panel-id={item.id}
-                  onClick={() => selectSettingsPanel(item.id)}
-                >
-                  {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
-                  <span className="settings-navigation-item-content">
-                    <Icon aria-hidden="true" className="nav-icon" />
-                    {!isSettingsNavCollapsed ? <span>{label}</span> : null}
-                  </span>
-                </button>
-              );
-            })}
+            {(isSettingsNavCollapsed ? SETTINGS_NAV_GROUPS : visibleSettingsNavigationGroups).map((group) => (
+              <div className="settings-navigation-group" key={group.id}>
+                {!isSettingsNavCollapsed ? (
+                  <div className="settings-navigation-group-label">{t(group.labelKey)}</div>
+                ) : null}
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const label = t(item.labelKey);
+                  const active = activeSettingsPanelId === item.id;
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      className={`settings-navigation-item${active ? " active" : ""}`}
+                      aria-current={active ? "page" : undefined}
+                      aria-label={label}
+                      title={isSettingsNavCollapsed ? label : undefined}
+                      data-settings-panel-id={item.id}
+                      onClick={() => selectSettingsPanel(item.id)}
+                    >
+                      {active ? <SlidingTogglePill activeKey={item.id} className="nav-active-pill" /> : null}
+                      <span className="settings-navigation-item-content">
+                        <Icon aria-hidden="true" className="nav-icon" />
+                        {!isSettingsNavCollapsed ? <span>{label}</span> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {!isSettingsNavCollapsed && !visibleSettingsNavigationGroups.length ? (
+              <div className="settings-navigation-empty">{t("libraries.settingsSearchEmpty")}</div>
+            ) : null}
           </nav>
           <div className="settings-navigation-quick-actions">
             <div className="settings-navigation-divider" />
@@ -5369,10 +5755,38 @@ export function LibrariesPage() {
                 const canSaveLibraryIdentity = Boolean(identityForm?.name.trim());
                 const isDeletingLibrary = Boolean(deletingLibraryIds[library.id]);
                 const activeLibraryScanJob = activeJobs.find((job) => job.library_id === library.id);
+                const areLibrarySettingsExpanded = Boolean(expandedLibrarySettings[library.id]);
+                const linkedJellyfinLibrary = jellyfinLibraries.find(
+                  (candidate) => candidate.linked_library_id === library.id,
+                );
+                const librarySettingsToggle = (
+                  <button
+                    type="button"
+                    className="library-settings-chevron"
+                    aria-label={t(areLibrarySettingsExpanded
+                      ? "libraries.collapseLibrarySettings"
+                      : "libraries.expandLibrarySettings", { name: library.name })}
+                    title={t(areLibrarySettingsExpanded
+                      ? "libraries.collapseLibrarySettings"
+                      : "libraries.expandLibrarySettings", { name: library.name })}
+                    aria-expanded={areLibrarySettingsExpanded}
+                    aria-controls={`library-settings-body-${library.id}`}
+                    disabled={isDeletingLibrary}
+                    onClick={() => setExpandedLibrarySettings((current) => ({
+                      ...current,
+                      [library.id]: !current[library.id],
+                    }))}
+                  >
+                    {areLibrarySettingsExpanded
+                      ? <ChevronDown aria-hidden="true" className="nav-icon" />
+                      : <ChevronRight aria-hidden="true" className="nav-icon" />}
+                  </button>
+                );
 
                 return (
                   <div
-                    className={`media-card library-settings-card${isDeletingLibrary ? " is-deleting" : ""}`}
+                    id={`library-settings-card-${library.id}`}
+                    className={`media-card library-settings-card${areLibrarySettingsExpanded ? " is-expanded" : " is-collapsed"}${isDeletingLibrary ? " is-deleting" : ""}${targetLibraryId === library.id ? " is-query-focused" : ""}`}
                     key={library.id}
                     aria-busy={isDeletingLibrary}
                   >
@@ -5382,38 +5796,44 @@ export function LibrariesPage() {
                         <div className="library-title-meta">
                           <div className={`library-title-main${isEditingLibraryIdentity ? " is-editing" : ""}`}>
                             {isEditingLibraryIdentity ? (
-                              <div className="library-title-inline-editor">
-                                <input
-                                  ref={(node) => {
-                                    libraryNameInputRefs.current[library.id] = node;
-                                  }}
-                                  type="text"
-                                  className="library-title-input"
-                                  value={identityForm?.name ?? ""}
-                                  aria-label={t("libraries.editNameAria", { name: library.name })}
-                                  disabled={isSavingLibraryIdentity || isDeletingLibrary}
-                                  onChange={(event) =>
-                                    updateLibraryIdentityForm(library.id, { name: event.target.value })
-                                  }
-                                  onKeyDown={(event) => handleLibraryIdentityEditorKeyDown(event, library)}
-                                />
+                              <div className="library-title-heading">
+                                {librarySettingsToggle}
+                                <div className="library-title-inline-editor">
+                                  <input
+                                    ref={(node) => {
+                                      libraryNameInputRefs.current[library.id] = node;
+                                    }}
+                                    type="text"
+                                    className="library-title-input"
+                                    value={identityForm?.name ?? ""}
+                                    aria-label={t("libraries.editNameAria", { name: library.name })}
+                                    disabled={isSavingLibraryIdentity || isDeletingLibrary}
+                                    onChange={(event) =>
+                                      updateLibraryIdentityForm(library.id, { name: event.target.value })
+                                    }
+                                    onKeyDown={(event) => handleLibraryIdentityEditorKeyDown(event, library)}
+                                  />
+                                </div>
                               </div>
                             ) : (
-                              <h3>
-                                <Link
-                                  to={`/libraries/${library.id}`}
-                                  className="file-link"
-                                  aria-disabled={isDeletingLibrary}
-                                  tabIndex={isDeletingLibrary ? -1 : undefined}
-                                  onClick={(event) => {
-                                    if (isDeletingLibrary) {
-                                      event.preventDefault();
-                                    }
-                                  }}
-                                >
-                                  {library.name}
-                                </Link>
-                              </h3>
+                              <div className="library-title-heading">
+                                {librarySettingsToggle}
+                                <h3>
+                                  <Link
+                                    to={`/libraries/${library.id}`}
+                                    className="file-link"
+                                    aria-disabled={isDeletingLibrary}
+                                    tabIndex={isDeletingLibrary ? -1 : undefined}
+                                    onClick={(event) => {
+                                      if (isDeletingLibrary) {
+                                        event.preventDefault();
+                                      }
+                                    }}
+                                  >
+                                    {library.name}
+                                  </Link>
+                                </h3>
+                              </div>
                             )}
                             {!isEditingLibraryIdentity ? (
                               <TooltipTrigger
@@ -5477,21 +5897,6 @@ export function LibrariesPage() {
                           </div>
 	                        </div>
 	                        <div className="library-title-actions">
-	                          {isEditingLibraryIdentity ? (
-	                            <button
-	                              type="button"
-	                              className="secondary small library-change-path-button"
-	                              disabled={isSavingLibraryIdentity || isDeletingLibrary || Boolean(activeLibraryScanJob)}
-	                              title={
-	                                activeLibraryScanJob
-	                                  ? t("libraries.changePathActiveScanTooltip")
-	                                  : t("libraries.changePathTooltip")
-	                              }
-	                              onClick={() => openLibraryPathDialog(library)}
-	                            >
-	                              {t("libraries.changePath")}
-	                            </button>
-	                          ) : null}
 	                          <button
                             type="button"
                             className="secondary icon-only-button library-action-tooltip-trigger"
@@ -5584,7 +5989,7 @@ export function LibrariesPage() {
                     </div>
                   ) : activeLibraryScanJob ? (
                     <div
-                      className={`progress${
+                      className={`progress library-scan-progress${
                         isDeterminateScanProgress(
                           activeLibraryScanJob.progress_mode,
                           activeLibraryScanJob.files_total,
@@ -5607,7 +6012,89 @@ export function LibrariesPage() {
                       />
                     </div>
                   ) : null}
-                  <div className="library-settings-form">
+                  {areLibrarySettingsExpanded ? (
+                    <div className="library-settings-body" id={`library-settings-body-${library.id}`}>
+                      <section className="library-settings-section">
+                        <div className="library-settings-section-heading">
+                          <h4>{t("libraries.sections.jellyfin.title")}</h4>
+                          <p>{t("libraries.sections.jellyfin.description")}</p>
+                        </div>
+                        <div className="library-settings-section-grid is-single-column">
+                          <div className="field">
+                            <label htmlFor={`jellyfin-library-link-${library.id}`}>{t("jellyfin.associatedJellyfinLibrary")}</label>
+                            <select
+                              id={`jellyfin-library-link-${library.id}`}
+                              className="settings-choice-input"
+                              value={linkedJellyfinLibrary?.id ?? ""}
+                              disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
+                              onChange={(event) => void updateLibraryJellyfinLink(
+                                library,
+                                event.target.value ? Number(event.target.value) : null,
+                              )}
+                            >
+                              <option value="">{t("jellyfin.noAssociatedLibrary")}</option>
+                              {jellyfinLibraries.map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.name}{candidate.linked_library_id && candidate.linked_library_id !== library.id
+                                    ? ` (${candidate.linked_library_name})`
+                                    : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {linkedJellyfinLibrary ? (
+                            <JellyfinLibraryPathMappings
+                              jellyfinLibrary={linkedJellyfinLibrary}
+                              mappings={jellyfinPathMappings}
+                              suggestedTargets={(library.roots?.length
+                                ? library.roots.map((root) => root.path)
+                                : [library.path]
+                              )}
+                              disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
+                              loadError={jellyfinPathMappingsError}
+                              onChanged={applyJellyfinPathMappingChange}
+                              onBatchChanged={applyJellyfinPathMappingBatchChange}
+                              sectionId={`library-path-mapping-${library.id}`}
+                              focused={targetLibraryId === library.id && focusedSettingsControl === "path-mapping"}
+                            />
+                          ) : null}
+                        </div>
+                      </section>
+
+                      <section className="library-settings-section">
+                        <div className="library-settings-section-heading">
+                          <h4>{t("libraries.sections.source.title")}</h4>
+                          <p>{t("libraries.sections.source.description")}</p>
+                        </div>
+                        <div className="library-settings-section-grid is-single-column">
+                          <div className="field library-source-field">
+                            <div className="field-label-row">
+                              <span>{t("libraries.mediaPaths")}</span>
+                              <button
+                                type="button"
+                                className="secondary small"
+                                disabled={isDeletingLibrary || Boolean(activeLibraryScanJob)}
+                                title={activeLibraryScanJob ? t("libraries.changePathActiveScanTooltip") : t("libraries.changePathTooltip")}
+                                onClick={() => openLibraryPathDialog(library)}
+                              >
+                                {t("libraries.changePath")}
+                              </button>
+                            </div>
+                            <div className="library-source-paths">
+                              {(library.roots?.length ? library.roots : [{ id: 0, path: library.path, display_name: "", path_key: library.path }]).map((root) => (
+                                <code key={`${library.id}-${root.path}`}>{root.path}</code>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="library-settings-section">
+                        <div className="library-settings-section-heading">
+                          <h4>{t("libraries.sections.analysis.title")}</h4>
+                          <p>{t("libraries.sections.analysis.description")}</p>
+                        </div>
+                        <div className="library-settings-form">
                     <div className="field">
                       <div className="field-label-row">
                         <label htmlFor={`scan-mode-${library.id}`}>{t("libraries.scanMode")}</label>
@@ -5634,6 +6121,22 @@ export function LibrariesPage() {
                         (scanMode) => updateLibraryForm(library.id, { scan_mode: scanMode }),
                         isDeletingLibrary,
                       )}
+                    </div>
+                    <div className="field">
+                      <div className="field-label-row">
+                        <label htmlFor={`history-added-date-source-${library.id}`}>{t("jellyfin.historySource")}</label>
+                        <TooltipTrigger ariaLabel={t("jellyfin.historySourceHelpAria")} content={t("jellyfin.historySourceHelp")}>?</TooltipTrigger>
+                      </div>
+                      <select
+                        id={`history-added-date-source-${library.id}`}
+                        className="settings-choice-input"
+                        value={library.history_added_date_source || "medialyze"}
+                        disabled={isDeletingLibrary || Boolean(historySourcePending[library.id])}
+                        onChange={(event) => void updateLibraryHistorySource(library, event.target.value as HistoryAddedDateSource)}
+                      >
+                        <option value="medialyze">{t("jellyfin.historySourceMedialyze")}</option>
+                        <option value="jellyfin">{t("jellyfin.historySourceJellyfin")}</option>
+                      </select>
                     </div>
                     <div className="field">
                       <div className="field-label-row">
@@ -5762,13 +6265,24 @@ export function LibrariesPage() {
                         />
                       </div>
                     ) : null}
-                  </div>
+                        </div>
+                      </section>
+                    </div>
+                  ) : null}
                   {libraryMessages[library.id] ? <div className="alert">{libraryMessages[library.id]}</div> : null}
                   </div>
                 );
               })}
             </div>
           </AsyncPanel>
+          ) : null}
+          {activeSettingsPanelId === "jellyfin" ? (
+            <JellyfinSettingsPanel
+              onCatalogChanged={() => {
+                void loadJellyfinLibraries(true);
+                void loadLibraries(true);
+              }}
+            />
           ) : null}
 
           {activeSettingsPanelId === "qualityProfiles" ? renderQualityProfilesPanel() : null}
@@ -6725,6 +7239,33 @@ export function LibrariesPage() {
                     <TooltipTrigger
                       ariaLabel={t("libraries.featureFlags.inDepthDolbyVisionProfilesTooltipAria")}
                       content={t("libraries.featureFlags.inDepthDolbyVisionProfilesTooltip")}
+                      preserveLineBreaks
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
+                  <div className="app-settings-flag-row">
+                    <label
+                      className="app-settings-flag-toggle"
+                      htmlFor="show-all-playbacks-when-unstacked"
+                    >
+                      <input
+                        id="show-all-playbacks-when-unstacked"
+                        type="checkbox"
+                        checked={showAllPlaybacksWhenUnstacked}
+                        disabled={isSavingFeatureFlags || !appSettingsLoaded}
+                        onChange={(event) =>
+                          void toggleShowAllPlaybacksWhenUnstacked(event.target.checked)}
+                      />
+                      <span>{t("libraries.featureFlags.showAllPlaybacksWhenUnstacked")}</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel={t(
+                        "libraries.featureFlags.showAllPlaybacksWhenUnstackedTooltipAria",
+                      )}
+                      content={t(
+                        "libraries.featureFlags.showAllPlaybacksWhenUnstackedTooltip",
+                      )}
                       preserveLineBreaks
                     >
                       ?

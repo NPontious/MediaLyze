@@ -28,6 +28,38 @@ import {
 type ProfileTab = "hardware" | "software" | "compatibility";
 type EditableProfile = HardwareProfile | SoftwareProfile;
 type CapabilitySection = "video" | "audio" | "containers" | "subtitles" | "rules" | "sources";
+type CompatibilityCatalogCache = {
+  hardware: HardwareProfile[];
+  software: SoftwareProfile[];
+  compatibility: CompatibilityProfile[];
+};
+
+const COMPATIBILITY_CATALOG_SESSION_KEY = "medialyze-compatibility-profile-catalog";
+
+function readCompatibilityCatalogCache(): CompatibilityCatalogCache | null {
+  try {
+    const cached = JSON.parse(window.sessionStorage.getItem(COMPATIBILITY_CATALOG_SESSION_KEY) ?? "null");
+    if (
+      cached
+      && Array.isArray(cached.hardware)
+      && Array.isArray(cached.software)
+      && Array.isArray(cached.compatibility)
+    ) {
+      return cached as CompatibilityCatalogCache;
+    }
+  } catch {
+    // A fresh request below repairs malformed or unavailable session storage.
+  }
+  return null;
+}
+
+function writeCompatibilityCatalogCache(catalog: CompatibilityCatalogCache): void {
+  try {
+    window.sessionStorage.setItem(COMPATIBILITY_CATALOG_SESSION_KEY, JSON.stringify(catalog));
+  } catch {
+    // The in-memory panel state still works when session storage is unavailable.
+  }
+}
 
 const HARDWARE_CATEGORIES = [
   "streaming_device",
@@ -351,11 +383,12 @@ function softwareTemplate(): SoftwareProfile {
 
 export function CompatibilityProfilesPanel() {
   const { t } = useTranslation();
+  const [initialCatalog] = useState(readCompatibilityCatalogCache);
   const [tab, setTab] = useState<ProfileTab>("hardware");
-  const [hardware, setHardware] = useState<HardwareProfile[]>([]);
-  const [software, setSoftware] = useState<SoftwareProfile[]>([]);
-  const [compatibility, setCompatibility] = useState<CompatibilityProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [hardware, setHardware] = useState<HardwareProfile[]>(initialCatalog?.hardware ?? []);
+  const [software, setSoftware] = useState<SoftwareProfile[]>(initialCatalog?.software ?? []);
+  const [compatibility, setCompatibility] = useState<CompatibilityProfile[]>(initialCatalog?.compatibility ?? []);
+  const [loading, setLoading] = useState(initialCatalog === null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditableProfile | null>(null);
@@ -378,8 +411,10 @@ export function CompatibilityProfilesPanel() {
   });
   const [favoriteProfileKeys, setFavoriteProfileKeys] = useState(readFavoriteProfileKeys);
 
-  async function load() {
-    setLoading(true);
+  async function load(showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
       const [nextHardware, nextSoftware, nextCompatibility] = await Promise.all([
         api.hardwareProfiles(),
@@ -389,6 +424,11 @@ export function CompatibilityProfilesPanel() {
       setHardware(nextHardware);
       setSoftware(nextSoftware);
       setCompatibility(nextCompatibility);
+      writeCompatibilityCatalogCache({
+        hardware: nextHardware,
+        software: nextSoftware,
+        compatibility: nextCompatibility,
+      });
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t("compatibilityProfiles.loadFailed"));
@@ -398,7 +438,7 @@ export function CompatibilityProfilesPanel() {
   }
 
   useEffect(() => {
-    void load();
+    void load(initialCatalog === null);
   }, []);
 
   const profiles = tab === "hardware" ? hardware : software;

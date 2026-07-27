@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "./components/AppShell";
@@ -7,13 +7,14 @@ import { APP_VERSION } from "./lib/app-version";
 import { isDevelopmentVersion } from "./lib/release-notes";
 import { ScanJobsProvider } from "./lib/scan-jobs";
 import { ThemeProvider } from "./lib/theme";
-import { DashboardPage } from "./pages/DashboardPage";
-import { FileComparePage } from "./pages/FileComparePage";
-import { FileDetailPage } from "./pages/FileDetailPage";
-import { LibrariesPage } from "./pages/LibrariesPage";
-import { LibraryDetailPage } from "./pages/LibraryDetailPage";
-import { SeriesDetailPage } from "./pages/SeriesDetailPage";
-import { UiElementsPage } from "./pages/UiElementsPage";
+
+const DashboardPage = lazy(() => import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+const FileComparePage = lazy(() => import("./pages/FileComparePage").then((module) => ({ default: module.FileComparePage })));
+const FileDetailPage = lazy(() => import("./pages/FileDetailPage").then((module) => ({ default: module.FileDetailPage })));
+const LibrariesPage = lazy(() => import("./pages/LibrariesPage").then((module) => ({ default: module.LibrariesPage })));
+const LibraryDetailPage = lazy(() => import("./pages/LibraryDetailPage").then((module) => ({ default: module.LibraryDetailPage })));
+const SeriesDetailPage = lazy(() => import("./pages/SeriesDetailPage").then((module) => ({ default: module.SeriesDetailPage })));
+const UiElementsPage = lazy(() => import("./pages/UiElementsPage").then((module) => ({ default: module.UiElementsPage })));
 
 function DevOnlyRoute({ children }: { children: ReactNode }) {
   return isDevelopmentVersion(APP_VERSION) ? children : <Navigate to="/" replace />;
@@ -24,25 +25,27 @@ export function App() {
     <ThemeProvider>
       <ScanJobsProvider>
         <AppDataProvider>
-          <Routes>
-            <Route element={<AppShell />}>
-              <Route path="/" element={<DashboardPage />} />
-              <Route path="/settings" element={<LibrariesPage />} />
-              <Route
-                path="/ui-elements"
-                element={
-                  <DevOnlyRoute>
-                    <UiElementsPage />
-                  </DevOnlyRoute>
-                }
-              />
-              <Route path="/libraries/:libraryId/series/:seriesId" element={<SeriesDetailPage />} />
-              <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
-              <Route path="/files/compare" element={<FileComparePage />} />
-              <Route path="/files/:fileId" element={<FileDetailPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
+          <Suspense fallback={<div className="empty-state" aria-busy="true" />}>
+            <Routes>
+              <Route element={<AppShell />}>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/settings" element={<LibrariesPage />} />
+                <Route
+                  path="/ui-elements"
+                  element={
+                    <DevOnlyRoute>
+                      <UiElementsPage />
+                    </DevOnlyRoute>
+                  }
+                />
+                <Route path="/libraries/:libraryId/series/:seriesId" element={<SeriesDetailPage />} />
+                <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
+                <Route path="/files/compare" element={<FileComparePage />} />
+                <Route path="/files/:fileId" element={<FileDetailPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Route>
+            </Routes>
+          </Suspense>
         </AppDataProvider>
       </ScanJobsProvider>
     </ThemeProvider>

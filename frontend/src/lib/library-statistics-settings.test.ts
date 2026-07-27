@@ -8,6 +8,7 @@ import {
   getVisibleLibraryStatisticTableColumns,
   moveLibraryStatistic,
   saveLibraryStatisticsSettings,
+  updateLibraryStatisticVisibility,
 } from "./library-statistics-settings";
 
 describe("library statistics settings", () => {
@@ -236,5 +237,27 @@ describe("library statistics settings", () => {
     expect(
       getVisibleLibraryStatisticPanels(settings, "mixed", { hasVideoMetadata: true }).map((entry) => entry.id),
     ).toContain("video_bit_depth");
+  });
+
+  it("shows the user play panel only for libraries with a playback provider", () => {
+    const settings = getLibraryStatisticsSettings();
+
+    expect(
+      getVisibleLibraryStatisticPanels(settings, "movies").map((entry) => entry.id),
+    ).not.toContain("user_plays");
+    expect(
+      getVisibleLibraryStatisticPanels(settings, "movies", { hasPlaybackProvider: true }).map((entry) => entry.id),
+    ).toContain("user_plays");
+  });
+
+  it("offers the total play count as an opt-in table column only with a playback provider", () => {
+    const settings = updateLibraryStatisticVisibility(getLibraryStatisticsSettings(), "user_plays", {
+      tableEnabled: true,
+    });
+
+    expect(getVisibleLibraryStatisticTableColumns(settings, "movies")).not.toContain("play_count");
+    expect(
+      getVisibleLibraryStatisticTableColumns(settings, "movies", { hasPlaybackProvider: true }),
+    ).toContain("play_count");
   });
 });

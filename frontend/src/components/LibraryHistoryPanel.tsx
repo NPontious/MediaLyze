@@ -16,8 +16,8 @@ import { PanelEmptyState } from "./PanelEmptyState";
 import { SlidingTogglePill } from "./SlidingTogglePill";
 
 type HistoryResponse = LibraryHistoryResponse | DashboardHistoryResponse;
-type HistoryRangeMode = "7d" | "30d" | "1y" | "all" | "custom";
-type HistoryRangeSelection = {
+export type HistoryRangeMode = "7d" | "30d" | "1y" | "all" | "custom";
+export type HistoryRangeSelection = {
   mode: HistoryRangeMode;
   startDate?: string;
   endDate?: string;
@@ -26,6 +26,8 @@ type HistoryRangeSelection = {
 type LibraryHistoryPanelProps = {
   history: HistoryResponse | null;
   loading?: boolean;
+  refreshing?: boolean;
+  refreshError?: string | null;
   error?: string | null;
   selectedMetric: LibraryHistoryMetricId;
   onChangeMetric: (metricId: LibraryHistoryMetricId) => void;
@@ -163,6 +165,25 @@ function filterHistoryPoints(points: HistoryResponse["points"], selection: Histo
   return points.filter((point) => point.snapshot_day >= bounds.start! && point.snapshot_day <= bounds.end!);
 }
 
+function hasHistoryMetricData(
+  points: HistoryResponse["points"],
+  metric: ReturnType<typeof getHistoryMetricDefinition>,
+): boolean {
+  if (metric.group === "summary") {
+    return points.some((point) => metric.value(point.trend_metrics) !== null);
+  }
+  if ("categoryKey" in metric) {
+    return points.some((point) => {
+      const counts =
+        metric.categoryKey === "resolution"
+          ? point.trend_metrics.category_counts?.resolution ?? point.trend_metrics.resolution_counts
+          : point.trend_metrics.category_counts?.[metric.categoryKey] ?? {};
+      return Object.values(counts).some((count) => count > 0);
+    });
+  }
+  return points.some((point) => (point.trend_metrics.numeric_distributions?.[metric.distributionKey]?.total ?? 0) > 0);
+}
+
 function buildCalendarDays(month: Date) {
   const firstDay = startOfUtcMonth(month);
   const gridStart = addUtcDays(firstDay, -firstDay.getUTCDay());
@@ -189,113 +210,67 @@ function formatRangeLabel(startDate: string | undefined, endDate: string | undef
   return `${monthDayFormatter.format(normalizedStart)} - ${fullFormatter.format(normalizedEnd)}`;
 }
 
-export function LibraryHistoryPanel({
-  history,
-  loading = false,
-  error = null,
-  selectedMetric,
-  onChangeMetric,
-  collapsed,
-  onToggleCollapsed,
-  currentResolutionCategoryIds,
-  title,
-  subtitle,
-  metricLabel,
-  rangeStorageKey = DEFAULT_HISTORY_RANGE_STORAGE_KEY,
-  bodyId = "library-history-panel-body",
-  inDepthDolbyVisionProfiles = false,
-  showLibraryMix = false,
-}: LibraryHistoryPanelProps) {
+export function HistoryRangeToggle({
+  selection,
+  onChange,
+  minimumDate,
+  maximumDate,
+  defaultStartDate,
+  defaultEndDate,
+  ariaLabel,
+}: {
+  selection: HistoryRangeSelection;
+  onChange: (selection: HistoryRangeSelection) => void;
+  minimumDate?: string | null;
+  maximumDate?: string | null;
+  defaultStartDate?: string | null;
+  defaultEndDate?: string | null;
+  ariaLabel?: string;
+}) {
   const { t, i18n } = useTranslation();
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [rangePickerOpen, setRangePickerOpen] = useState(false);
-  const [displayMode, setDisplayMode] = useState<HistoryMetricDisplayMode>("count");
-  const [rangeSelection, setRangeSelection] = useState<HistoryRangeSelection>(() =>
-    readHistoryRangeSelection(rangeStorageKey),
-  );
-  const [draftStartDate, setDraftStartDate] = useState<string | null>(rangeSelection.startDate ?? null);
-  const [draftEndDate, setDraftEndDate] = useState<string | null>(rangeSelection.endDate ?? null);
+  const [draftStartDate, setDraftStartDate] = useState<string | null>(selection.startDate ?? null);
+  const [draftEndDate, setDraftEndDate] = useState<string | null>(selection.endDate ?? null);
   const [calendarCursor, setCalendarCursor] = useState<Date>(() =>
-    startOfUtcMonth(parseDateKey(rangeSelection.startDate) ?? new Date()),
+    startOfUtcMonth(parseDateKey(selection.startDate) ?? parseDateKey(minimumDate ?? undefined) ?? new Date()),
   );
-  const pickerRef = useRef<HTMLDivElement | null>(null);
   const rangePickerRef = useRef<HTMLDivElement | null>(null);
-  const pickerId = useId();
   const rangePickerId = useId();
-  const currentResolutionCategoryIdSet = useMemo(
-    () => new Set(currentResolutionCategoryIds),
-    [currentResolutionCategoryIds],
-  );
-  const selectedMetricDefinition = useMemo(
-    () => getHistoryMetricDefinition(selectedMetric),
-    [selectedMetric],
-  );
-  const availableMetricDefinitions = useMemo(
-    () =>
-      HISTORY_METRIC_DEFINITIONS.filter((definition) => showLibraryMix || definition.id !== "library_mix"),
-    [showLibraryMix],
-  );
-  const SelectedMetricIcon = HISTORY_GROUP_ICONS[selectedMetricDefinition.group];
-  const resolutionCategories = useMemo(
-    () =>
-      (history?.resolution_categories ?? []).map((category) => ({
-        ...category,
-        label:
-          !currentResolutionCategoryIdSet.has(category.id) && category.label === category.id
-            ? t("libraryDetail.history.unknownLegacyResolutionCategory", { id: category.id })
-            : category.label,
-      })),
-    [currentResolutionCategoryIdSet, history?.resolution_categories, t],
-  );
-  const libraryCategories = "visible_libraries" in (history ?? {})
-    ? (history as DashboardHistoryResponse).visible_libraries ?? []
-    : [];
-  const filteredHistoryPoints = useMemo(
-    () => filterHistoryPoints(history?.points ?? [], rangeSelection),
-    [history?.points, rangeSelection],
-  );
   const activeRangeLabel = useMemo(
     () =>
-      rangeSelection.mode === "custom"
-        ? formatRangeLabel(rangeSelection.startDate, rangeSelection.endDate, i18n.language)
+      selection.mode === "custom"
+        ? formatRangeLabel(selection.startDate, selection.endDate, i18n.language)
         : null,
-    [i18n.language, rangeSelection],
+    [i18n.language, selection],
   );
 
-  function openCustomRangePicker(selection = rangeSelection) {
-    const bounds = rangeBoundsFromSelection(history?.points ?? [], selection);
-    const nextStart = selection.startDate ?? bounds.start ?? history?.oldest_snapshot_day ?? null;
-    const nextEnd = selection.endDate ?? bounds.end ?? history?.newest_snapshot_day ?? nextStart;
+  function openCustomRangePicker(nextSelection = selection) {
+    const nextStart = nextSelection.startDate ?? defaultStartDate ?? minimumDate ?? maximumDate ?? null;
+    const nextEnd = nextSelection.endDate ?? defaultEndDate ?? maximumDate ?? nextStart;
     setDraftStartDate(nextStart);
     setDraftEndDate(nextEnd);
-    setCalendarCursor(startOfUtcMonth(parseDateKey(nextStart ?? undefined) ?? latestHistoryDate(history?.points ?? []) ?? new Date()));
+    setCalendarCursor(
+      startOfUtcMonth(parseDateKey(nextStart ?? undefined) ?? parseDateKey(maximumDate ?? undefined) ?? new Date()),
+    );
     setRangePickerOpen(true);
-  }
-
-  function updateRangeSelection(nextSelection: HistoryRangeSelection) {
-    setRangeSelection(nextSelection);
-    saveHistoryRangeSelection(rangeStorageKey, nextSelection);
-    if (nextSelection.mode !== "custom") {
-      setRangePickerOpen(false);
-    }
   }
 
   function selectRangePreset(mode: HistoryRangeMode) {
     if (mode === "custom") {
-      const bounds = rangeBoundsFromSelection(history?.points ?? [], rangeSelection);
       const nextSelection =
-        rangeSelection.mode === "custom"
-          ? rangeSelection
+        selection.mode === "custom"
+          ? selection
           : {
               mode: "custom" as const,
-              startDate: bounds.start ?? undefined,
-              endDate: bounds.end ?? undefined,
+              startDate: defaultStartDate ?? minimumDate ?? undefined,
+              endDate: defaultEndDate ?? maximumDate ?? defaultStartDate ?? minimumDate ?? undefined,
             };
-      updateRangeSelection(nextSelection);
+      onChange(nextSelection);
       openCustomRangePicker(nextSelection);
       return;
     }
-    updateRangeSelection({ mode });
+    onChange({ mode });
+    setRangePickerOpen(false);
   }
 
   function selectDraftDate(dateKey: string) {
@@ -318,7 +293,7 @@ export function LibraryHistoryPanel({
     }
     const startDate = draftEndDate && draftEndDate < draftStartDate ? draftEndDate : draftStartDate;
     const endDate = draftEndDate && draftEndDate >= draftStartDate ? draftEndDate : draftStartDate;
-    updateRangeSelection({ mode: "custom", startDate, endDate });
+    onChange({ mode: "custom", startDate, endDate });
     setRangePickerOpen(false);
   }
 
@@ -374,6 +349,207 @@ export function LibraryHistoryPanel({
   }
 
   useEffect(() => {
+    if (!rangePickerOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (rangePickerRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setRangePickerOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setRangePickerOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [rangePickerOpen]);
+
+  return (
+    <div
+      className="library-history-range-toggle"
+      role="group"
+      aria-label={ariaLabel ?? t("libraryDetail.history.controls.range")}
+    >
+      <SlidingTogglePill activeKey={selection.mode} className="nav-active-pill library-history-range-pill" />
+      {HISTORY_RANGE_OPTIONS.map((option) => {
+        const isActive = selection.mode === option.mode;
+        const label = option.mode === "custom" && activeRangeLabel ? activeRangeLabel : t(option.labelKey);
+        const content = (
+          <span className="library-history-range-button-content">
+            {option.mode === "custom" ? <CalendarDays aria-hidden="true" className="distribution-chart-mode-icon" /> : null}
+            <span>{label}</span>
+          </span>
+        );
+        if (option.mode === "custom") {
+          return (
+            <div
+              key={option.mode}
+              ref={rangePickerRef}
+              className="library-history-range-custom-shell"
+              data-toggle-key="custom"
+            >
+              <button
+                type="button"
+                className={`library-history-range-button${isActive ? " active" : ""} library-history-range-button-custom`}
+                onClick={() => selectRangePreset(option.mode)}
+                aria-pressed={isActive}
+                aria-haspopup="dialog"
+                aria-expanded={rangePickerOpen}
+                aria-controls={rangePickerId}
+              >
+                {content}
+              </button>
+              {rangePickerOpen ? (
+                <div
+                  id={rangePickerId}
+                  className="history-range-picker-popover"
+                  role="dialog"
+                  aria-label={t("libraryDetail.history.range.custom")}
+                >
+                  <div className="history-range-picker-header">
+                    <button
+                      type="button"
+                      className="history-range-picker-nav"
+                      aria-label={t("libraryDetail.history.range.previousMonth")}
+                      onClick={() => setCalendarCursor((current) => addUtcMonths(current, -1))}
+                    >
+                      <ChevronLeft aria-hidden="true" className="distribution-chart-mode-icon" />
+                    </button>
+                    <button
+                      type="button"
+                      className="history-range-picker-nav"
+                      aria-label={t("libraryDetail.history.range.nextMonth")}
+                      onClick={() => setCalendarCursor((current) => addUtcMonths(current, 1))}
+                    >
+                      <ChevronRight aria-hidden="true" className="distribution-chart-mode-icon" />
+                    </button>
+                  </div>
+                  <div className="history-range-calendar-months">
+                    {renderCalendarMonth(calendarCursor)}
+                    {renderCalendarMonth(addUtcMonths(calendarCursor, 1))}
+                  </div>
+                  <div className="history-range-picker-footer">
+                    <button
+                      type="button"
+                      className="secondary history-range-picker-action"
+                      onClick={() => setRangePickerOpen(false)}
+                    >
+                      {t("libraryDetail.history.range.cancel")}
+                    </button>
+                    <button
+                      type="button"
+                      className="history-range-picker-action"
+                      disabled={!draftStartDate}
+                      onClick={applyCustomRange}
+                    >
+                      {t("libraryDetail.history.range.apply")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        }
+        return (
+          <button
+            key={option.mode}
+            type="button"
+            data-toggle-key={option.mode}
+            className={`library-history-range-button${isActive ? " active" : ""}`}
+            onClick={() => selectRangePreset(option.mode)}
+            aria-pressed={isActive}
+          >
+            {content}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function LibraryHistoryPanel({
+  history,
+  loading = false,
+  refreshing = false,
+  refreshError = null,
+  error = null,
+  selectedMetric,
+  onChangeMetric,
+  collapsed,
+  onToggleCollapsed,
+  currentResolutionCategoryIds,
+  title,
+  subtitle,
+  emptyMessage,
+  metricLabel,
+  rangeStorageKey = DEFAULT_HISTORY_RANGE_STORAGE_KEY,
+  bodyId = "library-history-panel-body",
+  inDepthDolbyVisionProfiles = false,
+  showLibraryMix = false,
+}: LibraryHistoryPanelProps) {
+  const { t } = useTranslation();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [displayMode, setDisplayMode] = useState<HistoryMetricDisplayMode>("count");
+  const [rangeSelection, setRangeSelection] = useState<HistoryRangeSelection>(() =>
+    readHistoryRangeSelection(rangeStorageKey),
+  );
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const pickerId = useId();
+  const currentResolutionCategoryIdSet = useMemo(
+    () => new Set(currentResolutionCategoryIds),
+    [currentResolutionCategoryIds],
+  );
+  const selectedMetricDefinition = useMemo(
+    () => getHistoryMetricDefinition(selectedMetric),
+    [selectedMetric],
+  );
+  const availableMetricDefinitions = useMemo(
+    () =>
+      HISTORY_METRIC_DEFINITIONS.filter((definition) => showLibraryMix || definition.id !== "library_mix"),
+    [showLibraryMix],
+  );
+  const SelectedMetricIcon = HISTORY_GROUP_ICONS[selectedMetricDefinition.group];
+  const resolutionCategories = useMemo(
+    () =>
+      (history?.resolution_categories ?? []).map((category) => ({
+        ...category,
+        label:
+          !currentResolutionCategoryIdSet.has(category.id) && category.label === category.id
+            ? t("libraryDetail.history.unknownLegacyResolutionCategory", { id: category.id })
+            : category.label,
+      })),
+    [currentResolutionCategoryIdSet, history?.resolution_categories, t],
+  );
+  const libraryCategories = "visible_libraries" in (history ?? {})
+    ? (history as DashboardHistoryResponse).visible_libraries ?? []
+    : [];
+  const filteredHistoryPoints = useMemo(
+    () => filterHistoryPoints(history?.points ?? [], rangeSelection),
+    [history?.points, rangeSelection],
+  );
+  const currentRangeBounds = useMemo(
+    () => rangeBoundsFromSelection(history?.points ?? [], rangeSelection),
+    [history?.points, rangeSelection],
+  );
+  const selectedMetricHasData = useMemo(
+    () => hasHistoryMetricData(filteredHistoryPoints, selectedMetricDefinition),
+    [filteredHistoryPoints, selectedMetricDefinition],
+  );
+  function updateRangeSelection(nextSelection: HistoryRangeSelection) {
+    setRangeSelection(nextSelection);
+    saveHistoryRangeSelection(rangeStorageKey, nextSelection);
+  }
+
+  useEffect(() => {
     if (!pickerOpen) {
       return;
     }
@@ -399,143 +575,27 @@ export function LibraryHistoryPanel({
     };
   }, [pickerOpen]);
 
-  useEffect(() => {
-    if (!rangePickerOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (rangePickerRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setRangePickerOpen(false);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setRangePickerOpen(false);
-      }
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [rangePickerOpen]);
-
   return (
     <AsyncPanel
       title={title ?? t("libraryDetail.history.title")}
       subtitle={subtitle}
       loading={loading}
+      refreshing={refreshing}
+      refreshError={refreshError}
       error={error}
       className="library-history-panel"
       bodyClassName="async-panel-body-scroll"
       collapseActions={
         !collapsed ? (
           <div className="library-history-actions">
-            <div
-              className="library-history-range-toggle"
-              role="group"
-              aria-label={t("libraryDetail.history.controls.range")}
-            >
-              <SlidingTogglePill activeKey={rangeSelection.mode} className="nav-active-pill library-history-range-pill" />
-              {HISTORY_RANGE_OPTIONS.map((option) => {
-                const isActive = rangeSelection.mode === option.mode;
-                const label =
-                  option.mode === "custom" && activeRangeLabel
-                    ? activeRangeLabel
-                    : t(option.labelKey);
-                const content = (
-                  <>
-                    <span className="library-history-range-button-content">
-                      {option.mode === "custom" ? <CalendarDays aria-hidden="true" className="distribution-chart-mode-icon" /> : null}
-                      <span>{label}</span>
-                    </span>
-                  </>
-                );
-                if (option.mode === "custom") {
-                  return (
-                    <div key={option.mode} ref={rangePickerRef} className="library-history-range-custom-shell">
-                      <button
-                        type="button"
-                        data-toggle-key="custom"
-                        className={`library-history-range-button${isActive ? " active" : ""} library-history-range-button-custom`}
-                        onClick={() => selectRangePreset(option.mode)}
-                        aria-pressed={isActive}
-                        aria-haspopup="dialog"
-                        aria-expanded={rangePickerOpen}
-                        aria-controls={rangePickerId}
-                      >
-                        {content}
-                      </button>
-                      {rangePickerOpen ? (
-                        <div
-                          id={rangePickerId}
-                          className="history-range-picker-popover"
-                          role="dialog"
-                          aria-label={t("libraryDetail.history.range.custom")}
-                        >
-                          <div className="history-range-picker-header">
-                            <button
-                              type="button"
-                              className="history-range-picker-nav"
-                              aria-label={t("libraryDetail.history.range.previousMonth")}
-                              onClick={() => setCalendarCursor((current) => addUtcMonths(current, -1))}
-                            >
-                              <ChevronLeft aria-hidden="true" className="distribution-chart-mode-icon" />
-                            </button>
-                            <button
-                              type="button"
-                              className="history-range-picker-nav"
-                              aria-label={t("libraryDetail.history.range.nextMonth")}
-                              onClick={() => setCalendarCursor((current) => addUtcMonths(current, 1))}
-                            >
-                              <ChevronRight aria-hidden="true" className="distribution-chart-mode-icon" />
-                            </button>
-                          </div>
-                          <div className="history-range-calendar-months">
-                            {renderCalendarMonth(calendarCursor)}
-                            {renderCalendarMonth(addUtcMonths(calendarCursor, 1))}
-                          </div>
-                          <div className="history-range-picker-footer">
-                            <button
-                              type="button"
-                              className="secondary history-range-picker-action"
-                              onClick={() => setRangePickerOpen(false)}
-                            >
-                              {t("libraryDetail.history.range.cancel")}
-                            </button>
-                            <button
-                              type="button"
-                              className="history-range-picker-action"
-                              disabled={!draftStartDate}
-                              onClick={applyCustomRange}
-                            >
-                              {t("libraryDetail.history.range.apply")}
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                }
-                return (
-                  <button
-                    key={option.mode}
-                    type="button"
-                    data-toggle-key={option.mode}
-                    className={`library-history-range-button${isActive ? " active" : ""}`}
-                    onClick={() => selectRangePreset(option.mode)}
-                    aria-pressed={isActive}
-                  >
-                    {content}
-                  </button>
-                );
-              })}
-            </div>
+            <HistoryRangeToggle
+              selection={rangeSelection}
+              onChange={updateRangeSelection}
+              minimumDate={history?.oldest_snapshot_day}
+              maximumDate={history?.newest_snapshot_day}
+              defaultStartDate={currentRangeBounds.start}
+              defaultEndDate={currentRangeBounds.end}
+            />
             {selectedMetricDefinition.group !== "summary" ? (
               <div
                 className="distribution-chart-mode-toggle"
@@ -635,9 +695,11 @@ export function LibraryHistoryPanel({
       }}
     >
       {!history || history.points.length === 0 ? (
-        <PanelEmptyState />
+        <PanelEmptyState message={emptyMessage} />
       ) : filteredHistoryPoints.length === 0 ? (
         <div className="notice">{t("libraryDetail.history.range.empty")}</div>
+      ) : !selectedMetricHasData ? (
+        <PanelEmptyState message={t("libraryDetail.history.metricEmpty")} />
       ) : (
         <div className="comparison-chart-content library-history-chart-shell">
           <HistoryTrendChart

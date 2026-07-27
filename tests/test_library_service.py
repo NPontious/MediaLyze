@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
@@ -13,6 +13,11 @@ from backend.app.models.entities import (
     AudioStream,
     DuplicateDetectionMode,
     ExternalSubtitle,
+    JellyfinItem,
+    JellyfinLibrary,
+    JellyfinMediaMatch,
+    JellyfinUser,
+    JellyfinUserItemData,
     Library,
     LibraryRoot,
     LibraryType,
@@ -35,6 +40,140 @@ from backend.app.services.library_service import (
     normalize_scan_config,
     update_library_settings,
 )
+
+
+def test_library_statistics_requested_panels_skip_unrelated_queries() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement.lower())
+
+    with session_factory() as db:
+        library = Library(
+            name="Panel-scoped library",
+            path="/tmp/panel-scoped-library",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        db.add(
+            MediaFile(
+                library_id=library.id,
+                relative_path="movie.mkv",
+                filename="movie.mkv",
+                extension="mkv",
+                size_bytes=100,
+                mtime=1.0,
+                scan_status=ScanStatus.ready,
+                quality_score=5,
+            )
+        )
+        db.commit()
+
+        statements.clear()
+        statistics = get_library_statistics(db, library.id, requested_panels=["container"])
+
+    assert statistics is not None
+    assert statistics.container_distribution
+    assert statistics.video_codec_distribution == []
+    assert statistics.numeric_distributions == {}
+    assert not any("video_streams" in statement for statement in statements)
+    assert not any("audio_streams" in statement for statement in statements)
+    assert not any("subtitle_streams" in statement for statement in statements)
+
+
+def test_library_statistics_exposes_play_counts_by_enabled_jellyfin_user() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        library = Library(
+            name="Playback",
+            path="/tmp/playback-library",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        jellyfin_library = JellyfinLibrary(
+            remote_item_id="jf-library",
+            name="Playback",
+            linked_library_id=library.id,
+        )
+        db.add(jellyfin_library)
+        db.flush()
+        files = [
+            MediaFile(
+                library_id=library.id,
+                relative_path=f"movie-{index}.mkv",
+                filename=f"movie-{index}.mkv",
+                extension="mkv",
+                size_bytes=100,
+                mtime=float(index),
+                scan_status=ScanStatus.ready,
+                quality_score=5,
+            )
+            for index in (1, 2)
+        ]
+        db.add_all(files)
+        db.flush()
+        items = [
+            JellyfinItem(
+                jellyfin_item_id=f"jf-item-{index}",
+                library_id=jellyfin_library.id,
+                item_type="Movie",
+                title=f"Movie {index}",
+            )
+            for index in (1, 2, 3)
+        ]
+        db.add_all(items)
+        db.flush()
+        db.add_all(
+            [
+                JellyfinMediaMatch(
+                    media_file_id=media_file.id,
+                    jellyfin_item_id=item.id,
+                    match_method="path",
+                    status="matched",
+                )
+                for media_file, item in zip(files, items[:2], strict=True)
+            ]
+        )
+        db.add_all(
+            [
+                JellyfinUser(jellyfin_user_id="frederik", name="Frederik", enabled_for_sync=True),
+                JellyfinUser(jellyfin_user_id="louise", name="Louise", enabled_for_sync=True),
+                JellyfinUser(jellyfin_user_id="disabled", name="Disabled", enabled_for_sync=False),
+            ]
+        )
+        db.flush()
+        db.add_all(
+            [
+                JellyfinUserItemData(jellyfin_item_id=items[0].id, jellyfin_user_id="frederik", play_count=3),
+                JellyfinUserItemData(jellyfin_item_id=items[1].id, jellyfin_user_id="frederik", play_count=2),
+                JellyfinUserItemData(jellyfin_item_id=items[0].id, jellyfin_user_id="louise", play_count=1),
+                JellyfinUserItemData(jellyfin_item_id=items[2].id, jellyfin_user_id="louise", play_count=4),
+                JellyfinUserItemData(jellyfin_item_id=items[0].id, jellyfin_user_id="disabled", play_count=99),
+            ]
+        )
+        db.commit()
+
+        statistics = get_library_statistics(db, library.id, requested_panels=["user_plays"])
+
+    assert statistics is not None
+    assert [item.model_dump() for item in statistics.user_play_count_distribution] == [
+        {"label": "Frederik", "value": 5, "filter_value": None},
+        {"label": "Louise", "value": 5, "filter_value": None},
+    ]
+    assert statistics.container_distribution == []
 
 
 def test_normalize_scan_config_for_manual_mode() -> None:

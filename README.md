@@ -223,6 +223,7 @@ Relevant environment variables:
 - `MEDIALYZE_TELEMETRY_DISABLED`: optional; when set to `true`, telemetry is forced off and the UI toggle is locked
 - `MEDIALYZE_TELEMETRY_ENDPOINT`: optional; overrides the telemetry ingest endpoint, default `https://www.medialyze.app/api/telemetry/ingest`
 - `FFPROBE_PATH`: optional override for the `ffprobe` binary path
+- `JELLYFIN_API_KEY_FILE`: optional path to a Jellyfin API-key secret file; see [Jellyfin integration](docs/jellyfin.md)
 - `PUID` / `PGID`: optional runtime user/group ids for shared-folder permission setups; set both or leave both unset to keep the default root runtime user
 
 `MEDIA_ROOT` should be mounted read-only in production.
@@ -239,6 +240,10 @@ Ignore rules use glob patterns matched against the normalized relative path insi
 See [docs/patterns.md](docs/patterns.md) for folder discovery, series recognition, bonus-content rules, and ignore-pattern examples.
 
 Telemetry payloads are documented in [docs/telemetry.md](docs/telemetry.md), including the `none`, `minimal`, and `enabled` payload contracts and the privacy-preserving rounding rules for coarse usage counts.
+
+Jellyfin permissions, Docker path mappings, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md).
+
+Repository automation, Docker and desktop publishing, manual workflow controls, and release recovery are documented in [docs/github_actions.md](docs/github_actions.md).
 
 ## Tech Stack
 

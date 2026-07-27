@@ -1,6 +1,6 @@
 {
   "name": "medialyze-frontend",
-  "version": "0.16.3",
+  "version": "0.17.0",
   "private": true,
   "license": "AGPL-3.0",
   "type": "module",
@@ -20,7 +20,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-i18next": "^15.5.0",
-    "react-router-dom": "^7.17.0"
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

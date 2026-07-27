@@ -114,6 +114,7 @@ function createLibraryStatistics(overrides: Partial<LibraryStatistics> = {}): Li
     subtitle_language_distribution: [{ label: "en", value: 2 }],
     subtitle_codec_distribution: [{ label: "srt", value: 2 }],
     subtitle_source_distribution: [{ label: "external", value: 2 }],
+    user_play_count_distribution: [],
     numeric_distributions: {
       quality_score: {
         total: 2,
@@ -474,6 +475,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
     },
     ...restOverrides,
@@ -590,6 +592,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.spyOn(api, "activeScanJobs").mockResolvedValue([]);
+  vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
   vi.spyOn(api, "libraryComparison").mockResolvedValue(createComparisonResponse());
   vi.spyOn(api, "libraryHistory").mockResolvedValue(createLibraryHistoryResponse());
   vi.spyOn(api, "libraryDuplicates").mockResolvedValue(createDuplicateGroupPage());
@@ -614,6 +617,234 @@ beforeEach(() => {
 });
 
 describe("LibraryDetailPage", () => {
+  it("shows the per-user play panel only for a linked Jellyfin library", async () => {
+    const libraryId = 99101;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
+      linked_jellyfin_library: {
+        id: 7,
+        name: "Movies",
+        last_synced_at: "2026-07-17T10:00:00Z",
+      },
+    }));
+    const libraryStatisticsSpy = vi.spyOn(api, "libraryStatistics").mockResolvedValue(
+      createLibraryStatistics({
+        user_play_count_distribution: [
+          { label: "Frederik", value: 8 },
+          { label: "Louise", value: 3 },
+        ],
+      }),
+    );
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("Plays by user")).toBeInTheDocument();
+    expect(await screen.findByText("Frederik")).toBeInTheDocument();
+    expect(await screen.findByText("Louise")).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "Play count" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("option", { name: "Users played" }).length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(libraryStatisticsSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.any(AbortSignal),
+        expect.arrayContaining(["user_plays"]),
+      ),
+    );
+  });
+
+  it("switches the analyzed-file name source and exposes playback only through the selected play-count column", async () => {
+    const libraryId = 100;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
+      name: "Movies",
+      linked_jellyfin_library: {
+        id: 7,
+        name: "Movies",
+        last_synced_at: "2026-07-17T10:00:00Z",
+      },
+    }));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const filesPage = createFilesPage(libraryId);
+    filesPage.items[0] = {
+      ...filesPage.items[0],
+      root_name: "Jellyfin Library",
+      jellyfin_title: "Catalog episode title",
+      jellyfin_production_year: 2024,
+      jellyfin_play_count: 4,
+      jellyfin_played_user_count: 2,
+    };
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(filesPage);
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([{
+      id: 7,
+      name: "Movies",
+      collection_type: "movies",
+      locations: ["/media/movies"],
+      mapped_locations: ["/media/movies"],
+      mapped_status: "linked",
+      linked_library_id: libraryId,
+      linked_library_name: "Movies",
+      can_create_medialyze_library: false,
+      data_scope: "linked",
+      item_count: 2,
+      last_synced_at: "2026-07-17T10:00:00Z",
+    }]);
+    const scanJob = {
+      id: 81,
+      library_id: libraryId,
+      library_name: "Movies",
+      status: "queued",
+      job_type: "incremental",
+      files_total: 0,
+      files_scanned: 0,
+      errors: 0,
+      started_at: null,
+      finished_at: null,
+      progress_percent: 0,
+      phase_label: "Queued",
+      phase_detail: null,
+    };
+    const scanLibrarySpy = vi.spyOn(api, "scanLibrary").mockResolvedValue(scanJob);
+    const syncJellyfinSpy = vi.spyOn(api, "syncJellyfin").mockResolvedValue({
+      job_id: 91,
+      status: "queued",
+      trigger_source: "manual",
+      accepted: true,
+    });
+    const jellyfinOverviewSpy = vi.spyOn(api, "jellyfinLibraryOverview").mockResolvedValue({
+      library: (await api.jellyfinLibraries())[0],
+      item_count: 2,
+      known_size_bytes: 2048,
+      size_known_count: 2,
+      known_duration_seconds: 7200,
+      duration_known_count: 2,
+      earliest_date_created: "2024-01-01T00:00:00Z",
+      latest_date_created: "2026-01-01T00:00:00Z",
+      item_type_distribution: [{ label: "Movie", value: 2 }],
+      production_year_distribution: [{ label: "2024", value: 2 }],
+      added_month_distribution: [{ label: "2026-01", value: 2 }],
+      playback_distribution: [{ label: "played", value: 1 }, { label: "unplayed", value: 1 }],
+      users: [],
+    });
+
+    renderPage(libraryId);
+
+    const jellyfinConnection = await screen.findByRole("button", { name: "Connected to Jellyfin library Movies" });
+    fireEvent.click(jellyfinConnection);
+    expect(await screen.findByText("Last synchronization", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin source")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin catalog overview")).not.toBeInTheDocument();
+    expect(jellyfinOverviewSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "episode-01.mkv" })).toBeInTheDocument();
+    expect(screen.queryByText("Catalog episode title")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plays: 4")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Jellyfin names" }));
+
+    expect(screen.getByRole("link", { name: "Catalog episode title" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "episode-01.mkv" })).not.toBeInTheDocument();
+    expect(screen.queryByText("2024")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plays: 4")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin metadata only")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin Library")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit table view" }));
+    const playCountSettingsRow = screen
+      .getAllByText("Play count")
+      .map((element) => element.closest("tr"))
+      .find((row): row is HTMLTableRowElement => row !== null);
+    expect(playCountSettingsRow).toBeDefined();
+    fireEvent.click(within(playCountSettingsRow!).getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save panel layout" }));
+
+    expect(await screen.findByRole("columnheader", { name: /Play count/ })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "4" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick scan" }));
+    await waitFor(() => expect(scanLibrarySpy).toHaveBeenCalledWith(libraryId, "incremental"));
+    expect(syncJellyfinSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not synchronize Jellyfin when Quickscan runs for an unlinked library", async () => {
+    const libraryId = 98;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    const scanLibrarySpy = vi.spyOn(api, "scanLibrary").mockResolvedValue({
+      id: 82,
+      library_id: libraryId,
+      library_name: `Series ${libraryId}`,
+      status: "queued",
+      job_type: "incremental",
+      files_total: 0,
+      files_scanned: 0,
+      errors: 0,
+      started_at: null,
+      finished_at: null,
+      progress_percent: 0,
+      phase_label: "Queued",
+      phase_detail: null,
+    });
+    const syncJellyfinSpy = vi.spyOn(api, "syncJellyfin").mockResolvedValue({
+      job_id: 92,
+      status: "queued",
+      trigger_source: "manual",
+      accepted: true,
+    });
+
+    renderPage(libraryId);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Quick scan" }));
+    await waitFor(() => expect(scanLibrarySpy).toHaveBeenCalledWith(libraryId, "incremental"));
+    expect(syncJellyfinSpy).not.toHaveBeenCalled();
+  });
+
+  it("offers Jellyfin-name search only for linked libraries", async () => {
+    const libraryId = 99;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
+      name: "Movies",
+      linked_jellyfin_library: {
+        id: 7,
+        name: "Movies",
+        last_synced_at: "2026-07-17T10:00:00Z",
+      },
+    }));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    vi.mocked(api.jellyfinLibraries).mockResolvedValue([{
+      id: 7,
+      name: "Movies",
+      collection_type: "movies",
+      locations: ["/media/movies"],
+      mapped_locations: ["/media/movies"],
+      mapped_status: "linked",
+      linked_library_id: libraryId,
+      linked_library_name: "Movies",
+      can_create_medialyze_library: false,
+      data_scope: "linked",
+      item_count: 2,
+      last_synced_at: "2026-07-17T10:00:00Z",
+    }]);
+
+    renderPage(libraryId);
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /add metadata search field/i }));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Jellyfin name" }));
+    fireEvent.change(screen.getByPlaceholderText("Search Jellyfin name"), { target: { value: "display name" } });
+
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({ jellyfin_name: "display name" }),
+        }),
+      ),
+    );
+  });
+
   it("loads summary, statistics, and files separately", async () => {
     const libraryId = 101;
     mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
@@ -633,6 +864,50 @@ describe("LibraryDetailPage", () => {
     expect(libraryComparisonSpy).toHaveBeenCalled();
     expect(libraryDuplicatesSpy).toHaveBeenCalled();
     expect(libraryFilesSpy).toHaveBeenCalled();
+  });
+
+  it("keeps the analyzed-files loader visible when an obsolete request is aborted", async () => {
+    const libraryId = 102;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    let resolveCurrentRequest: ((payload: MediaFileTablePage) => void) | null = null;
+    const currentRequest = new Promise<MediaFileTablePage>((resolve) => {
+      resolveCurrentRequest = resolve;
+    });
+    let requestCount = 0;
+    vi.spyOn(api, "libraryFiles").mockImplementation((_id, options) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Promise<MediaFileTablePage>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }
+      return currentRequest;
+    });
+
+    renderPage(libraryId);
+
+    await waitFor(() => expect(requestCount).toBe(1));
+    fireEvent.change(screen.getByPlaceholderText("Search file and path"), {
+      target: { value: "new filter" },
+    });
+    await waitFor(() => expect(requestCount).toBeGreaterThanOrEqual(2));
+    expect(screen.getByText("Loading analyzed files…")).toBeInTheDocument();
+    expect(screen.queryByText("No analyzed files yet.")).not.toBeInTheDocument();
+
+    resolveCurrentRequest!({
+      total: 0,
+      offset: 0,
+      limit: 200,
+      next_cursor: null,
+      has_more: false,
+      items: [],
+    });
+
+    expect(await screen.findByText("No analyzed files yet.")).toBeInTheDocument();
   });
 
   it("groups recognized series and seasons inside analyzed files without showing a series/files switch", async () => {
@@ -736,6 +1011,30 @@ describe("LibraryDetailPage", () => {
     expect(screen.getByText("7.5/10")).toBeInTheDocument();
     expect(screen.getByText("4.5 Mb/s")).toBeInTheDocument();
     expect(screen.getByText("224 kb/s")).toBeInTheDocument();
+  });
+
+  it("renders Jellyfin play counts as plain integers", () => {
+    const columns = buildFileColumns(
+      i18next.t.bind(i18next),
+      {},
+      {},
+      {},
+      {},
+      vi.fn(),
+      vi.fn(),
+      new Set(),
+      false,
+    );
+    const playCountColumn = columns.find((column) => column.key === "play_count");
+    const file = {
+      ...createFilesPage(126).items[0],
+      jellyfin_play_count: 12,
+    };
+
+    expect(playCountColumn).toBeDefined();
+    expect(playCountColumn?.measureValue(file)).toBe("12");
+    render(<MemoryRouter>{playCountColumn?.render(file)}</MemoryRouter>);
+    expect(screen.getByText("12")).toBeInTheDocument();
   });
 
   it("renders the new music metadata columns", () => {
@@ -871,6 +1170,38 @@ describe("LibraryDetailPage", () => {
     expect(screen.getByRole("button", { name: "Duplications" })).toBeInTheDocument();
   });
 
+  it("does not reload library history when the duplicate view changes", async () => {
+    const libraryId = 1271;
+    mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryHistorySpy = vi.spyOn(api, "libraryHistory").mockResolvedValue(createLibraryHistoryResponse());
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    vi.spyOn(api, "libraryDuplicates")
+      .mockResolvedValueOnce(
+        createDuplicateGroupPage({
+          total_groups: 0,
+          duplicate_file_count: 0,
+          suppressed_group_count: 1,
+          items: [],
+        }),
+      )
+      .mockResolvedValue(
+        createDuplicateGroupPage({
+          include_suppressed: true,
+          suppressed_group_count: 1,
+          items: [],
+        }),
+      );
+
+    renderPage(libraryId);
+
+    await waitFor(() => expect(libraryHistorySpy).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: "Show hidden duplicate groups" }));
+    await waitFor(() => expect(api.libraryDuplicates).toHaveBeenCalledTimes(2));
+    expect(libraryHistorySpy).toHaveBeenCalledTimes(1);
+  });
+
   it("renders an empty history state when no enriched points exist", async () => {
     const libraryId = 128;
     mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
@@ -882,6 +1213,35 @@ describe("LibraryDetailPage", () => {
     renderPage(libraryId);
 
     expect(await screen.findByText("No data yet")).toBeInTheDocument();
+  });
+
+  it("shows a metric-specific empty state when history points lack the selected metric", async () => {
+    const libraryId = 1281;
+    mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const history = createLibraryHistoryResponse();
+    vi.spyOn(api, "libraryHistory").mockResolvedValue({
+      ...history,
+      points: history.points.map((point) => ({
+        ...point,
+        trend_metrics: {
+          ...point.trend_metrics,
+          average_audio_bitrate: null,
+        },
+      })),
+    });
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    fireEvent.click(await screen.findByLabelText("Select history metric"));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Average audio bitrate" }));
+
+    expect(
+      await screen.findByText("No data is available for the selected metric."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
   });
 
   it("renders the resolution history metric as a stacked area chart", async () => {
@@ -1956,10 +2316,14 @@ describe("LibraryDetailPage", () => {
     mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    let resolveRefreshedHistory: ((payload: LibraryHistoryResponse) => void) | null = null;
+    const refreshedHistoryPromise = new Promise<LibraryHistoryResponse>((resolve) => {
+      resolveRefreshedHistory = resolve;
+    });
     const libraryHistorySpy = vi
       .spyOn(api, "libraryHistory")
       .mockResolvedValueOnce(createLibraryHistoryResponse({ points: [] }))
-      .mockResolvedValueOnce(createLibraryHistoryResponse());
+      .mockReturnValueOnce(refreshedHistoryPromise);
     vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
     vi.spyOn(api, "activeScanJobs")
       .mockResolvedValueOnce([
@@ -1989,6 +2353,11 @@ describe("LibraryDetailPage", () => {
     fireEvent.focus(window);
 
     await waitFor(() => expect(libraryHistorySpy.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
+
+    resolveRefreshedHistory!(createLibraryHistoryResponse());
+
     await waitFor(async () => {
       const chart = (await screen.findAllByTestId("echarts-react")).find(
         (candidate) => candidate.getAttribute("data-series-count") === "3",
@@ -2564,6 +2933,7 @@ describe("LibraryDetailPage", () => {
       feature_flags: {
         show_analyzed_files_csv_export: true,
         in_depth_dolby_vision_profiles: true,
+        show_all_playbacks_when_unstacked: false,
       },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));

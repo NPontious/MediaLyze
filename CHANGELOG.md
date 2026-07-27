@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.17.0
+
+>2026-07-27
+
+This release adds a read-only Jellyfin integration with catalog synchronization, library linking, multi-user playback analytics, and a detailed Streaming timeline for matched files.
+
+### ✨ New
+
+- add a read-only Jellyfin integration with scheduled catalog synchronization, path-based asset matching, image proxying, library mount diagnostics, optional MediaLyze-library creation, and per-library Jellyfin added-date history reconstruction
+- add selectable multi-user Jellyfin playback synchronization with per-user library statistics, total play counts in Analyzed files, and play-count/user-count comparison metrics
+- add a file-detail Streaming timeline with configurable date ranges, runtime-aware event stacking, CSV export, Jellyfin activity-history coverage markers, and unresolved play counts when individual timestamps are unavailable
+
+### ✨ Enhancements
+
+- group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
+- split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
+- accelerate Docker and desktop publishing with native parallel AMD64/ARM64 image builds, persistent dependency and image-layer caches, and consolidated manually selectable dev/release workflows
+
+### 🐛 Fixed
+
+- restore comfortable responsive search-field widths in the library Analyzed files panel and wrap the search toolbar before adjacent header controls collide
+- open every file detail view on Overview instead of carrying the previously selected subsection across files
+- align protected quality-profile controls and hardware/software profile lists with MediaLyze's dark-mode palette
+
+### 🔒 Security
+
+- pin all transitive desktop `brace-expansion` branches to their patched releases to prevent exponential-time brace-pattern expansion during Electron packaging
+- update the transitive desktop `tar` package to 7.5.22 to prevent crafted PAX metadata from crashing Electron packaging
+- override the desktop icon pipeline to `sharp` 0.35.3 so packaged libvips binaries include the latest upstream security fixes
+- update React Router to 7.18.1 to address redirect and error-handler validation vulnerabilities
+
 ## v0.16.3
 
 >2026-07-11

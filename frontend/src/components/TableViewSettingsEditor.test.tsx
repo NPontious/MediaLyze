@@ -21,6 +21,7 @@ describe("TableViewSettingsEditor", () => {
     expect(screen.queryByText("Series part")).not.toBeInTheDocument();
     expect(screen.getByText("Artist")).toBeInTheDocument();
     expect(screen.getByText("Album")).toBeInTheDocument();
+    expect(screen.queryByText("Play count")).not.toBeInTheDocument();
   });
 
   it("uses table column labels for audiobook metadata instead of raw statistic keys", () => {
@@ -42,5 +43,20 @@ describe("TableViewSettingsEditor", () => {
     expect(screen.getAllByText("ASIN").length).toBeGreaterThan(0);
     expect(screen.queryByText("libraryStatistics.items.audiobook_language")).not.toBeInTheDocument();
     expect(screen.queryByText("libraryStatistics.items.audiobook_series_parts")).not.toBeInTheDocument();
+  });
+
+  it("offers the total play count for libraries connected to a playback provider", () => {
+    render(
+      <TableViewSettingsEditor
+        settings={buildDefaultLibraryStatisticsSettings()}
+        libraryType="movies"
+        hasPlaybackProvider
+        onChange={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByText("Play count").closest("tr");
+    expect(row).not.toBeNull();
+    expect(row?.querySelectorAll('input[type="checkbox"]')[0]).toBeEnabled();
   });
 });

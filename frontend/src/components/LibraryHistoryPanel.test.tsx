@@ -90,6 +90,10 @@ describe("LibraryHistoryPanel", () => {
   it("opens the custom date range picker", () => {
     renderPanel();
 
+    const rangeToggle = screen.getByRole("group", { name: /history range/i });
+    const customTarget = rangeToggle.querySelector<HTMLElement>('[data-toggle-key="custom"]');
+    expect(customTarget?.parentElement).toBe(rangeToggle);
+
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
 
     expect(screen.getByRole("dialog", { name: "Custom" })).toBeInTheDocument();

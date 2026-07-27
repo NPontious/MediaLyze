@@ -82,6 +82,7 @@
     "collapseAria": "Contraer {{title}}",
     "expandAria": "Expandir {{title}}",
     "loading": "Cargando...",
+    "refreshing": "Actualizando...",
     "noDataYet": "Todavía no hay datos"
   },
   "releaseNotes": {
@@ -110,6 +111,10 @@
     "settingsNavigationLibraries": "Bibliotecas",
     "settingsNavigationAddLibrary": "Añadir biblioteca",
     "settingsNavigationPatternRecognition": "Reconocimiento de patrones",
+    "settingsGroups": { "librariesSources": "Bibliotecas y fuentes", "analysis": "Análisis", "application": "Aplicación", "maintenanceDiagnostics": "Mantenimiento y diagnóstico" },
+    "settingsSearchLabel": "Buscar ajustes",
+    "settingsSearchPlaceholder": "Buscar ajustes…",
+    "settingsSearchEmpty": "Ningún ajuste coincide con la búsqueda.",
     "quickActions": "Acciones rápidas",
     "collapseSettingsNavigation": "Contraer menú de ajustes",
     "expandSettingsNavigation": "Expandir menú de ajustes",
@@ -118,6 +123,13 @@
     "configured": "Bibliotecas configuradas",
     "fullScan": "escaneo completo",
     "addFirstLibrary": "Añadir primera biblioteca",
+    "expandLibrarySettings": "Mostrar ajustes de {{name}}",
+    "collapseLibrarySettings": "Ocultar ajustes de {{name}}",
+    "sections": {
+      "jellyfin": { "title": "Asociación Jellyfin", "description": "Selecciona el catálogo Jellyfin que pertenece a esta biblioteca MediaLyze. Si ya está asignado a otra biblioteca, la asociación se moverá aquí.", "pathMappingTitle": "Mapeo de rutas (opcional)", "pathMappingDescription": "Configúralo solo si Jellyfin y MediaLyze ven los mismos archivos en puntos de montaje diferentes. Asigna cada prefijo de origen de Jellyfin a la ruta correspondiente de MediaLyze.", "pathMappingDescriptionAria": "Explicar el mapeo de rutas", "enablePathMapping": "Activar el mapeo de rutas", "disablePathMapping": "Desactivar el mapeo de rutas", "pathMappingStateEnabled": "Activado", "pathMappingStateDisabled": "Desactivado", "pathMappingStatePartial": "Activado parcialmente", "pathMappingTargetRequired": "Se necesita una ruta de MediaLyze antes de activar el mapeo de rutas.", "useMediaLyzePath": "Usar {{path}}", "savePathMapping": "Guardar mapeo", "removePathMapping": "Eliminar mapeo", "noJellyfinPaths": "Jellyfin aún no ha comunicado una ruta de origen para esta biblioteca." },
+      "source": { "title": "Fuente multimedia", "description": "Gestiona las carpetas locales que analiza MediaLyze. Cambiar las rutas conserva la configuración y el historial de la biblioteca." },
+      "analysis": { "title": "Análisis y escaneado", "description": "Configura la programación, la detección de duplicados, las fechas históricas y el perfil de calidad de esta biblioteca." }
+    },
     "createTitle": "Crear biblioteca",
     "createSubtitle": "La selección de rutas está restringida a directorios por debajo de MEDIA_ROOT.",
     "createSubtitleDesktop": "Selecciona una carpeta local, un recurso de red montado o una ruta UNC para analizar.",
@@ -210,6 +222,7 @@
     "editNameAria": "Edit name for library {{name}}",
     "editTypeAria": "Edit media type for library {{name}}",
     "changePath": "Cambiar ruta",
+    "mediaPaths": "Rutas de MediaLyze",
     "changePathTooltip": "Cambiar carpetas de la biblioteca",
     "changePathActiveScanTooltip": "La ruta de la biblioteca se puede cambiar cuando termine el escaneo activo.",
     "changePathTitle": "Cambiar ruta de {{name}}",
@@ -374,6 +387,7 @@
       "showMusicQualityScore": "Show quality score in music libraries",
       "unlimitedPanelSize": "Unlimited panel size",
       "inDepthDolbyVisionProfiles": "In-depth Dolby Vision profiles",
+      "showAllPlaybacksWhenUnstacked": "Mostrar todas las reproducciones sin apilar",
       "showAnalyzedFilesCsvExportTooltipAria": "Explicar analyzed-files CSV export feature flag",
       "showAnalyzedFilesCsvExportTooltip": "Shows the CSV export button on the analyzed-files view for the current filtered result set.",
       "showFullWidthAppShellTooltipAria": "Explicar full-width app shell feature flag",
@@ -385,7 +399,9 @@
       "unlimitedPanelSizeTooltipAria": "Explicar unlimited panel size feature flag",
       "unlimitedPanelSizeTooltip": "Removes the current 4-row panel-height cap in dashboard and library statistic layouts. Panel width still remains limited by the underlying grid.",
       "inDepthDolbyVisionProfilesTooltipAria": "Explicar in-depth Dolby Vision profile display",
-      "inDepthDolbyVisionProfilesTooltip": "Shows detected Dolby Vision profile, level, compatibility, and Profile 7 layer details where ffprobe exposes them.\n\nWhen disabled, Dolby Vision variants are grouped as plain Dolby Vision for simpler dashboards, tables, and file details."
+      "inDepthDolbyVisionProfilesTooltip": "Shows detected Dolby Vision profile, level, compatibility, and Profile 7 layer details where ffprobe exposes them.\n\nWhen disabled, Dolby Vision variants are grouped as plain Dolby Vision for simpler dashboards, tables, and file details.",
+      "showAllPlaybacksWhenUnstackedTooltipAria": "Explicar la visualización de todas las reproducciones sin apilar",
+      "showAllPlaybacksWhenUnstackedTooltip": "Muestra todos los eventos disponibles en la tabla sin paginación cuando está seleccionada la vista sin apilar. La vista apilada conserva la paginación."
     },
     "pathKinds": {
       "local": "Ruta local",
@@ -448,6 +464,9 @@
       "duration": "Duración",
       "bitrate": "Bitrate",
       "audioBitrate": "Bitrate de audio",
+      "playCount": "Número de reproducciones",
+      "usersPlayed": "Usuarios que reprodujeron",
+      "userPlays": "Reproducciones por usuario",
       "bitDepth": "Bit depth",
       "audioBitDepth": "Profundidad de bits de audio",
       "audioCodecs": "Códecs de audio",
@@ -565,6 +584,7 @@
     "audioBitrateDistribution": "Bitrate de audio",
     "audioBitDepth": "Profundidad de bits de audio",
     "comparisonPanel": "Comparación de métricas",
+    "userPlays": "Reproducciones por usuario",
     "audioCodecs": "Códecs de audio",
     "formatsAndCodecs": "Formatos y códecs",
     "audioSpatialProfiles": "Audio espacial",
@@ -592,6 +612,11 @@
     "tableView": {
       "edit": "Editar vista de tabla"
     },
+    "fileNameSource": {
+      "label": "Nombre de archivo mostrado",
+      "file": "Mostrar nombres de archivo",
+      "jellyfin": "Mostrar nombres de Jellyfin"
+    },
     "export": {
       "aria": "Exportar archivos analizados como CSV",
       "tooltip": "Exportar como CSV el conjunto completo filtrado de resultados de archivos analizados",
@@ -612,6 +637,10 @@
       "file": {
         "label": "Archivo y ruta",
         "placeholder": "Buscar archivo y ruta"
+      },
+      "jellyfinName": {
+        "label": "Nombre de Jellyfin",
+        "placeholder": "Buscar nombre de Jellyfin"
       },
       "size": {
         "placeholder": "p. ej. >4GB",
@@ -791,6 +820,7 @@
       "title": "Historial de la biblioteca multimedia",
       "subtitle": "Instantáneas diarias de tendencias de escaneos finalizados",
       "empty": "Las tendencias del historial aparecerán después del próximo escaneo completado.",
+      "metricEmpty": "No hay datos disponibles para la métrica seleccionada.",
       "controls": {
         "metric": "Seleccionar métrica del historial",
         "range": "Seleccionar rango del historial"
@@ -1573,6 +1603,24 @@
       "releaseNotes": "Historial de versiones",
       "header": "Cabecera"
     }
+  },
+  "jellyfin": {
+    "title": "Jellyfin", "connection": "Conexión", "connectionDescription": "Lee metadatos, bibliotecas, imágenes y reproducción por usuario desde un servidor Jellyfin.",
+    "enableIntegration": "Activar integración", "disableIntegration": "Desactivar integración", "disconnect": "Eliminar conexión", "disconnectConfirm": "¿Eliminar la conexión de Jellyfin y todos los datos de Jellyfin almacenados localmente?", "disconnected": "Se eliminaron la conexión de Jellyfin y sus datos almacenados.",
+    "serverUrl": "URL del servidor", "apiKey": "Clave API", "apiKeyConfigured": "Clave API configurada", "syncInterval": "Intervalo de sincronización (minutos)", "syncIntervalHelpAria": "Explicar el intervalo de sincronización programada", "syncIntervalHelp": "Introduce 0 para desactivar la sincronización programada. La sincronización manual seguirá disponible.",
+    "testConnection": "Probar conexión", "syncNow": "Sincronizar ahora", "cancelSync": "Cancelar sincronización", "cancelingSync": "Cancelando sincronización", "cancelingSyncDetail": "La solicitud actual de Jellyfin se está finalizando de forma segura.", "cancelRequested": "Cancelación solicitada. La operación actual finalizará de forma segura.", "syncCanceled": "La sincronización de Jellyfin fue cancelada.", "connectionSaved": "Conexión de Jellyfin guardada.", "autoSave": { "saving": "Guardando cambios…", "saved": "Guardado automáticamente" }, "operation": { "testingConnection": "Probando la conexión con Jellyfin…", "savingUsers": "Guardando la selección de usuarios…", "updatingMapping": "Actualizando el mapeo de rutas", "updatingMappingCompact": "Actualizando el mapeo y las coincidencias…", "updatingLibrary": "Actualizando la asociación de biblioteca", "recalculatingMatches": "MediaLyze está recalculando las coincidencias. En catálogos grandes puede tardar un momento." }, "backgroundUpdate": { "title": "Actualizando datos de Jellyfin en segundo plano", "detail": "Tus cambios ya están guardados. Puedes seguir trabajando mientras MediaLyze actualiza el acceso a las rutas y las coincidencias.", "error": "La actualización en segundo plano falló: {{message}}" }, "autoSaveFailed": "Error al guardar automáticamente.", "testFailed": "La prueba de conexión falló.", "testSucceeded": "Conectado a {{name}} {{version}}.", "syncSucceeded": "Se sincronizaron {{items}} elementos de {{libraries}} bibliotecas.",
+    "syncProgress": "Progreso de sincronización de Jellyfin", "syncItemsProgress": "{{current}} de {{total}} elementos", "syncSteps": "Fases de sincronización", "syncPhase": { "connecting": "Conectando con Jellyfin", "users": "Cargando usuarios de reproducción", "libraries": "Cargando bibliotecas de Jellyfin", "items": "Obteniendo elementos de Jellyfin", "saving": "Guardando elementos en MediaLyze", "cleanup": "Eliminando entradas obsoletas", "matching": "Vinculando elementos con archivos de MediaLyze" }, "syncStep": { "connection": "Conexión", "catalog": "Catálogo", "items": "Elementos", "matching": "Vinculación" },
+    "lastSync": "Última sincronización correcta: {{date}}", "notSynced": "Aún no sincronizado", "matchSummary": "{{matched}} de {{total}} elementos vinculados", "nextSync": "Próxima sincronización: {{date}}", "status": { "never": "No sincronizado", "running": "Sincronizando", "success": "Sincronizado", "canceled": "Sincronización cancelada", "error": "Error de sincronización" },
+    "catalogStatus": { "label": "Sincronización del catálogo", "current": "Catálogo actualizado" },
+    "matchStatus": { "label": "Asociación de archivos locales", "percent": "{{percent}} % asociado localmente", "zeroWarning": "Todavía no hay elementos Jellyfin asociados a archivos locales de MediaLyze.", "openPathMapping": "Abrir mapeo de rutas", "openLibraries": "Abrir asignaciones de bibliotecas" },
+    "users": "Usuarios de reproducción", "usersEmpty": "Sincroniza Jellyfin para descubrir usuarios.", "usersSelected": "{{selected}} de {{total}} seleccionados", "userSearchLabel": "Buscar usuarios de reproducción", "userSearchPlaceholder": "Buscar usuarios…", "userSearchEmpty": "Ningún usuario coincide con esta búsqueda.", "userBulkActions": "Selección múltiple de usuarios de reproducción", "selectAllUsers": "Seleccionar todos", "selectNoUsers": "No seleccionar ninguno", "userGroups": { "selected": "Seleccionados", "unselected": "No seleccionados" }, "pathMappings": "Mapeos de rutas", "jellyfinPath": "Ruta de Jellyfin", "medialyzePath": "Ruta de MediaLyze", "jellyfinPathPlaceholder": "/jellyfin/media", "medialyzePathPlaceholder": "/media", "addMapping": "Añadir mapeo", "mappingEnabled": "Activar este mapeo",
+    "libraries": "Bibliotecas de Jellyfin", "librariesEmpty": "No se han sincronizado bibliotecas de Jellyfin.", "libraryAssignments": "Asignaciones de bibliotecas Jellyfin", "libraryAssignmentsDescription": "Asigna cada biblioteca Jellyfin detectada a la biblioteca MediaLyze cuyos archivos describe. Todas las asignaciones se gestionan aquí.", "addDetectedLibrary": "Añadir una biblioteca Jellyfin detectada", "addDetectedLibraryDescription": "Selecciona una biblioteca Jellyfin sin asignar para rellenar su nombre y tipo; después elige la ruta local de medios.", "detectedLibrarySelected": "La biblioteca Jellyfin se vinculará automáticamente después de crear la biblioteca MediaLyze.", "libraryItemCount_one": "{{count}} elemento Jellyfin", "libraryItemCount_other": "{{count}} elementos Jellyfin", "libraryCreatedLinkFailed": "La biblioteca MediaLyze se creó, pero falló su asignación Jellyfin: {{message}}", "libraryStatus": { "linked": "Vinculada", "unassigned": "Sin asignar", "accessible": "Lista para añadir", "path_unmapped": "Ruta sin mapear", "path_not_accessible": "Ruta inaccesible", "updating": "Actualizando" }, "libraryMappingTarget": "Ruta de MediaLyze para {{name}}",
+    "linkedLibrary": "Vinculada a la biblioteca {{name}}", "associatedMedialyzeLibrary": "Biblioteca MediaLyze asociada", "associatedJellyfinLibrary": "Biblioteca Jellyfin asociada", "noAssociatedLibrary": "Ninguna biblioteca asociada", "libraryAssociationHelpAria": "Explicar la asociación de bibliotecas Jellyfin", "libraryAssociationHelp": "Selecciona qué catálogo de Jellyfin pertenece a esta biblioteca de MediaLyze. Es independiente del mapeo de rutas utilizado para relacionar archivos.", "linkMethod": { "manual": "Seleccionada manualmente", "path": "Detectada mediante el mapeo de rutas" }, "linkedSource": "Fuente Jellyfin", "linkedLibraryTooltipAria": "Conectada a la biblioteca Jellyfin {{name}}", "linkedLibraryTooltip": "Conectada a la biblioteca Jellyfin {{name}}", "addAsLibrary": "Añadir como biblioteca de MediaLyze", "addAsLibraryUnavailable": "Configura primero un mapeo de ruta accesible para añadir esta biblioteca.", "libraryCreated": "Biblioteca de MediaLyze creada desde Jellyfin.",
+    "historySource": "Fecha histórica de incorporación", "historySourceHelpAria": "Explicar la fuente de fecha", "historySourceHelp": "Usa DateCreated de Jellyfin para archivos vinculados y recurre a las fechas de MediaLyze para los demás.", "historySourceMedialyze": "MediaLyze / sistema de archivos", "historySourceJellyfin": "DateCreated de Jellyfin",
+    "streaming": "Streaming", "originalTitle": "Título original", "productionYear": "Año de producción", "coverSource": "Carátula de Jellyfin", "embeddedCoverSource": "Carátula incrustada", "coverAlt": "Carátula de Jellyfin para {{title}}", "noCover": "No hay carátula disponible", "lastSyncLabel": "Última sincronización", "lastSyncValue": "Última sincronización: {{date}}", "pureLibraryTitle": "Biblioteca de Jellyfin", "pureLibraryDescription": "Esta biblioteca usa actualmente solo metadatos de Jellyfin. Configura el acceso a la ruta para el análisis completo de MediaLyze.",
+    "filePanel": "Metadatos de Jellyfin", "noMatch": "No hay un elemento Jellyfin vinculado a este archivo.", "seasonNumber": "Temporada {{number}}", "episodeNumber": "Episodio {{number}}", "released": "Estreno {{date}}", "added": "Añadido {{date}}", "playCount_one": "Reproducido {{count}} vez", "playCount_other": "Reproducido {{count}} veces", "position": "Posición {{duration}}", "neverPlayed": "Nunca reproducido", "noPlaybackData": "No hay datos de reproducción para los usuarios seleccionados.",
+    "playbackHistory": { "range": "Intervalo", "users": "Usuarios", "provider": "Proveedor", "allProviders": "Todos los proveedores", "availabilityHelpAria": "Explicar la disponibilidad de reproducciones individuales", "availabilityHelp": "Jellyfin conserva los inicios de reproducción individuales en su registro de actividad solo durante un tiempo limitado. Por ello, MediaLyze solo puede separar las reproducciones desde el evento más antiguo que ha sincronizado; los datos anteriores de Jellyfin siguen siendo un valor agregado por usuario. El límite exacto está marcado en la cronología.", "individualHistoryFrom": "Reproducciones individuales disponibles desde {{date}}", "scopeNote": "La cronología muestra los inicios individuales importados del registro de actividad conservado por Jellyfin. Cualquier diferencia con el contador por usuario de Jellyfin se conserva debajo sin una marca de tiempo individual. Se omiten duración y finalización porque Jellyfin no las proporciona para estas entradas.", "aggregateScopeNote": "Jellyfin solo proporciona actualmente la última marca de tiempo y un contador agregado por usuario. La última reproducción conocida aparece en la cronología y todas las restantes se conservan debajo sin una marca de tiempo individual.", "coverageSummary": "Con hora: {{timestamped}} de {{total}} · Sin hora individual: {{undated}}", "unknownTimestamp": "Hora desconocida", "unknownTimeTitle": "Reproducciones sin hora determinable", "unknownTimeDescription": "Estas reproducciones proceden del total por usuario de Jellyfin, pero no pueden asignarse a un evento individual. Permanecen visibles independientemente del intervalo seleccionado.", "unknownPlayCount_one": "{{count}} reproducción", "unknownPlayCount_other": "{{count}} reproducciones", "noTimestampedPlaybacks": "No hay reproducciones con una marca de tiempo individual. Todos los contadores conocidos se muestran debajo.", "noTimestampedResults": "Ninguna reproducción con hora coincide con el intervalo y los filtros.", "timeline": "Cronología de reproducciones", "firstVisible": "Inicio del intervalo", "visibleRange": "Datos visibles", "latestVisible": "Fin del intervalo", "latestCount_one": "{{count}} reproducción", "latestCount_other": "{{count}} reproducciones", "groupCount_one": "{{count}} grupo de reproducciones", "groupCount_other": "{{count}} grupos de reproducciones", "displayMode": "Visualización de la cronología", "stacking": "Apilado de reproducciones", "stackingTooltipAria": "Explicar el apilado de reproducciones", "stackingTooltip": "Sin apilar se muestra cada inicio disponible. Apilado combina eventos consecutivos del mismo usuario cuando la separación es menor que un cuarto de la duración del recurso, o 10 minutos si no hay duración.", "stackingUnavailableTooltip": "Solo hay una marca agregada por usuario, por lo que el cambio puede no ser visible. El control se aplicará automáticamente cuando se sincronicen eventos individuales.", "showIndividual": "Mostrar cada reproducción", "showIndividualTooltip": "Mostrar cada evento disponible por separado.", "availableTimestamps": "Mostrar las horas de reproducción disponibles", "groupNearby": "Agrupar reproducciones cercanas", "groupNearbyTooltip": "Combinar reproducciones consecutivas del mismo usuario solo si la separación es menor que un cuarto de la duración, o 10 minutos sin duración.", "groupUnavailable": "Se necesitan horas de eventos individuales para agrupar; por ahora el cambio puede no ser visible", "groupedEventLabel": "{{user}}, {{count}} reproducciones cercanas entre {{start}} y {{end}}", "search": "Buscar datos de reproducción", "export": "Exportar", "lastPlayback": "Última reproducción", "user": "Usuario", "plays": "Reproducciones", "state": "Estado", "resumePosition": "Posición de reanudación", "completed": "Reproducido", "notCompleted": "No completado", "openDetail": "Abrir detalle de reproducción", "detail": "Detalle de reproducción", "noResults": "Ningún dato de reproducción coincide con el intervalo y los filtros.", "previous": "Página anterior", "next": "Página siguiente", "page": "Página {{current}} de {{total}}" },
+    "catalog": { "metadataOnly": "Solo metadatos de Jellyfin", "library": "Biblioteca de Jellyfin", "libraries": "Bibliotecas", "item": "Elemento de Jellyfin", "items": "Elementos", "lastSync": "Última sincronización: {{date}}", "configureAccess": "Configurar acceso a la ruta", "limitedTitle": "Análisis de catálogo limitado", "limitedDescription": "MediaLyze solo puede analizar los metadatos proporcionados por Jellyfin. Concede acceso al sistema de archivos y mapea esta biblioteca para habilitar análisis técnicos completos.", "itemScopeDescription": "Esta vista contiene metadatos de catálogo y reproducción de Jellyfin, no un análisis técnico del archivo.", "overview": "Resumen del catálogo Jellyfin", "knownStorage": "Almacenamiento conocido", "knownDuration": "Duración conocida", "coverage": "Cobertura de duración", "itemTypes": "Tipos", "productionYears": "Años de producción", "addedTimeline": "Cronología de adición", "playback": "Estado de reproducción", "played": "Reproducido", "unplayed": "No reproducido", "catalog": "Catálogo", "resultCount": "{{count}} elementos", "search": "Buscar en Jellyfin", "typeFilter": "Filtrar tipo", "allTypes": "Todos los tipos", "userFilter": "Usuario", "allUsers": "Todos los usuarios", "playedFilter": "Filtrar reproducción", "allPlayback": "Todos los estados", "sortBy": "Ordenar catálogo", "toggleSort": "Cambiar dirección", "title": "Título", "type": "Tipo", "year": "Año", "added": "Añadido", "duration": "Duración", "size": "Tamaño", "plays": "Reproducciones", "release": "Estreno", "empty": "Ningún elemento coincide con los filtros.", "loading": "Cargando catálogo Jellyfin…", "previous": "Página anterior", "next": "Página siguiente", "back": "Atrás", "openFullAnalysis": "Abrir análisis completo de MediaLyze", "dashboardTitle": "Catálogo Jellyfin", "notIncluded": "Separado de los totales técnicos de MediaLyze" }
   },
   "common": {
     "close": "Cerrar",

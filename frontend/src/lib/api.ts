@@ -32,6 +32,8 @@ export type ComparisonFieldId =
   | "quality_score"
   | "bitrate"
   | "audio_bitrate"
+  | "play_count"
+  | "users_played"
   | "audio_channels"
   | "sample_rate"
   | "resolution_mp"
@@ -244,6 +246,217 @@ export type QualityBreakdown = {
 
 export type DuplicateDetectionMode = "off" | "filename" | "filehash" | "both";
 export type LibraryType = "movies" | "series" | "music" | "audiobooks" | "mixed" | "other";
+export type HistoryAddedDateSource = "medialyze" | "jellyfin";
+
+export type JellyfinConnection = {
+  base_url: string;
+  enabled: boolean;
+  sync_interval_minutes: number;
+  api_key_configured: boolean;
+  server_name: string | null;
+  server_version: string | null;
+  last_status: string;
+  last_error: string | null;
+  last_sync_started_at: string | null;
+  last_sync_finished_at: string | null;
+  last_successful_sync_at: string | null;
+  next_scheduled_sync_at: string | null;
+};
+
+export type JellyfinSyncStatus = JellyfinConnection & {
+  sync_job_id: number | null;
+  sync_job_status: "queued" | "running" | "completed" | "canceled" | "failed" | null;
+  sync_trigger_source: "manual" | "scheduled" | null;
+  sync_job_active: boolean;
+  sync_job_error: string | null;
+  sync_heartbeat_at?: string | null;
+  sync_summary: Record<string, unknown>;
+  sync_phase: string | null;
+  sync_phase_detail: string | null;
+  sync_current: number;
+  sync_total: number | null;
+  sync_progress_tracks?: Array<{
+    id: string;
+    label: string;
+    current: number;
+    total: number | null;
+    status: "queued" | "running" | "completed";
+  }>;
+  cancellation_requested?: boolean;
+  item_count: number;
+  matched_item_count: number;
+  unmatched_item_count: number;
+  library_count: number;
+  user_count: number;
+};
+
+export type JellyfinSyncStart = {
+  job_id: number;
+  status: "queued" | "running";
+  trigger_source: "manual" | "scheduled";
+  accepted: boolean;
+};
+
+export type JellyfinMatchRecomputeStatus = {
+  status: "idle" | "queued" | "running" | "success" | "error";
+  active: boolean;
+  rerun_pending: boolean;
+  last_error: string | null;
+};
+
+export type JellyfinUser = {
+  jellyfin_user_id: string;
+  name: string;
+  enabled_for_sync: boolean;
+  last_synced_at: string | null;
+};
+
+export type JellyfinPathMapping = {
+  id: number;
+  jellyfin_path_prefix: string;
+  medialyze_path_prefix: string;
+  enabled: boolean;
+};
+
+export type JellyfinPathMappingBatchItem = Omit<JellyfinPathMapping, "id"> & {
+  id?: number;
+};
+
+export type JellyfinLibrary = {
+  id: number;
+  name: string;
+  collection_type: string | null;
+  locations: string[];
+  mapped_locations: string[];
+  mapped_status: "linked" | "accessible" | "path_unmapped" | "path_not_accessible" | string;
+  linked_library_id: number | null;
+  linked_library_name: string | null;
+  link_method?: "manual" | "path" | null;
+  can_create_medialyze_library: boolean;
+  data_scope: "jellyfin_only" | "linked";
+  item_count: number;
+  last_synced_at: string;
+};
+
+export type JellyfinDistribution = { label: string; value: number };
+
+export type JellyfinCatalogSummary = {
+  library_count: number;
+  item_count: number;
+  known_size_bytes: number;
+  size_known_count: number;
+  known_duration_seconds: number;
+  duration_known_count: number;
+  last_synced_at: string | null;
+};
+
+export type JellyfinLibraryOverview = {
+  library: JellyfinLibrary;
+  item_count: number;
+  known_size_bytes: number;
+  size_known_count: number;
+  known_duration_seconds: number;
+  duration_known_count: number;
+  earliest_date_created: string | null;
+  latest_date_created: string | null;
+  item_type_distribution: JellyfinDistribution[];
+  production_year_distribution: JellyfinDistribution[];
+  added_month_distribution: JellyfinDistribution[];
+  playback_distribution: JellyfinDistribution[];
+  users: JellyfinUser[];
+};
+
+export type JellyfinLibraryItem = {
+  id: number;
+  jellyfin_item_id: string;
+  title: string;
+  original_title: string | null;
+  item_type: string;
+  series_name: string | null;
+  season_name: string | null;
+  index_number: number | null;
+  parent_index_number: number | null;
+  date_created: string | null;
+  premiere_date: string | null;
+  production_year: number | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  has_primary_image: boolean;
+  play_count: number;
+  played: boolean;
+  played_user_count: number;
+  favorite_user_count: number;
+  match_status: string;
+  media_file_id: number | null;
+};
+
+export type JellyfinLibraryItemPage = {
+  items: JellyfinLibraryItem[];
+  total: number;
+  offset: number;
+  limit: number;
+};
+
+export type JellyfinItemDetail = {
+  item: JellyfinItem;
+  library_id: number | null;
+  library_name: string | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  match: JellyfinFileOverlay["match"];
+  user_data: JellyfinFileOverlay["user_data"];
+};
+
+export type JellyfinItem = {
+  id: number;
+  jellyfin_item_id: string;
+  item_type: string;
+  path: string | null;
+  title: string;
+  original_title: string | null;
+  series_name: string | null;
+  season_name: string | null;
+  index_number: number | null;
+  parent_index_number: number | null;
+  date_created: string | null;
+  premiere_date: string | null;
+  production_year: number | null;
+  overview: string | null;
+  provider_ids: Record<string, string>;
+  image_tags: Record<string, string>;
+  backdrop_image_tags: string[];
+  match_status: string;
+  mismatch_reason: string | null;
+};
+
+export type JellyfinFileOverlay = {
+  match: {
+    id: number;
+    media_file_id: number;
+    jellyfin_item_id: number;
+    match_method: string;
+    confidence: number;
+    status: string;
+    mismatch_reason: string | null;
+  } | null;
+  item: JellyfinItem | null;
+  user_data: Array<{
+    jellyfin_user_id: string;
+    user_name: string;
+    play_count: number;
+    played: boolean;
+    playback_position_ticks: number;
+    last_played_date: string | null;
+    is_favorite: boolean;
+  }>;
+  playback_events: Array<{
+    jellyfin_activity_id: number;
+    jellyfin_user_id: string;
+    user_name: string;
+    played_at: string;
+  }>;
+  individual_playback_history_start_at: string | null;
+};
 
 export const DEFAULT_QUALITY_PROFILE: QualityProfile = {
   version: 1,
@@ -488,11 +701,17 @@ export type LibrarySummary = {
   quality_profile: QualityProfile;
   quality_profile_id?: number | null;
   show_on_dashboard: boolean;
+  history_added_date_source?: HistoryAddedDateSource;
   file_count: number;
   total_size_bytes: number;
   total_duration_seconds: number;
   ready_files: number;
   pending_files: number;
+  linked_jellyfin_library?: {
+    id: number;
+    name: string;
+    last_synced_at: string;
+  } | null;
 };
 
 export type LibraryStatistics = {
@@ -523,6 +742,7 @@ export type LibraryStatistics = {
   subtitle_language_distribution: DistributionItem[];
   subtitle_codec_distribution: DistributionItem[];
   subtitle_source_distribution: DistributionItem[];
+  user_play_count_distribution: DistributionItem[];
   numeric_distributions: Partial<Record<NumericDistributionMetricId, NumericDistribution>>;
 };
 
@@ -598,6 +818,13 @@ export type MediaFileRow = {
   episode_number?: number | null;
   episode_number_end?: number | null;
   episode_title?: string | null;
+  jellyfin_title?: string | null;
+  jellyfin_production_year?: number | null;
+  jellyfin_date_created?: string | null;
+  jellyfin_series_name?: string | null;
+  jellyfin_season_name?: string | null;
+  jellyfin_play_count?: number | null;
+  jellyfin_played_user_count?: number | null;
 };
 
 export type VideoStream = {
@@ -688,6 +915,7 @@ export type MediaFileSortKey =
   | "duration"
   | "bitrate"
   | "audio_bitrate"
+  | "play_count"
   | "bit_depth"
   | "audio_title"
   | "audio_artist"
@@ -726,6 +954,7 @@ export type MediaFileSortKey =
 
 export type LibraryFileSearchField =
   | "file"
+  | "jellyfin_name"
   | "container"
   | "size"
   | "quality_score"
@@ -883,6 +1112,7 @@ export type GroupedSeriesTableRow = {
   quality_score_average: number | null;
   bitrate_average: number | null;
   audio_bitrate_average: number | null;
+  play_count_total?: number | null;
   children_loaded: boolean;
 };
 
@@ -989,6 +1219,7 @@ export type AppSettings = {
     show_music_quality_score: boolean;
     unlimited_panel_size: boolean;
     in_depth_dolby_vision_profiles: boolean;
+    show_all_playbacks_when_unstacked: boolean;
   };
 };
 
@@ -1231,6 +1462,7 @@ type DownloadedCsv = {
 const API_PREFIX = import.meta.env.VITE_API_PREFIX ?? "/api";
 const LIBRARY_FILE_FILTER_QUERY_KEYS: Array<[LibraryFileSearchField, string]> = [
   ["file", "file_search"],
+  ["jellyfin_name", "search_jellyfin_name"],
   ["container", "search_container"],
   ["size", "search_size"],
   ["quality_score", "search_quality_score"],
@@ -1634,6 +1866,9 @@ export const api = {
   fileMediaUrl: (id: string | number, options: { download?: boolean } = {}) => `${API_PREFIX}${buildFileMediaPath(id, options)}`,
   libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
   file: (id: string | number) => request<MediaFileDetail>(`/files/${id}`),
+  fileJellyfin: (id: string | number) => request<JellyfinFileOverlay>(`/files/${id}/jellyfin`),
+  jellyfinImageUrl: (itemId: string | number, imageType: "Primary" | "Backdrop" | "Thumb" = "Primary") =>
+    `${API_PREFIX}/jellyfin/images/${itemId}/${imageType}`,
   fileStreams: (id: string | number) => request<MediaFileStreamDetails>(`/files/${id}/streams`),
   fileQualityScore: (id: string | number) => request<MediaFileQualityScoreDetail>(`/files/${id}/quality-score`),
   fileHistory: (id: string | number, signal?: AbortSignal) =>
@@ -1649,6 +1884,105 @@ export const api = {
     request<PathInspection>("/paths/inspect", {
       method: "POST",
       body: JSON.stringify({ path }),
+    }),
+  jellyfinConnection: () => request<JellyfinConnection>("/jellyfin/connection"),
+  updateJellyfinConnection: (payload: {
+    base_url?: string;
+    api_key?: string;
+    clear_api_key?: boolean;
+    enabled?: boolean;
+    sync_interval_minutes?: number;
+  }) =>
+    request<JellyfinConnection>("/jellyfin/connection", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  disconnectJellyfin: () =>
+    request<void>("/jellyfin/connection", { method: "DELETE" }),
+  testJellyfinConnection: (payload: { base_url?: string; api_key?: string }) =>
+    request<{ ok: boolean; server_name: string | null; server_version: string | null; error: string | null }>(
+      "/jellyfin/test",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  syncJellyfin: () =>
+    request<JellyfinSyncStart>(
+      "/jellyfin/sync",
+      { method: "POST" },
+    ),
+  cancelJellyfinSync: (jobId?: number | null) =>
+    request<{ job_id: number | null; status: string | null; cancellation_requested: boolean }>(`/jellyfin/sync/cancel${jobId ? `?job_id=${jobId}` : ""}`, {
+      method: "POST",
+    }),
+  jellyfinSyncStatus: () => request<JellyfinSyncStatus>("/jellyfin/sync/status"),
+  jellyfinUsers: () => request<JellyfinUser[]>("/jellyfin/users"),
+  updateJellyfinUsers: (enabledUserIds: string[]) =>
+    request<JellyfinUser[]>("/jellyfin/users", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled_user_ids: enabledUserIds }),
+    }),
+  jellyfinPathMappings: () => request<JellyfinPathMapping[]>("/jellyfin/path-mappings"),
+  updateJellyfinPathMappingsBatch: (
+    mappings: JellyfinPathMappingBatchItem[],
+    deleteIds: number[] = [],
+  ) =>
+    request<JellyfinPathMapping[]>("/jellyfin/path-mappings/batch", {
+      method: "PUT",
+      body: JSON.stringify({ mappings, delete_ids: deleteIds }),
+    }),
+  jellyfinMatchRecomputeStatus: () =>
+    request<JellyfinMatchRecomputeStatus>("/jellyfin/matches/recompute/status"),
+  createJellyfinPathMapping: (payload: Omit<JellyfinPathMapping, "id">) =>
+    request<JellyfinPathMapping>("/jellyfin/path-mappings", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateJellyfinPathMapping: (id: number, payload: Partial<Omit<JellyfinPathMapping, "id">>) =>
+    request<JellyfinPathMapping>(`/jellyfin/path-mappings/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteJellyfinPathMapping: (id: number) =>
+    request<void>(`/jellyfin/path-mappings/${id}`, { method: "DELETE" }),
+  jellyfinLibraries: () => request<JellyfinLibrary[]>("/jellyfin/libraries"),
+  jellyfinCatalogSummary: () => request<JellyfinCatalogSummary>("/jellyfin/catalog/summary"),
+  jellyfinLibraryOverview: (id: string | number, userId?: string | null, signal?: AbortSignal) =>
+    request<JellyfinLibraryOverview>(
+      `/jellyfin/libraries/${id}/overview${userId ? `?user_id=${encodeURIComponent(userId)}` : ""}`,
+      { signal },
+    ),
+  jellyfinLibraryItems: (id: string | number, params?: {
+    offset?: number;
+    limit?: number;
+    search?: string;
+    itemType?: string;
+    productionYear?: number;
+    played?: boolean | null;
+    userId?: string | null;
+    sortKey?: "title" | "year" | "added" | "duration" | "size" | "play_count";
+    sortDirection?: "asc" | "desc";
+    signal?: AbortSignal;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.offset !== undefined) query.set("offset", String(params.offset));
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    if (params?.search) query.set("search", params.search);
+    if (params?.itemType) query.set("item_type", params.itemType);
+    if (params?.productionYear !== undefined) query.set("production_year", String(params.productionYear));
+    if (params?.played !== undefined && params.played !== null) query.set("played", String(params.played));
+    if (params?.userId) query.set("user_id", params.userId);
+    if (params?.sortKey) query.set("sort_key", params.sortKey);
+    if (params?.sortDirection) query.set("sort_direction", params.sortDirection);
+    const suffix = query.toString();
+    return request<JellyfinLibraryItemPage>(`/jellyfin/libraries/${id}/items${suffix ? `?${suffix}` : ""}`, { signal: params?.signal });
+  },
+  jellyfinItem: (id: string | number, signal?: AbortSignal) =>
+    request<JellyfinItemDetail>(`/jellyfin/items/${id}`, { signal }),
+  createLibraryFromJellyfin: (id: number) =>
+    request<LibrarySummary>(`/jellyfin/libraries/${id}/create-medialyze-library`, { method: "POST" }),
+  updateJellyfinLibraryLink: (id: number, linkedLibraryId: number | null) =>
+    request<JellyfinLibrary>(`/jellyfin/libraries/${id}/link`, {
+      method: "PATCH",
+      body: JSON.stringify({ linked_library_id: linkedLibraryId }),
     }),
   updateAppSettings: (payload: {
     ignore_patterns?: string[];
@@ -1704,6 +2038,7 @@ export const api = {
       show_music_quality_score?: boolean;
       unlimited_panel_size?: boolean;
       in_depth_dolby_vision_profiles?: boolean;
+      show_all_playbacks_when_unstacked?: boolean;
     };
   }) =>
     request<AppSettings>("/app-settings", {
@@ -1721,6 +2056,7 @@ export const api = {
     quality_profile?: QualityProfile;
     quality_profile_id?: number | null;
     show_on_dashboard?: boolean;
+    history_added_date_source?: HistoryAddedDateSource;
   }) =>
     request<LibrarySummary>("/libraries", {
       method: "POST",
@@ -1739,6 +2075,7 @@ export const api = {
       quality_profile?: QualityProfile;
       quality_profile_id?: number | null;
       show_on_dashboard?: boolean;
+      history_added_date_source?: HistoryAddedDateSource;
     },
   ) =>
     request<LibrarySummary>(`/libraries/${libraryId}`, {

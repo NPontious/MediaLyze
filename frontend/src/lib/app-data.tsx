@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import i18n, { getStoredInterfaceLanguage } from "../i18n";
-import { api, type AppSettings, type DashboardResponse, type LibrarySummary } from "./api";
+import { api, type AppSettings, type DashboardResponse, type JellyfinLibrary, type LibrarySummary } from "./api";
 import { defaultPatternRecognitionSettings } from "./pattern-recognition";
 import { DEFAULT_RESOLUTION_CATEGORIES, normalizeResolutionCategories } from "./resolution-categories";
 
@@ -21,9 +21,12 @@ type AppDataContextValue = {
   dashboardLoaded: boolean;
   libraries: LibrarySummary[];
   librariesLoaded: boolean;
+  jellyfinLibraries: JellyfinLibrary[];
+  jellyfinLibrariesLoaded: boolean;
   loadAppSettings: (force?: boolean) => Promise<AppSettings>;
   loadDashboard: (force?: boolean, panels?: readonly string[] | null) => Promise<DashboardResponse>;
   loadLibraries: (force?: boolean) => Promise<LibrarySummary[]>;
+  loadJellyfinLibraries: (force?: boolean) => Promise<JellyfinLibrary[]>;
   setAppSettings: (payload: AppSettings) => void;
   setDashboard: (payload: DashboardResponse) => void;
   setLibraries: (payload: LibrarySummary[]) => void;
@@ -76,6 +79,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
     show_music_quality_score: false,
     unlimited_panel_size: false,
     in_depth_dolby_vision_profiles: false,
+    show_all_playbacks_when_unstacked: false,
   },
 };
 const DASHBOARD_SESSION_STORAGE_PREFIX = "medialyze-dashboard-cache:";
@@ -186,6 +190,8 @@ function normalizeAppSettings(payload: Partial<AppSettings> | null | undefined):
       show_music_quality_score: payload?.feature_flags?.show_music_quality_score ?? false,
       unlimited_panel_size: payload?.feature_flags?.unlimited_panel_size ?? false,
       in_depth_dolby_vision_profiles: payload?.feature_flags?.in_depth_dolby_vision_profiles ?? false,
+      show_all_playbacks_when_unstacked:
+        payload?.feature_flags?.show_all_playbacks_when_unstacked ?? false,
     },
   };
 }
@@ -201,11 +207,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   );
   const [libraries, setLibrariesState] = useState<LibrarySummary[]>([]);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
+  const [jellyfinLibraries, setJellyfinLibraries] = useState<JellyfinLibrary[]>([]);
+  const [jellyfinLibrariesLoaded, setJellyfinLibrariesLoaded] = useState(false);
   const appSettingsRequestRef = useRef<Promise<AppSettings> | null>(null);
   const dashboardRequestRef = useRef<Promise<DashboardResponse> | null>(null);
   const dashboardRequestKeyRef = useRef<string | null>(null);
   const dashboardPanelKeyRef = useRef<string | null>(null);
   const librariesRequestRef = useRef<Promise<LibrarySummary[]> | null>(null);
+  const jellyfinLibrariesRequestRef = useRef<Promise<JellyfinLibrary[]> | null>(null);
 
   const setAppSettings = useEffectEvent((payload: AppSettings) => {
     setAppSettingsState(normalizeAppSettings(payload));
@@ -346,6 +355,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     return request;
   });
 
+  const loadJellyfinLibraries = useEffectEvent(async (force = false) => {
+    if (!force) {
+      if (jellyfinLibrariesRequestRef.current) return jellyfinLibrariesRequestRef.current;
+      if (jellyfinLibrariesLoaded) return jellyfinLibraries;
+    }
+    const request = api.jellyfinLibraries()
+      .then((payload) => {
+        setJellyfinLibraries(payload);
+        setJellyfinLibrariesLoaded(true);
+        return payload;
+      })
+      .finally(() => {
+        if (jellyfinLibrariesRequestRef.current === request) jellyfinLibrariesRequestRef.current = null;
+      });
+    jellyfinLibrariesRequestRef.current = request;
+    return request;
+  });
+
   const value = useMemo(
     () => ({
       appSettings,
@@ -354,9 +381,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       dashboardLoaded,
       libraries,
       librariesLoaded,
+      jellyfinLibraries,
+      jellyfinLibrariesLoaded,
       loadAppSettings,
       loadDashboard,
       loadLibraries,
+      loadJellyfinLibraries,
       setAppSettings,
       setDashboard,
       setLibraries,
@@ -370,9 +400,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       dashboardLoaded,
       libraries,
       librariesLoaded,
+      jellyfinLibraries,
+      jellyfinLibrariesLoaded,
       loadAppSettings,
       loadDashboard,
       loadLibraries,
+      loadJellyfinLibraries,
       setAppSettings,
       setDashboard,
       setLibraries,

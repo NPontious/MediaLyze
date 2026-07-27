@@ -17,6 +17,7 @@ type TableViewSettingsEditorProps = {
   libraryType?: LibraryType | null;
   showMusicQualityScore?: boolean;
   hasVideoMetadata?: boolean;
+  hasPlaybackProvider?: boolean;
   onChange: (settings: LibraryStatisticsSettings) => void;
 };
 
@@ -25,6 +26,7 @@ export function TableViewSettingsEditor({
   libraryType,
   showMusicQualityScore,
   hasVideoMetadata,
+  hasPlaybackProvider,
   onChange,
 }: TableViewSettingsEditorProps) {
   const { t } = useTranslation();
@@ -34,6 +36,7 @@ export function TableViewSettingsEditor({
     isLibraryStatisticDefinitionVisibleForLibraryType(statistic, libraryType, {
       showMusicQualityScore,
       hasVideoMetadata,
+      hasPlaybackProvider,
     }),
   );
 

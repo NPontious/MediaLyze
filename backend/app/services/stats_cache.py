@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from threading import Lock
+from collections.abc import Callable
+from dataclasses import dataclass
+from threading import Event, Lock
+from typing import Generic, TypeVar
 
 from backend.app.schemas.comparison import ComparisonFieldId, ComparisonResponse
 from backend.app.schemas.library import LibraryStatistics, LibrarySummary
 from backend.app.schemas.library_history import DashboardHistoryResponse, LibraryHistoryResponse
 from backend.app.schemas.media import DashboardResponse
+
+CacheValue = TypeVar("CacheValue")
+PanelCacheKey = tuple[str, ...] | None
+
+
+@dataclass
+class _InFlight(Generic[CacheValue]):
+    event: Event
+    result: CacheValue | None = None
+    error: BaseException | None = None
 
 
 def _get_cached(cache: OrderedDict, key):
@@ -30,20 +43,20 @@ def _delete_matching(cache: OrderedDict, predicate) -> None:
 
 
 class StatsCache:
-    _DASHBOARD_LIMIT = 4
+    _DASHBOARD_LIMIT = 32
     _DASHBOARD_HISTORY_LIMIT = 4
     _DASHBOARD_COMPARISON_LIMIT = 24
     _DASHBOARD_COMPARISON_SOURCE_LIMIT = 4
     _LIBRARIES_LIMIT = 4
     _LIBRARY_SUMMARY_LIMIT = 64
     _LIBRARY_HISTORY_LIMIT = 64
-    _LIBRARY_STATISTICS_LIMIT = 32
+    _LIBRARY_STATISTICS_LIMIT = 64
     _LIBRARY_COMPARISON_LIMIT = 64
     _LIBRARY_COMPARISON_SOURCE_LIMIT = 64
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._dashboard: OrderedDict[str, DashboardResponse] = OrderedDict()
+        self._dashboard: OrderedDict[tuple[str, PanelCacheKey], DashboardResponse] = OrderedDict()
         self._dashboard_history: OrderedDict[str, DashboardHistoryResponse] = OrderedDict()
         self._dashboard_comparisons: OrderedDict[
             tuple[str, ComparisonFieldId, ComparisonFieldId],
@@ -53,20 +66,91 @@ class StatsCache:
         self._libraries: OrderedDict[str, list[LibrarySummary]] = OrderedDict()
         self._library_summaries: OrderedDict[tuple[str, int], LibrarySummary] = OrderedDict()
         self._library_history: OrderedDict[tuple[str, int], LibraryHistoryResponse] = OrderedDict()
-        self._library_statistics: OrderedDict[tuple[str, int], LibraryStatistics] = OrderedDict()
+        self._library_statistics: OrderedDict[tuple[str, int, PanelCacheKey], LibraryStatistics] = OrderedDict()
         self._library_comparisons: OrderedDict[
             tuple[str, int, ComparisonFieldId, ComparisonFieldId],
             ComparisonResponse,
         ] = OrderedDict()
         self._library_comparison_sources: OrderedDict[tuple[str, int], list[object]] = OrderedDict()
+        self._inflight: dict[tuple[str, object], _InFlight] = {}
+        self._epochs: dict[str, int] = {}
 
-    def get_dashboard(self, cache_key: str) -> DashboardResponse | None:
+    def _get_or_compute(
+        self,
+        *,
+        namespace: str,
+        cache: OrderedDict,
+        key,
+        limit: int,
+        epoch_key: str,
+        compute: Callable[[], CacheValue],
+    ) -> CacheValue:
         with self._lock:
-            return _get_cached(self._dashboard, cache_key)
+            cached = _get_cached(cache, key)
+            if cached is not None:
+                return cached
+            epoch = self._epochs.get(epoch_key, 0)
+            inflight_key = (namespace, (epoch, key))
+            state = self._inflight.get(inflight_key)
+            leader = state is None
+            if state is None:
+                state = _InFlight(event=Event())
+                self._inflight[inflight_key] = state
 
-    def set_dashboard(self, cache_key: str, payload: DashboardResponse) -> None:
+        if not leader:
+            state.event.wait()
+            if state.error is not None:
+                raise state.error
+            return state.result  # type: ignore[return-value]
+
+        try:
+            result = compute()
+        except BaseException as exc:
+            with self._lock:
+                state.error = exc
+                self._inflight.pop(inflight_key, None)
+                state.event.set()
+            raise
+
         with self._lock:
-            _set_cached(self._dashboard, cache_key, payload, limit=self._DASHBOARD_LIMIT)
+            if self._epochs.get(epoch_key, 0) == epoch:
+                _set_cached(cache, key, result, limit=limit)
+            state.result = result
+            self._inflight.pop(inflight_key, None)
+            state.event.set()
+        return result
+
+    def get_dashboard(
+        self,
+        cache_key: str,
+        panel_key: PanelCacheKey = None,
+    ) -> DashboardResponse | None:
+        with self._lock:
+            return _get_cached(self._dashboard, (cache_key, panel_key))
+
+    def set_dashboard(
+        self,
+        cache_key: str,
+        payload: DashboardResponse,
+        panel_key: PanelCacheKey = None,
+    ) -> None:
+        with self._lock:
+            _set_cached(self._dashboard, (cache_key, panel_key), payload, limit=self._DASHBOARD_LIMIT)
+
+    def get_or_compute_dashboard(
+        self,
+        cache_key: str,
+        panel_key: PanelCacheKey,
+        compute: Callable[[], DashboardResponse],
+    ) -> DashboardResponse:
+        return self._get_or_compute(
+            namespace="dashboard",
+            cache=self._dashboard,
+            key=(cache_key, panel_key),
+            limit=self._DASHBOARD_LIMIT,
+            epoch_key=cache_key,
+            compute=compute,
+        )
 
     def get_dashboard_history(self, cache_key: str) -> DashboardHistoryResponse | None:
         with self._lock:
@@ -75,6 +159,20 @@ class StatsCache:
     def set_dashboard_history(self, cache_key: str, payload: DashboardHistoryResponse) -> None:
         with self._lock:
             _set_cached(self._dashboard_history, cache_key, payload, limit=self._DASHBOARD_HISTORY_LIMIT)
+
+    def get_or_compute_dashboard_history(
+        self,
+        cache_key: str,
+        compute: Callable[[], DashboardHistoryResponse],
+    ) -> DashboardHistoryResponse:
+        return self._get_or_compute(
+            namespace="dashboard_history",
+            cache=self._dashboard_history,
+            key=cache_key,
+            limit=self._DASHBOARD_HISTORY_LIMIT,
+            epoch_key=cache_key,
+            compute=compute,
+        )
 
     def get_dashboard_comparison(
         self,
@@ -137,18 +235,60 @@ class StatsCache:
         with self._lock:
             _set_cached(self._library_history, (cache_key, library_id), payload, limit=self._LIBRARY_HISTORY_LIMIT)
 
-    def get_library_statistics(self, cache_key: str, library_id: int) -> LibraryStatistics | None:
-        with self._lock:
-            return _get_cached(self._library_statistics, (cache_key, library_id))
+    def get_or_compute_library_history(
+        self,
+        cache_key: str,
+        library_id: int,
+        compute: Callable[[], LibraryHistoryResponse],
+    ) -> LibraryHistoryResponse:
+        return self._get_or_compute(
+            namespace="library_history",
+            cache=self._library_history,
+            key=(cache_key, library_id),
+            limit=self._LIBRARY_HISTORY_LIMIT,
+            epoch_key=cache_key,
+            compute=compute,
+        )
 
-    def set_library_statistics(self, cache_key: str, library_id: int, payload: LibraryStatistics) -> None:
+    def get_library_statistics(
+        self,
+        cache_key: str,
+        library_id: int,
+        panel_key: PanelCacheKey = None,
+    ) -> LibraryStatistics | None:
+        with self._lock:
+            return _get_cached(self._library_statistics, (cache_key, library_id, panel_key))
+
+    def set_library_statistics(
+        self,
+        cache_key: str,
+        library_id: int,
+        payload: LibraryStatistics,
+        panel_key: PanelCacheKey = None,
+    ) -> None:
         with self._lock:
             _set_cached(
                 self._library_statistics,
-                (cache_key, library_id),
+                (cache_key, library_id, panel_key),
                 payload,
                 limit=self._LIBRARY_STATISTICS_LIMIT,
             )
+
+    def get_or_compute_library_statistics(
+        self,
+        cache_key: str,
+        library_id: int,
+        panel_key: PanelCacheKey,
+        compute: Callable[[], LibraryStatistics],
+    ) -> LibraryStatistics:
+        return self._get_or_compute(
+            namespace="library_statistics",
+            cache=self._library_statistics,
+            key=(cache_key, library_id, panel_key),
+            limit=self._LIBRARY_STATISTICS_LIMIT,
+            epoch_key=cache_key,
+            compute=compute,
+        )
 
     def get_library_comparison(
         self,
@@ -191,7 +331,8 @@ class StatsCache:
 
     def invalidate(self, cache_key: str, library_id: int | None = None) -> None:
         with self._lock:
-            self._dashboard.pop(cache_key, None)
+            self._epochs[cache_key] = self._epochs.get(cache_key, 0) + 1
+            _delete_matching(self._dashboard, lambda key: key[0] == cache_key)
             self._dashboard_history.pop(cache_key, None)
             _delete_matching(self._dashboard_comparisons, lambda key: key[0] == cache_key)
             self._dashboard_comparison_sources.pop(cache_key, None)
