@@ -2,7 +2,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Download,
+  Layers3,
+  List,
   Search,
   Server,
   X,
@@ -12,24 +13,23 @@ import { useTranslation } from "react-i18next";
 
 import { formatDuration } from "../lib/format";
 import {
+  groupPlaybackEntries,
+  type PlaybackDisplayEntry,
+  type PlaybackHistoryEntry,
+} from "../lib/playback-history";
+import {
   HistoryRangeToggle,
   type HistoryRangeSelection,
 } from "./LibraryHistoryPanel";
+import { SlidingTogglePill } from "./SlidingTogglePill";
 
-export type PlaybackHistoryEntry = {
-  id: string;
-  provider: string;
-  userId: string;
-  userName: string;
-  playCount: number;
-  completed: boolean;
-  resumePositionSeconds: number;
-  lastPlayedAt: string;
-};
+export type { PlaybackHistoryEntry } from "../lib/playback-history";
 
 const USER_COLORS = ["#f05f2a", "#277a65", "#4f78c7", "#9a5cc2", "#9aaf1a", "#d48b20"];
 const PAGE_SIZE = 8;
 const RANGE_STORAGE_KEY = "medialyze-file-streaming-range-selection";
+
+type PlaybackDisplayMode = "individual" | "grouped";
 
 function dateKey(value: Date): string {
   return [
@@ -115,9 +115,11 @@ function csvCell(value: string | number): string {
 export function PlaybackHistoryPanel({
   entries: sourceEntries,
   durationSeconds,
+  individualEventsAvailable = true,
 }: {
   entries: PlaybackHistoryEntry[];
   durationSeconds?: number | null;
+  individualEventsAvailable?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const entries = useMemo<PlaybackHistoryEntry[]>(
@@ -138,6 +140,7 @@ export function PlaybackHistoryPanel({
     () => new Set(entries.map((entry) => `${entry.provider}:${entry.userId}`)),
   );
   const [selectedProvider, setSelectedProvider] = useState("all");
+  const [displayMode, setDisplayMode] = useState<PlaybackDisplayMode>("individual");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(entries[0]?.id ?? null);
   const [page, setPage] = useState(0);
@@ -156,7 +159,7 @@ export function PlaybackHistoryPanel({
   }, [users]);
 
   const bounds = useMemo(() => rangeBounds(entries, rangeSelection), [entries, rangeSelection]);
-  const filteredEntries = useMemo(() => {
+  const filteredSourceEntries = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase(i18n.language);
     return entries.filter((entry) => {
       const timestamp = Date.parse(entry.lastPlayedAt);
@@ -171,6 +174,17 @@ export function PlaybackHistoryPanel({
       );
     });
   }, [bounds, entries, i18n.language, search, selectedProvider, selectedUsers]);
+  const filteredEntries = useMemo<PlaybackDisplayEntry[]>(
+    () =>
+      displayMode === "grouped"
+        ? groupPlaybackEntries(filteredSourceEntries, durationSeconds)
+        : filteredSourceEntries.map((entry) => ({
+            ...entry,
+            eventCount: 1,
+            firstPlayedAt: entry.lastPlayedAt,
+          })),
+    [displayMode, durationSeconds, filteredSourceEntries],
+  );
   const pageCount = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE));
   const visibleEntries = filteredEntries.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const selectedEntry = selectedId === null
@@ -182,7 +196,7 @@ export function PlaybackHistoryPanel({
 
   useEffect(() => {
     setPage(0);
-  }, [rangeSelection, search, selectedProvider, selectedUsers]);
+  }, [displayMode, rangeSelection, search, selectedProvider, selectedUsers]);
 
   useEffect(() => {
     if (page >= pageCount) setPage(pageCount - 1);
@@ -299,7 +313,63 @@ export function PlaybackHistoryPanel({
               </div>
               <div className="playback-history-timeline-count">
                 <span>{t("jellyfin.playbackHistory.visibleRange")}</span>
-                <strong>{t("jellyfin.playbackHistory.latestCount", { count: filteredEntries.length })}</strong>
+                <strong>
+                  {t(
+                    displayMode === "grouped"
+                      ? "jellyfin.playbackHistory.groupCount"
+                      : "jellyfin.playbackHistory.latestCount",
+                    { count: filteredEntries.length },
+                  )}
+                </strong>
+                <div
+                  className="playback-history-display-toggle"
+                  role="group"
+                  aria-label={t("jellyfin.playbackHistory.displayMode")}
+                >
+                  <SlidingTogglePill
+                    activeKey={displayMode}
+                    className="nav-active-pill playback-history-display-pill"
+                  />
+                  <button
+                    type="button"
+                    data-toggle-key="individual"
+                    className={displayMode === "individual" ? "active" : ""}
+                    aria-label={t(
+                      individualEventsAvailable
+                        ? "jellyfin.playbackHistory.showIndividual"
+                        : "jellyfin.playbackHistory.availableTimestamps",
+                    )}
+                    title={t(
+                      individualEventsAvailable
+                        ? "jellyfin.playbackHistory.showIndividual"
+                        : "jellyfin.playbackHistory.availableTimestamps",
+                    )}
+                    aria-pressed={displayMode === "individual"}
+                    onClick={() => setDisplayMode("individual")}
+                  >
+                    <List aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    data-toggle-key="grouped"
+                    className={displayMode === "grouped" ? "active" : ""}
+                    aria-label={t(
+                      individualEventsAvailable
+                        ? "jellyfin.playbackHistory.groupNearby"
+                        : "jellyfin.playbackHistory.groupUnavailable",
+                    )}
+                    title={t(
+                      individualEventsAvailable
+                        ? "jellyfin.playbackHistory.groupNearby"
+                        : "jellyfin.playbackHistory.groupUnavailable",
+                    )}
+                    aria-pressed={displayMode === "grouped"}
+                    disabled={!individualEventsAvailable}
+                    onClick={() => setDisplayMode("grouped")}
+                  >
+                    <Layers3 aria-hidden="true" />
+                  </button>
+                </div>
               </div>
               <div>
                 <span>{t("jellyfin.playbackHistory.latestVisible")}</span>
@@ -320,12 +390,26 @@ export function PlaybackHistoryPanel({
                   <button
                     key={entry.id}
                     type="button"
-                    className={`playback-history-timeline-event${selectedEntry?.id === entry.id ? " is-selected" : ""}`}
+                    className={[
+                      "playback-history-timeline-event",
+                      entry.eventCount > 1 ? "is-cluster" : "",
+                      selectedEntry?.id === entry.id ? "is-selected" : "",
+                    ].filter(Boolean).join(" ")}
+                    data-event-count={entry.eventCount}
                     style={{
                       "--playback-event-position": `${Math.max(0, Math.min(100, position))}%`,
                       "--playback-user-color": USER_COLORS[userIndex % USER_COLORS.length],
                     } as CSSProperties}
-                    aria-label={`${entry.userName}, ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`}
+                    aria-label={
+                      entry.eventCount > 1
+                        ? t("jellyfin.playbackHistory.groupedEventLabel", {
+                            user: entry.userName,
+                            count: entry.eventCount,
+                            start: formatTimestamp(entry.firstPlayedAt, i18n.language),
+                            end: formatTimestamp(entry.lastPlayedAt, i18n.language),
+                          })
+                        : `${entry.userName}, ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`
+                    }
                     title={`${entry.userName} · ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`}
                     onClick={() => setSelectedId(entry.id)}
                   />
@@ -350,10 +434,19 @@ export function PlaybackHistoryPanel({
               />
             </label>
             <span className="playback-history-result-count">
-              {t("jellyfin.playbackHistory.latestCount", { count: filteredEntries.length })}
+              {t(
+                displayMode === "grouped"
+                  ? "jellyfin.playbackHistory.groupCount"
+                  : "jellyfin.playbackHistory.latestCount",
+                { count: filteredEntries.length },
+              )}
             </span>
-            <button type="button" className="secondary small" disabled={!filteredEntries.length} onClick={exportCsv}>
-              <Download aria-hidden="true" />
+            <button
+              type="button"
+              className="secondary small playback-history-export-button"
+              disabled={!filteredEntries.length}
+              onClick={exportCsv}
+            >
               {t("jellyfin.playbackHistory.export")}
             </button>
           </div>

@@ -128,7 +128,11 @@ export function JellyfinStreamingDetails({
 
   return (
     <div className="jellyfin-file-panel jellyfin-streaming-panel">
-      <PlaybackHistoryPanel entries={entries} durationSeconds={durationSeconds} />
+      <PlaybackHistoryPanel
+        entries={entries}
+        durationSeconds={durationSeconds}
+        individualEventsAvailable={false}
+      />
     </div>
   );
 }

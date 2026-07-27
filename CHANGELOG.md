@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 
 ### 🐛 Fixed
 
+* Keep the file-detail Streaming date picker inside the content area, add runtime-aware playback grouping, and compact its export action and playback rows
 * Open every file detail view on Overview instead of carrying the previously selected subsection across files
 * Fix hardware/software profile dark-mode palette
 

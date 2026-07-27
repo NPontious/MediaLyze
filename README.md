@@ -243,6 +243,8 @@ Telemetry payloads are documented in [docs/telemetry.md](docs/telemetry.md), inc
 
 Jellyfin permissions, Docker path mappings, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md).
 
+Repository automation, Docker and desktop publishing, manual workflow controls, and release recovery are documented in [docs/github_actions.md](docs/github_actions.md).
+
 ## Tech Stack
 
 - Backend: Python, FastAPI, SQLAlchemy, SQLite

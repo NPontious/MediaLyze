@@ -62,6 +62,7 @@ describe("statistic panel layout", () => {
           renderer: "scatter",
         },
       },
+      { statisticId: "user_plays", width: 1, height: 2 },
       { statisticId: "history", width: 4, height: 3 },
       { statisticId: "duplicates", width: 4, height: 3 },
       { statisticId: "analyzed_files", width: 4, height: 4 },
