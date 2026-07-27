@@ -29,6 +29,7 @@ from backend.app.models.entities import (
     JellyfinLibrary,
     JellyfinMediaMatch,
     JellyfinPathMapping,
+    JellyfinPlaybackEvent,
     JellyfinSyncJob,
     JellyfinSyncTriggerSource,
     JellyfinUser,
@@ -44,6 +45,7 @@ from backend.app.models.entities import (
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.jellyfin_client import (
     JellyfinClient,
+    JellyfinActivityPage,
     JellyfinConfigurationError,
     JellyfinItemPage,
     JellyfinImage,
@@ -281,6 +283,52 @@ def test_client_paginates_items() -> None:
     assert [int(request["StartIndex"]) for request in requests] == [0, JellyfinClient.ITEM_PAGE_SIZE]
     assert all(int(request["Limit"]) == JellyfinClient.ITEM_PAGE_SIZE for request in requests)
     assert all(request["UserId"] == "user-1" for request in requests)
+
+
+def test_client_returns_each_playback_start_from_activity_log() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/System/ActivityLog/Entries"
+        assert request.url.params["Type"] == "Playback"
+        assert request.url.params["SortOrder"] == "Ascending"
+        return httpx.Response(
+            200,
+            json={
+                "Items": [
+                    {
+                        "Id": 1,
+                        "Type": "VideoPlayback",
+                        "ItemId": "item-1",
+                        "UserId": "user-1",
+                        "Date": "2026-07-20T10:00:00Z",
+                    },
+                    {
+                        "Id": 2,
+                        "Type": "VideoPlaybackStopped",
+                        "ItemId": "item-1",
+                        "UserId": "user-1",
+                        "Date": "2026-07-20T11:00:00Z",
+                    },
+                    {
+                        "Id": 3,
+                        "Type": "AudioPlayback",
+                        "ItemId": "item-2",
+                        "UserId": "user-2",
+                        "Date": "2026-07-21T10:00:00Z",
+                    },
+                ],
+                "TotalRecordCount": 3,
+            },
+        )
+
+    pages = list(
+        JellyfinClient(
+            "http://jellyfin:8096",
+            "secret",
+            transport=httpx.MockTransport(handler),
+        ).iter_playback_activity_pages(min_date="2026-07-01T00:00:00Z")
+    )
+
+    assert [entry["Id"] for entry in pages[0].items] == [1, 3]
 
 
 def test_client_reports_item_page_progress() -> None:
@@ -1057,6 +1105,117 @@ def test_sync_persists_separate_user_data(
 
     rows = list(db.scalars(select(JellyfinUserItemData).order_by(JellyfinUserItemData.jellyfin_user_id)))
     assert [(row.jellyfin_user_id, row.play_count) for row in rows] == [("u1", 1), ("u2", 3)]
+
+
+def test_sync_persists_individual_playback_events_and_exposes_them_for_a_file(
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    media = _add_media(db, media_root)
+    db.add_all([
+        JellyfinConnection(
+            id=1,
+            base_url="http://jellyfin:8096",
+            api_key="secret",
+            enabled=True,
+        ),
+        JellyfinPathMapping(
+            jellyfin_path_prefix="/remote",
+            medialyze_path_prefix=str(media_root),
+            enabled=True,
+        ),
+        JellyfinUser(jellyfin_user_id="u1", name="Alice", enabled_for_sync=True),
+        JellyfinUser(jellyfin_user_id="u2", name="Bob", enabled_for_sync=False),
+    ])
+    db.commit()
+
+    class PlaybackFakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_system_info(self):
+            return {"ServerName": "Test", "Version": "10.11"}
+
+        def get_users(self):
+            return [{"Id": "u1", "Name": "Alice"}, {"Id": "u2", "Name": "Bob"}]
+
+        def get_virtual_folders(self):
+            return [{"Name": "Movies", "CollectionType": "movies", "Locations": ["/remote"]}]
+
+        def get_items(self, *, user_id=None, progress_callback=None):
+            items = [{
+                "Id": "item-1",
+                "Name": "Movie",
+                "Type": "Movie",
+                "Path": "/remote/Movie.mkv",
+                "UserData": {"PlayCount": 2, "Played": True},
+            }]
+            if progress_callback:
+                progress_callback(1, 1)
+            return items
+
+        def iter_playback_activity_pages(self, *, min_date=None):
+            assert min_date is None
+            yield JellyfinActivityPage(
+                items=[
+                    {
+                        "Id": 101,
+                        "Type": "VideoPlayback",
+                        "ItemId": "item-1",
+                        "UserId": "u1",
+                        "Date": "2026-07-20T10:00:00Z",
+                    },
+                    {
+                        "Id": 102,
+                        "Type": "VideoPlayback",
+                        "ItemId": "item-1",
+                        "UserId": "u1",
+                        "Date": "2026-07-23T11:00:00Z",
+                    },
+                    {
+                        "Id": 103,
+                        "Type": "VideoPlayback",
+                        "ItemId": "item-1",
+                        "UserId": "u2",
+                        "Date": "2026-07-10T08:00:00Z",
+                    },
+                ],
+                start_index=0,
+                total_record_count=3,
+            )
+
+    monkeypatch.setattr("backend.app.services.jellyfin_sync.JellyfinClient", PlaybackFakeClient)
+
+    result = run_jellyfin_sync(db)
+
+    assert result["playback_history_status"] == "available"
+    assert result["playback_events_synced"] == 3
+    events = list(
+        db.scalars(
+            select(JellyfinPlaybackEvent).order_by(JellyfinPlaybackEvent.jellyfin_activity_id)
+        )
+    )
+    assert [event.jellyfin_activity_id for event in events] == [101, 102]
+
+    bob = db.get(JellyfinUser, "u2")
+    assert bob is not None
+    bob.enabled_for_sync = True
+    db.commit()
+    run_jellyfin_sync(db)
+
+    events = list(
+        db.scalars(
+            select(JellyfinPlaybackEvent).order_by(JellyfinPlaybackEvent.jellyfin_activity_id)
+        )
+    )
+    assert [event.jellyfin_activity_id for event in events] == [101, 102, 103]
+
+    payload = _client(db).get(f"/api/files/{media.id}/jellyfin").json()
+    assert [event["jellyfin_activity_id"] for event in payload["playback_events"]] == [102, 101, 103]
+    assert {event["user_name"] for event in payload["playback_events"]} == {"Alice", "Bob"}
 
 
 def test_sync_fetches_enabled_user_data_concurrently(

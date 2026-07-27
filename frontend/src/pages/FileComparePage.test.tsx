@@ -33,6 +33,7 @@ function createAppSettings(): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
     },
   };
 }

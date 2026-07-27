@@ -102,28 +102,41 @@ export function JellyfinOverviewDetails({
 
 export function JellyfinStreamingDetails({
   userData,
+  playbackEvents = [],
   durationSeconds,
+  showAllPlaybacksWhenUnstacked = false,
 }: {
   userData: UserData;
+  playbackEvents?: JellyfinFileOverlay["playback_events"];
   durationSeconds?: number | null;
+  showAllPlaybacksWhenUnstacked?: boolean;
 }): ReactNode {
-  const entries = useMemo(
-    () =>
-      userData
-        .filter((user): user is UserData[number] & { last_played_date: string } =>
-          Boolean(user.last_played_date) && user.play_count > 0,
-        )
-        .map<PlaybackHistoryEntry>((user) => ({
-          id: `jellyfin:${user.jellyfin_user_id}`,
+  const individualEventsAvailable = playbackEvents.length > 0;
+  const entries = useMemo<PlaybackHistoryEntry[]>(
+    () => individualEventsAvailable
+      ? playbackEvents.map((event) => ({
+          id: `jellyfin-activity:${event.jellyfin_activity_id}`,
           provider: "Jellyfin",
-          userId: user.jellyfin_user_id,
-          userName: user.user_name,
-          playCount: user.play_count,
-          completed: user.played,
-          resumePositionSeconds: user.playback_position_ticks / 10_000_000,
-          lastPlayedAt: user.last_played_date,
-        })),
-    [userData],
+          userId: event.jellyfin_user_id,
+          userName: event.user_name,
+          playCount: 1,
+          lastPlayedAt: event.played_at,
+        }))
+      : userData
+          .filter((user): user is UserData[number] & { last_played_date: string } =>
+            Boolean(user.last_played_date) && user.play_count > 0,
+          )
+          .map((user) => ({
+            id: `jellyfin:${user.jellyfin_user_id}`,
+            provider: "Jellyfin",
+            userId: user.jellyfin_user_id,
+            userName: user.user_name,
+            playCount: user.play_count,
+            completed: user.played,
+            resumePositionSeconds: user.playback_position_ticks / 10_000_000,
+            lastPlayedAt: user.last_played_date,
+          })),
+    [individualEventsAvailable, playbackEvents, userData],
   );
 
   return (
@@ -131,7 +144,8 @@ export function JellyfinStreamingDetails({
       <PlaybackHistoryPanel
         entries={entries}
         durationSeconds={durationSeconds}
-        individualEventsAvailable={false}
+        individualEventsAvailable={individualEventsAvailable}
+        showAllWhenUnstacked={showAllPlaybacksWhenUnstacked}
       />
     </div>
   );

@@ -247,6 +247,13 @@ class JellyfinUserItemDataRead(BaseModel):
     is_favorite: bool
 
 
+class JellyfinPlaybackEventRead(BaseModel):
+    jellyfin_activity_id: int
+    jellyfin_user_id: str
+    user_name: str
+    played_at: datetime
+
+
 class JellyfinItemRead(BaseModel):
     id: int
     jellyfin_item_id: str
@@ -283,6 +290,7 @@ class JellyfinFileOverlayRead(BaseModel):
     match: JellyfinMatchRead | None = None
     item: JellyfinItemRead | None = None
     user_data: list[JellyfinUserItemDataRead] = Field(default_factory=list)
+    playback_events: list[JellyfinPlaybackEventRead] = Field(default_factory=list)
 
 
 class JellyfinUnmatchedRead(BaseModel):

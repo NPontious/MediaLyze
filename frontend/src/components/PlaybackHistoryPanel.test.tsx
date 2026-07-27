@@ -51,17 +51,21 @@ describe("PlaybackHistoryPanel", () => {
     expect(screen.getAllByText("Louise")).not.toHaveLength(0);
     expect(screen.queryByText("No timestamp")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
-    expect(screen.getByText(/core API does not provide a complete list/)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Individual event timestamps are required for grouping" }),
-    ).toBeDisabled();
+    expect(screen.getByText(/Only Jellyfin's latest aggregate playback value/)).toBeInTheDocument();
+    const groupedButton = screen.getByRole("button", { name: "Group nearby playback events" });
+    expect(groupedButton).toBeEnabled();
+    fireEvent.click(groupedButton);
+    expect(groupedButton).toHaveAttribute("aria-pressed", "true");
 
     const rangeToggle = screen.getByRole("group", { name: "History range" });
     const displayToggle = screen.getByRole("group", { name: "Timeline display" });
-    expect(rangeToggle.parentElement).toBe(displayToggle.parentElement);
-    expect(rangeToggle.nextElementSibling).toBe(displayToggle);
+    expect(displayToggle.closest(".playback-history-display-control")).not.toBeNull();
+    expect(
+      displayToggle.closest(".playback-history-display-control")?.previousElementSibling,
+    ).toBe(rangeToggle.parentElement);
     expect(displayToggle).toHaveClass("library-history-range-toggle");
     expect(within(displayToggle).getAllByRole("button")[0]).toHaveClass("library-history-range-button");
+    expect(screen.getByText("Playback stacking")).toBeInTheDocument();
 
     expect(screen.queryByText("Range start")).not.toBeInTheDocument();
     expect(screen.queryByText("Visible data")).not.toBeInTheDocument();
@@ -213,5 +217,63 @@ describe("PlaybackHistoryPanel", () => {
 
     const exportButton = screen.getByRole("button", { name: "Export" });
     expect(exportButton.querySelector("svg")).toBeNull();
+  });
+
+  it("uses every synchronized Jellyfin playback event and omits unavailable event fields", () => {
+    const playbackEvents = [
+      {
+        jellyfin_activity_id: 101,
+        jellyfin_user_id: "user-1",
+        user_name: "Frederik",
+        played_at: "2026-07-20T10:00:00Z",
+      },
+      {
+        jellyfin_activity_id: 102,
+        jellyfin_user_id: "user-1",
+        user_name: "Frederik",
+        played_at: "2026-07-20T10:20:00Z",
+      },
+      {
+        jellyfin_activity_id: 103,
+        jellyfin_user_id: "user-1",
+        user_name: "Frederik",
+        played_at: "2026-07-23T11:00:00Z",
+      },
+    ];
+    const { container } = render(
+      <JellyfinStreamingDetails
+        userData={playbackData}
+        playbackEvents={playbackEvents}
+        durationSeconds={7200}
+      />,
+    );
+
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(3);
+    expect(within(screen.getByRole("table")).getAllByText("1")).toHaveLength(3);
+    expect(screen.queryByText("Playback state")).not.toBeInTheDocument();
+    expect(screen.queryByText("Resume position")).not.toBeInTheDocument();
+    expect(screen.getByText(/Individual playback starts imported/)).toBeInTheDocument();
+  });
+
+  it("shows every unstacked row without pagination when the feature flag is enabled", () => {
+    const entries = Array.from({ length: 10 }, (_, index): PlaybackHistoryEntry => ({
+      id: `event-${index}`,
+      provider: "Jellyfin",
+      userId: "user-1",
+      userName: "Frederik",
+      playCount: 1,
+      lastPlayedAt: `2026-07-${String(index + 1).padStart(2, "0")}T10:00:00Z`,
+    }));
+
+    render(
+      <PlaybackHistoryPanel
+        entries={entries}
+        durationSeconds={7200}
+        showAllWhenUnstacked
+      />,
+    );
+
+    expect(screen.getAllByRole("row")).toHaveLength(11);
+    expect(screen.queryByText(/Page 1 of/)).not.toBeInTheDocument();
   });
 });

@@ -79,6 +79,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
     show_music_quality_score: false,
     unlimited_panel_size: false,
     in_depth_dolby_vision_profiles: false,
+    show_all_playbacks_when_unstacked: false,
   },
 };
 const DASHBOARD_SESSION_STORAGE_PREFIX = "medialyze-dashboard-cache:";
@@ -189,6 +190,8 @@ function normalizeAppSettings(payload: Partial<AppSettings> | null | undefined):
       show_music_quality_score: payload?.feature_flags?.show_music_quality_score ?? false,
       unlimited_panel_size: payload?.feature_flags?.unlimited_panel_size ?? false,
       in_depth_dolby_vision_profiles: payload?.feature_flags?.in_depth_dolby_vision_profiles ?? false,
+      show_all_playbacks_when_unstacked:
+        payload?.feature_flags?.show_all_playbacks_when_unstacked ?? false,
     },
   };
 }

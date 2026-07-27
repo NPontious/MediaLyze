@@ -1597,7 +1597,7 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[3]}>
             <VariantGroup title="Form families">
-              <VariantCard title="Basic form grid" source={`${settings} > Create library`} classes={["form-grid", "field", "field-hint"]}>
+              <VariantCard title="Basic form grid and feature flag" source={`${settings} > Create library / App settings`} classes={["form-grid", "field", "field-hint", "app-settings-flag-row", "app-settings-flag-toggle"]}>
                 <div className="form-grid ui-elements-form-grid">
                   <div className="field">
                     <label htmlFor="ui-library-name">Name</label>
@@ -1611,10 +1611,18 @@ export function UiElementsPage() {
                       <option value="series">Series</option>
                     </select>
                   </div>
-                  <label className="app-settings-flag-row">
-                    <input type="checkbox" defaultChecked />
-                    <span>Show on dashboard</span>
-                  </label>
+                  <div className="app-settings-flag-row">
+                    <label className="app-settings-flag-toggle">
+                      <input type="checkbox" defaultChecked />
+                      <span>Show all playbacks when unstacked</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel="Explain showing all unstacked playbacks"
+                      content="Shows every available playback event without table pagination in the unstacked view."
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
                 </div>
               </VariantCard>
               <VariantCard title="Structured search" source={`${libraryDetail} > Analyzed files`} classes={["async-panel-header-status", "metadata-search-fields", "metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
@@ -1792,7 +1800,7 @@ export function UiElementsPage() {
               <VariantCard title="Distribution chart panel" source={`${libraryDetail} > Numeric panel`} classes={["async-panel", "distribution-chart-mode-toggle", "distribution-chart-canvas"]} wide>
                 <DistributionChartPanel title="Quality score" distribution={numericDistribution} metricId="quality_score" />
               </VariantCard>
-              <VariantCard title="Comparison chart panel" source={`${dashboard} / ${libraryDetail} > Metric comparison`} classes={["async-panel", "comparison-chart-toolbar", "comparison-chart-select", "comparison-chart-content"]} wide>
+              <VariantCard title="Comparison chart panel with Jellyfin playback axes" source={`${dashboard} / ${libraryDetail} > Metric comparison`} classes={["async-panel", "comparison-chart-toolbar", "comparison-chart-select", "comparison-chart-content"]} wide>
                 <ComparisonChartFixture />
               </VariantCard>
             </VariantGroup>
@@ -1850,7 +1858,7 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-range-actions", "playback-history-timeline-axis", "playback-history-timestamp", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
+              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-timeline-axis", "playback-history-timestamp", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
                 <div className="file-detail-overview">
                   <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
                   <div className="meta-tags file-detail-overview-badges"><span className="badge">HEVC</span><span className="badge">UHD</span><div className="jellyfin-overview-badge-group is-separated"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div></div>
@@ -1864,6 +1872,14 @@ export function UiElementsPage() {
                         { jellyfin_user_id: "catalog-mads", user_name: "Mads", play_count: 1, played: true, playback_position_ticks: 0, last_played_date: "2026-07-22T11:16:41Z", is_favorite: false },
                         { jellyfin_user_id: "catalog-sara", user_name: "Sara", play_count: 4, played: false, playback_position_ticks: 19970000000, last_played_date: "2026-07-19T14:44:02Z", is_favorite: false },
                       ]}
+                      playbackEvents={[
+                        { jellyfin_activity_id: 101, jellyfin_user_id: "catalog-frederik", user_name: "Frederik", played_at: "2026-07-27T20:41:13Z" },
+                        { jellyfin_activity_id: 100, jellyfin_user_id: "catalog-frederik", user_name: "Frederik", played_at: "2026-07-27T20:18:07Z" },
+                        { jellyfin_activity_id: 99, jellyfin_user_id: "catalog-louise", user_name: "Louise", played_at: "2026-07-24T17:58:50Z" },
+                        { jellyfin_activity_id: 98, jellyfin_user_id: "catalog-mads", user_name: "Mads", played_at: "2026-07-22T11:16:41Z" },
+                        { jellyfin_activity_id: 97, jellyfin_user_id: "catalog-sara", user_name: "Sara", played_at: "2026-07-19T14:44:02Z" },
+                      ]}
+                      showAllPlaybacksWhenUnstacked
                     />
                   </div>
                 </div>

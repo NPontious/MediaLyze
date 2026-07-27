@@ -46,6 +46,7 @@ from backend.app.schemas.jellyfin import (
     JellyfinPathMappingBatchUpdate,
     JellyfinPathMappingRead,
     JellyfinPathMappingUpdate,
+    JellyfinPlaybackEventRead,
     JellyfinSyncCancelRead,
     JellyfinSyncStartRead,
     JellyfinSyncStatusRead,
@@ -87,6 +88,7 @@ from backend.app.models.entities import (
     JellyfinLibrary,
     JellyfinMediaMatch,
     JellyfinPathMapping,
+    JellyfinPlaybackEvent,
     JellyfinUser,
     JellyfinUserItemData,
     JobStatus,
@@ -2132,6 +2134,15 @@ def file_jellyfin_overlay(
         )
         .order_by(JellyfinUser.name.asc())
     ).all()
+    playback_event_rows = db.execute(
+        select(JellyfinPlaybackEvent, JellyfinUser.name)
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinPlaybackEvent.jellyfin_user_id)
+        .where(
+            JellyfinPlaybackEvent.jellyfin_item_id == item.id,
+            JellyfinUser.enabled_for_sync.is_(True),
+        )
+        .order_by(JellyfinPlaybackEvent.played_at.desc())
+    ).all()
     return JellyfinFileOverlayRead(
         match=JellyfinMatchRead(
             id=match.id,
@@ -2154,6 +2165,15 @@ def file_jellyfin_overlay(
                 is_favorite=data.is_favorite,
             )
             for data, user_name in user_rows
+        ],
+        playback_events=[
+            JellyfinPlaybackEventRead(
+                jellyfin_activity_id=event.jellyfin_activity_id,
+                jellyfin_user_id=event.jellyfin_user_id,
+                user_name=user_name,
+                played_at=event.played_at,
+            )
+            for event, user_name in playback_event_rows
         ],
     )
 

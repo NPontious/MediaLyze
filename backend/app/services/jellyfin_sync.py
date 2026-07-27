@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import ExitStack, nullcontext
-from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Event
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -14,8 +14,10 @@ from backend.app.models.entities import (
     JellyfinConnection,
     JellyfinLibrary,
     JellyfinPathMapping,
+    JellyfinPlaybackEvent,
     JellyfinSyncStageItem,
     JellyfinSyncStageLibrary,
+    JellyfinSyncStagePlaybackEvent,
     JellyfinSyncStageUser,
     JellyfinSyncStageUserData,
     JellyfinUser,
@@ -98,6 +100,92 @@ def _parse_datetime(value: object) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _normalize_jellyfin_id(value: object) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    try:
+        return UUID(candidate).hex
+    except ValueError:
+        return candidate.casefold()
+
+
+def _sync_playback_events(
+    db: Session,
+    *,
+    client: object,
+    sync_run_id: str,
+    now: datetime,
+) -> tuple[int, str]:
+    iterator = getattr(client, "iter_playback_activity_pages", None)
+    if not callable(iterator):
+        return 0, "unavailable"
+
+    enabled_user_ids = list(
+        db.scalars(
+            select(JellyfinUser.jellyfin_user_id).where(JellyfinUser.enabled_for_sync.is_(True))
+        )
+    )
+    newest_by_user = dict(
+        db.execute(
+            select(
+                JellyfinPlaybackEvent.jellyfin_user_id,
+                func.max(JellyfinPlaybackEvent.played_at),
+            )
+            .where(JellyfinPlaybackEvent.jellyfin_user_id.in_(enabled_user_ids))
+            .group_by(JellyfinPlaybackEvent.jellyfin_user_id)
+        ).all()
+    )
+    newest = (
+        min(newest_by_user.values())
+        if enabled_user_ids and len(newest_by_user) == len(enabled_user_ids)
+        else None
+    )
+    min_date = None
+    if newest is not None:
+        normalized = newest if newest.tzinfo is not None else newest.replace(tzinfo=UTC)
+        min_date = normalized.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    imported = 0
+    try:
+        for page in iterator(min_date=min_date):
+            rows: list[dict] = []
+            for payload in page.items:
+                activity_id = payload.get("Id")
+                item_id = _normalize_jellyfin_id(payload.get("ItemId"))
+                user_id = _normalize_jellyfin_id(payload.get("UserId"))
+                played_at = _parse_datetime(payload.get("Date"))
+                if (
+                    not isinstance(activity_id, int)
+                    or isinstance(activity_id, bool)
+                    or not item_id
+                    or not user_id
+                    or played_at is None
+                ):
+                    continue
+                rows.append(
+                    {
+                        "sync_run_id": sync_run_id,
+                        "jellyfin_activity_id": activity_id,
+                        "jellyfin_item_id": item_id,
+                        "jellyfin_user_id": user_id,
+                        "played_at": played_at,
+                        "last_synced_at": now,
+                    }
+                )
+            imported += commit_stage_page(
+                db,
+                JellyfinSyncStagePlaybackEvent,
+                rows,
+                conflict_columns=("sync_run_id", "jellyfin_activity_id"),
+            )
+    except JellyfinError:
+        # Playback history is an optional elevated Jellyfin endpoint. Keep the
+        # canonical catalog/user-data sync usable on servers that do not expose it.
+        return 0, "unavailable"
+    return imported, "available"
 
 
 def _folder_remote_id(folder: dict) -> str:
@@ -189,7 +277,7 @@ def _folder_for_path(path: str | None, folders: list[dict]) -> dict | None:
 
 
 def _stage_item_row(sync_run_id: str, payload: dict, folders: list[dict], now: datetime) -> dict | None:
-    jellyfin_id = str(payload.get("Id") or "").strip()
+    jellyfin_id = _normalize_jellyfin_id(payload.get("Id"))
     if not jellyfin_id:
         return None
     path = str(payload.get("Path")) if payload.get("Path") else None
@@ -350,7 +438,7 @@ def _sync_enabled_user_data(
 
                         rows = []
                         for payload in page.items:
-                            remote_item_id = str(payload.get("Id") or "").strip()
+                            remote_item_id = _normalize_jellyfin_id(payload.get("Id"))
                             if not remote_item_id:
                                 continue
                             user_data = payload.get("UserData")
@@ -418,6 +506,8 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
     library_count = 0
     item_count = 0
     user_count = 0
+    playback_event_count = 0
+    playback_history_status = "unavailable"
 
     try:
         jellyfin_client = JellyfinClient(
@@ -442,7 +532,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
             user_rows: list[dict] = []
             for payload in remote_users:
                 _raise_if_sync_cancelled()
-                user_id = str(payload.get("Id") or "").strip()
+                user_id = _normalize_jellyfin_id(payload.get("Id"))
                 if not user_id:
                     continue
                 stored = stored_users.get(user_id)
@@ -511,6 +601,12 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                 api_key=api_key,
                 now=now,
             )
+            playback_event_count, playback_history_status = _sync_playback_events(
+                db,
+                client=client,
+                sync_run_id=sync_run_id,
+                now=now,
+            )
 
         item_count = int(
             db.scalar(
@@ -545,6 +641,8 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
             "libraries_synced": library_count,
             "items_synced": item_count,
             "users_synced": user_count,
+            "playback_events_synced": playback_event_count,
+            "playback_history_status": playback_history_status,
             **match_summary,
         }
     except JellyfinSyncCancelled:

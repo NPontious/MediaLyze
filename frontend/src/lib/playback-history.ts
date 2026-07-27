@@ -4,8 +4,8 @@ export type PlaybackHistoryEntry = {
   userId: string;
   userName: string;
   playCount: number;
-  completed: boolean;
-  resumePositionSeconds: number;
+  completed?: boolean | null;
+  resumePositionSeconds?: number | null;
   lastPlayedAt: string;
 };
 
@@ -51,7 +51,9 @@ export function groupPlaybackEntries(
           ? latest.id
           : `group:${userKey}:${first.id}:${latest.id}`,
         playCount: current.reduce((total, entry) => total + entry.playCount, 0),
-        completed: current.every((entry) => entry.completed),
+        completed: current.every((entry) => entry.completed == null)
+          ? null
+          : current.every((entry) => entry.completed === true),
         eventCount: current.length,
         firstPlayedAt: first.lastPlayedAt,
       });

@@ -935,6 +935,7 @@ export function LibrariesPage() {
   const [showMusicQualityScore, setShowMusicQualityScore] = useState(false);
   const [unlimitedPanelSize, setUnlimitedPanelSize] = useState(false);
   const [inDepthDolbyVisionProfiles, setInDepthDolbyVisionProfiles] = useState(false);
+  const [showAllPlaybacksWhenUnstacked, setShowAllPlaybacksWhenUnstacked] = useState(false);
   const [scanWorkerCountInput, setScanWorkerCountInput] = useState("4");
   const [parallelScanJobsInput, setParallelScanJobsInput] = useState("2");
   const [comparisonScatterPointLimitInput, setComparisonScatterPointLimitInput] = useState("5000");
@@ -1102,6 +1103,9 @@ export function LibrariesPage() {
     setShowMusicQualityScore(updated.feature_flags.show_music_quality_score);
     setUnlimitedPanelSize(updated.feature_flags.unlimited_panel_size);
     setInDepthDolbyVisionProfiles(updated.feature_flags.in_depth_dolby_vision_profiles);
+    setShowAllPlaybacksWhenUnstacked(
+      updated.feature_flags.show_all_playbacks_when_unstacked,
+    );
     const updatedScanPerformance = updated.scan_performance ?? DEFAULT_SCAN_PERFORMANCE;
     scanWorkerCountInputRef.current = String(updatedScanPerformance.scan_worker_count);
     parallelScanJobsInputRef.current = String(updatedScanPerformance.parallel_scan_jobs);
@@ -1849,6 +1853,9 @@ export function LibrariesPage() {
     setShowMusicQualityScore(appSettings.feature_flags.show_music_quality_score);
     setUnlimitedPanelSize(appSettings.feature_flags.unlimited_panel_size);
     setInDepthDolbyVisionProfiles(appSettings.feature_flags.in_depth_dolby_vision_profiles);
+    setShowAllPlaybacksWhenUnstacked(
+      appSettings.feature_flags.show_all_playbacks_when_unstacked,
+    );
     scanWorkerCountInputRef.current = String(appScanPerformance.scan_worker_count);
     parallelScanJobsInputRef.current = String(appScanPerformance.parallel_scan_jobs);
     comparisonScatterPointLimitInputRef.current = String(appScanPerformance.comparison_scatter_point_limit);
@@ -2590,6 +2597,7 @@ export function LibrariesPage() {
         show_music_quality_score: nextShowMusicQualityScore,
         unlimited_panel_size: nextUnlimitedPanelSize,
         in_depth_dolby_vision_profiles: nextInDepthDolbyVisionProfiles,
+        show_all_playbacks_when_unstacked: showAllPlaybacksWhenUnstacked,
       },
     });
   }
@@ -2824,6 +2832,25 @@ export function LibrariesPage() {
       void refreshHistoryStorage().catch(() => undefined);
     } catch (reason) {
       setInDepthDolbyVisionProfiles(previousValue);
+      setFeatureFlagsStatus((reason as Error).message);
+    } finally {
+      setIsSavingFeatureFlags(false);
+    }
+  }
+
+  async function toggleShowAllPlaybacksWhenUnstacked(enabled: boolean) {
+    const previousValue = showAllPlaybacksWhenUnstacked;
+    setShowAllPlaybacksWhenUnstacked(enabled);
+    setFeatureFlagsStatus(null);
+    setIsSavingFeatureFlags(true);
+    try {
+      const updated = await api.updateAppSettings({
+        feature_flags: { show_all_playbacks_when_unstacked: enabled },
+      });
+      applyUpdatedAppSettingsState(updated);
+      setFeatureFlagsStatus(null);
+    } catch (reason) {
+      setShowAllPlaybacksWhenUnstacked(previousValue);
       setFeatureFlagsStatus((reason as Error).message);
     } finally {
       setIsSavingFeatureFlags(false);
@@ -7212,6 +7239,33 @@ export function LibrariesPage() {
                     <TooltipTrigger
                       ariaLabel={t("libraries.featureFlags.inDepthDolbyVisionProfilesTooltipAria")}
                       content={t("libraries.featureFlags.inDepthDolbyVisionProfilesTooltip")}
+                      preserveLineBreaks
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
+                  <div className="app-settings-flag-row">
+                    <label
+                      className="app-settings-flag-toggle"
+                      htmlFor="show-all-playbacks-when-unstacked"
+                    >
+                      <input
+                        id="show-all-playbacks-when-unstacked"
+                        type="checkbox"
+                        checked={showAllPlaybacksWhenUnstacked}
+                        disabled={isSavingFeatureFlags || !appSettingsLoaded}
+                        onChange={(event) =>
+                          void toggleShowAllPlaybacksWhenUnstacked(event.target.checked)}
+                      />
+                      <span>{t("libraries.featureFlags.showAllPlaybacksWhenUnstacked")}</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel={t(
+                        "libraries.featureFlags.showAllPlaybacksWhenUnstackedTooltipAria",
+                      )}
+                      content={t(
+                        "libraries.featureFlags.showAllPlaybacksWhenUnstackedTooltip",
+                      )}
                       preserveLineBreaks
                     >
                       ?

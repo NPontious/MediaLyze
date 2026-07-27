@@ -2,6 +2,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Info,
   Layers3,
   List,
   Search,
@@ -22,6 +23,7 @@ import {
   type HistoryRangeSelection,
 } from "./LibraryHistoryPanel";
 import { SlidingTogglePill } from "./SlidingTogglePill";
+import { TooltipTrigger } from "./TooltipTrigger";
 
 export type { PlaybackHistoryEntry } from "../lib/playback-history";
 
@@ -116,10 +118,12 @@ export function PlaybackHistoryPanel({
   entries: sourceEntries,
   durationSeconds,
   individualEventsAvailable = true,
+  showAllWhenUnstacked = false,
 }: {
   entries: PlaybackHistoryEntry[];
   durationSeconds?: number | null;
   individualEventsAvailable?: boolean;
+  showAllWhenUnstacked?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const entries = useMemo<PlaybackHistoryEntry[]>(
@@ -185,14 +189,24 @@ export function PlaybackHistoryPanel({
           })),
     [displayMode, durationSeconds, filteredSourceEntries],
   );
-  const pageCount = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE));
-  const visibleEntries = filteredEntries.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const effectivePageSize =
+    showAllWhenUnstacked && displayMode === "individual"
+      ? Math.max(1, filteredEntries.length)
+      : PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(filteredEntries.length / effectivePageSize));
+  const visibleEntries = filteredEntries.slice(
+    page * effectivePageSize,
+    (page + 1) * effectivePageSize,
+  );
   const selectedEntry = selectedId === null
     ? null
     : filteredEntries.find((entry) => entry.id === selectedId) ?? filteredEntries[0] ?? null;
   const minimumDate = entries.length ? dateKey(new Date(Math.min(...entries.map((entry) => Date.parse(entry.lastPlayedAt))))) : null;
   const maximumDate = entries.length ? dateKey(new Date(Math.max(...entries.map((entry) => Date.parse(entry.lastPlayedAt))))) : null;
-  const hasResumePosition = filteredEntries.some((entry) => entry.resumePositionSeconds > 0 && !entry.completed);
+  const hasResumePosition = filteredEntries.some(
+    (entry) => (entry.resumePositionSeconds ?? 0) > 0 && !entry.completed,
+  );
+  const hasCompletionState = filteredEntries.some((entry) => entry.completed != null);
 
   useEffect(() => {
     setPage(0);
@@ -223,18 +237,30 @@ export function PlaybackHistoryPanel({
         t("jellyfin.playbackHistory.user"),
         t("jellyfin.playbackHistory.provider"),
         t("jellyfin.playbackHistory.plays"),
-        t("jellyfin.playbackHistory.state"),
-        t("jellyfin.playbackHistory.resumePosition"),
+        ...(hasCompletionState ? [t("jellyfin.playbackHistory.state")] : []),
+        ...(hasResumePosition ? [t("jellyfin.playbackHistory.resumePosition")] : []),
       ],
       ...filteredEntries.map((entry) => [
         entry.lastPlayedAt,
         entry.userName,
         entry.provider,
         entry.playCount,
-        entry.completed
-          ? t("jellyfin.playbackHistory.completed")
-          : t("jellyfin.playbackHistory.notCompleted"),
-        entry.resumePositionSeconds > 0 ? formatDuration(entry.resumePositionSeconds) : "",
+        ...(hasCompletionState
+          ? [
+              entry.completed == null
+                ? ""
+                : entry.completed
+                  ? t("jellyfin.playbackHistory.completed")
+                  : t("jellyfin.playbackHistory.notCompleted"),
+            ]
+          : []),
+        ...(hasResumePosition
+          ? [
+              (entry.resumePositionSeconds ?? 0) > 0
+                ? formatDuration(entry.resumePositionSeconds ?? 0)
+                : "",
+            ]
+          : []),
       ]),
     ];
     const blob = new Blob([rows.map((row) => row.map(csvCell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
@@ -255,66 +281,15 @@ export function PlaybackHistoryPanel({
       <div className="playback-history-controls">
         <div className="playback-history-control-block">
           <span className="playback-history-control-label">{t("jellyfin.playbackHistory.range")}</span>
-          <div className="playback-history-range-actions">
-            <HistoryRangeToggle
-              selection={rangeSelection}
-              onChange={updateRangeSelection}
-              minimumDate={minimumDate}
-              maximumDate={maximumDate}
-              defaultStartDate={bounds ? dateKey(new Date(bounds[0])) : minimumDate}
-              defaultEndDate={bounds ? dateKey(new Date(bounds[1])) : maximumDate}
-              ariaLabel={t("jellyfin.playbackHistory.range")}
-            />
-            <div
-              className="library-history-range-toggle playback-history-display-toggle"
-              role="group"
-              aria-label={t("jellyfin.playbackHistory.displayMode")}
-            >
-              <SlidingTogglePill
-                activeKey={displayMode}
-                className="nav-active-pill library-history-range-pill"
-              />
-              <button
-                type="button"
-                data-toggle-key="individual"
-                className={`library-history-range-button${displayMode === "individual" ? " active" : ""}`}
-                aria-label={t(
-                  individualEventsAvailable
-                    ? "jellyfin.playbackHistory.showIndividual"
-                    : "jellyfin.playbackHistory.availableTimestamps",
-                )}
-                title={t(
-                  individualEventsAvailable
-                    ? "jellyfin.playbackHistory.showIndividual"
-                    : "jellyfin.playbackHistory.availableTimestamps",
-                )}
-                aria-pressed={displayMode === "individual"}
-                onClick={() => setDisplayMode("individual")}
-              >
-                <List aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                data-toggle-key="grouped"
-                className={`library-history-range-button${displayMode === "grouped" ? " active" : ""}`}
-                aria-label={t(
-                  individualEventsAvailable
-                    ? "jellyfin.playbackHistory.groupNearby"
-                    : "jellyfin.playbackHistory.groupUnavailable",
-                )}
-                title={t(
-                  individualEventsAvailable
-                    ? "jellyfin.playbackHistory.groupNearby"
-                    : "jellyfin.playbackHistory.groupUnavailable",
-                )}
-                aria-pressed={displayMode === "grouped"}
-                disabled={!individualEventsAvailable}
-                onClick={() => setDisplayMode("grouped")}
-              >
-                <Layers3 aria-hidden="true" />
-              </button>
-            </div>
-          </div>
+          <HistoryRangeToggle
+            selection={rangeSelection}
+            onChange={updateRangeSelection}
+            minimumDate={minimumDate}
+            maximumDate={maximumDate}
+            defaultStartDate={bounds ? dateKey(new Date(bounds[0])) : minimumDate}
+            defaultEndDate={bounds ? dateKey(new Date(bounds[1])) : maximumDate}
+            ariaLabel={t("jellyfin.playbackHistory.range")}
+          />
         </div>
         {providers.length > 1 ? (
           <label className="playback-history-provider-filter">
@@ -325,6 +300,64 @@ export function PlaybackHistoryPanel({
             </select>
           </label>
         ) : null}
+        <div className="playback-history-control-block playback-history-display-control">
+          <span className="playback-history-display-heading">
+            <span className="playback-history-control-label">
+              {t("jellyfin.playbackHistory.stacking")}
+            </span>
+            <TooltipTrigger
+              ariaLabel={t("jellyfin.playbackHistory.stackingTooltipAria")}
+              content={t(
+                individualEventsAvailable
+                  ? "jellyfin.playbackHistory.stackingTooltip"
+                  : "jellyfin.playbackHistory.stackingUnavailableTooltip",
+              )}
+              preserveLineBreaks
+            >
+              <Info aria-hidden="true" />
+            </TooltipTrigger>
+          </span>
+          <div
+            className="library-history-range-toggle playback-history-display-toggle"
+            role="group"
+            aria-label={t("jellyfin.playbackHistory.displayMode")}
+          >
+            <SlidingTogglePill
+              activeKey={displayMode}
+              className="nav-active-pill library-history-range-pill"
+            />
+            <TooltipTrigger
+              dataToggleKey="individual"
+              className={`library-history-range-button playback-history-display-button${displayMode === "individual" ? " active" : ""}`}
+              ariaLabel={t("jellyfin.playbackHistory.showIndividual")}
+              content={t(
+                individualEventsAvailable
+                  ? "jellyfin.playbackHistory.showIndividualTooltip"
+                  : "jellyfin.playbackHistory.availableTimestamps",
+              )}
+              ariaPressed={displayMode === "individual"}
+              pinOnClick={false}
+              onClick={() => setDisplayMode("individual")}
+            >
+              <List aria-hidden="true" />
+            </TooltipTrigger>
+            <TooltipTrigger
+              dataToggleKey="grouped"
+              className={`library-history-range-button playback-history-display-button${displayMode === "grouped" ? " active" : ""}`}
+              ariaLabel={t("jellyfin.playbackHistory.groupNearby")}
+              content={t(
+                individualEventsAvailable
+                  ? "jellyfin.playbackHistory.groupNearbyTooltip"
+                  : "jellyfin.playbackHistory.groupUnavailable",
+              )}
+              ariaPressed={displayMode === "grouped"}
+              pinOnClick={false}
+              onClick={() => setDisplayMode("grouped")}
+            >
+              <Layers3 aria-hidden="true" />
+            </TooltipTrigger>
+          </div>
+        </div>
         <div className="playback-history-users">
           <span className="playback-history-control-label">{t("jellyfin.playbackHistory.users")}</span>
           <div className="playback-history-user-list">
@@ -352,7 +385,13 @@ export function PlaybackHistoryPanel({
         </div>
       </div>
 
-      <p className="playback-history-scope-note">{t("jellyfin.playbackHistory.scopeNote")}</p>
+      <p className="playback-history-scope-note">
+        {t(
+          individualEventsAvailable
+            ? "jellyfin.playbackHistory.scopeNote"
+            : "jellyfin.playbackHistory.aggregateScopeNote",
+        )}
+      </p>
 
       <div className={`playback-history-layout${selectedEntry ? " has-detail" : ""}`}>
         <div className="playback-history-main">
@@ -441,7 +480,7 @@ export function PlaybackHistoryPanel({
                     <th>{t("jellyfin.playbackHistory.user")}</th>
                     <th>{t("jellyfin.playbackHistory.provider")}</th>
                     <th>{t("jellyfin.playbackHistory.plays")}</th>
-                    <th>{t("jellyfin.playbackHistory.state")}</th>
+                    {hasCompletionState ? <th>{t("jellyfin.playbackHistory.state")}</th> : null}
                     {hasResumePosition ? <th>{t("jellyfin.playbackHistory.resumePosition")}</th> : null}
                     <th><span className="sr-only">{t("jellyfin.playbackHistory.openDetail")}</span></th>
                   </tr>
@@ -469,16 +508,24 @@ export function PlaybackHistoryPanel({
                         <td>{entry.userName}</td>
                         <td><span className="playback-history-provider"><Server aria-hidden="true" />{entry.provider}</span></td>
                         <td>{entry.playCount}</td>
-                        <td>
-                          <span className={`playback-history-state${entry.completed ? " is-complete" : ""}`}>
-                            {entry.completed ? <CheckCircle2 aria-hidden="true" /> : <span className="playback-history-state-box" />}
-                            {entry.completed
-                              ? t("jellyfin.playbackHistory.completed")
-                              : t("jellyfin.playbackHistory.notCompleted")}
-                          </span>
-                        </td>
+                        {hasCompletionState ? (
+                          <td>
+                            {entry.completed == null ? "—" : (
+                              <span className={`playback-history-state${entry.completed ? " is-complete" : ""}`}>
+                                {entry.completed ? <CheckCircle2 aria-hidden="true" /> : <span className="playback-history-state-box" />}
+                                {entry.completed
+                                  ? t("jellyfin.playbackHistory.completed")
+                                  : t("jellyfin.playbackHistory.notCompleted")}
+                              </span>
+                            )}
+                          </td>
+                        ) : null}
                         {hasResumePosition ? (
-                          <td>{entry.resumePositionSeconds > 0 && !entry.completed ? formatDuration(entry.resumePositionSeconds) : "—"}</td>
+                          <td>
+                            {(entry.resumePositionSeconds ?? 0) > 0 && !entry.completed
+                              ? formatDuration(entry.resumePositionSeconds ?? 0)
+                              : "—"}
+                          </td>
                         ) : null}
                         <td><ChevronRight aria-hidden="true" /></td>
                       </tr>
@@ -543,23 +590,28 @@ export function PlaybackHistoryPanel({
                 <dt>{t("jellyfin.playbackHistory.plays")}</dt>
                 <dd>{selectedEntry.playCount}</dd>
               </div>
-              <div>
-                <dt>{t("jellyfin.playbackHistory.state")}</dt>
-                <dd>
-                  {selectedEntry.completed
-                    ? t("jellyfin.playbackHistory.completed")
-                    : t("jellyfin.playbackHistory.notCompleted")}
-                </dd>
-              </div>
-              {selectedEntry.resumePositionSeconds > 0 && !selectedEntry.completed ? (
+              {selectedEntry.completed != null ? (
+                <div>
+                  <dt>{t("jellyfin.playbackHistory.state")}</dt>
+                  <dd>
+                    {selectedEntry.completed
+                      ? t("jellyfin.playbackHistory.completed")
+                      : t("jellyfin.playbackHistory.notCompleted")}
+                  </dd>
+                </div>
+              ) : null}
+              {(selectedEntry.resumePositionSeconds ?? 0) > 0 && !selectedEntry.completed ? (
                 <div>
                   <dt>{t("jellyfin.playbackHistory.resumePosition")}</dt>
-                  <dd>{formatDuration(selectedEntry.resumePositionSeconds)}</dd>
+                  <dd>{formatDuration(selectedEntry.resumePositionSeconds ?? 0)}</dd>
                   {durationSeconds && durationSeconds > 0 ? (
                     <span className="playback-history-progress">
                       <span
                         style={{
-                          width: `${Math.min(100, (selectedEntry.resumePositionSeconds / durationSeconds) * 100)}%`,
+                          width: `${Math.min(
+                            100,
+                            ((selectedEntry.resumePositionSeconds ?? 0) / durationSeconds) * 100,
+                          )}%`,
                         }}
                       />
                     </span>

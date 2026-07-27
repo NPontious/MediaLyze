@@ -41,6 +41,7 @@ export const COMPARISON_FIELD_DEFINITIONS: ComparisonFieldDefinition[] = [
   { id: "bitrate", kind: "numeric", labelKey: "libraryStatistics.items.bitrate" },
   { id: "audio_bitrate", kind: "numeric", labelKey: "libraryStatistics.items.audioBitrate" },
   { id: "play_count", kind: "numeric", labelKey: "libraryStatistics.items.playCount" },
+  { id: "users_played", kind: "numeric", labelKey: "libraryStatistics.items.usersPlayed" },
   { id: "chapter_count", kind: "numeric", labelKey: "libraryStatistics.items.chapter_count" },
   { id: "audio_channels", kind: "category", labelKey: "libraryStatistics.items.audio_channels" },
   { id: "sample_rate", kind: "category", labelKey: "libraryStatistics.items.sample_rate" },
@@ -185,7 +186,9 @@ export function getComparisonFieldDefinitionsForLibraryType(
   options?: MusicComparisonVisibilityOptions,
 ): ComparisonFieldDefinition[] {
   const availableDefinitions = COMPARISON_FIELD_DEFINITIONS.filter(
-    (definition) => definition.id !== "play_count" || options?.hasPlaybackData === true,
+    (definition) =>
+      !["play_count", "users_played"].includes(definition.id) ||
+      options?.hasPlaybackData === true,
   );
   if (libraryType !== "music" && libraryType !== "audiobooks") {
     return availableDefinitions.filter((definition) => !AUDIOBOOK_ONLY_COMPARISON_FIELDS.has(definition.id));
@@ -278,6 +281,20 @@ export function formatComparisonBucketLabel(
   options?: { inDepthDolbyVisionProfiles?: boolean },
 ): string {
   if (getComparisonFieldDefinition(fieldId).kind === "numeric") {
+    if (fieldId === "play_count" || fieldId === "users_played") {
+      if (bucket.lower === null && bucket.upper === null) {
+        return "0";
+      }
+      if (bucket.lower === null) {
+        return `< ${bucket.upper}`;
+      }
+      if (bucket.upper === null) {
+        return `${bucket.lower}+`;
+      }
+      return bucket.upper - bucket.lower === 1
+        ? String(bucket.lower)
+        : `${bucket.lower} - ${bucket.upper - 1}`;
+    }
     if (fieldId === "resolution_mp") {
       if (bucket.lower === null && bucket.upper === null) {
         return "0 MP";

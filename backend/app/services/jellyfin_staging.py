@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 from backend.app.models.entities import (
     JellyfinItem,
     JellyfinLibrary,
+    JellyfinPlaybackEvent,
     JellyfinSyncStageItem,
     JellyfinSyncStageLibrary,
+    JellyfinSyncStagePlaybackEvent,
     JellyfinSyncStageUser,
     JellyfinSyncStageUserData,
     JellyfinUser,
@@ -21,6 +23,7 @@ from backend.app.utils.time import utc_now
 
 
 STAGE_MODELS = (
+    JellyfinSyncStagePlaybackEvent,
     JellyfinSyncStageUserData,
     JellyfinSyncStageItem,
     JellyfinSyncStageLibrary,
@@ -269,6 +272,42 @@ def _promote_user_data(db: Session, sync_run_id: str) -> None:
     db.execute(sqlite_insert(JellyfinUserItemData).from_select(columns, source))
 
 
+def _promote_playback_events(db: Session, sync_run_id: str) -> None:
+    stage = JellyfinSyncStagePlaybackEvent
+    columns = (
+        "jellyfin_activity_id",
+        "jellyfin_item_id",
+        "jellyfin_user_id",
+        "played_at",
+        "last_synced_at",
+    )
+    source = (
+        select(
+            stage.jellyfin_activity_id,
+            JellyfinItem.id,
+            stage.jellyfin_user_id,
+            stage.played_at,
+            stage.last_synced_at,
+        )
+        .select_from(stage)
+        .join(JellyfinItem, JellyfinItem.jellyfin_item_id == stage.jellyfin_item_id)
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == stage.jellyfin_user_id)
+        .where(stage.sync_run_id == sync_run_id, JellyfinUser.enabled_for_sync.is_(True))
+    )
+    statement = sqlite_insert(JellyfinPlaybackEvent).from_select(columns, source)
+    db.execute(
+        statement.on_conflict_do_update(
+            index_elements=[JellyfinPlaybackEvent.jellyfin_activity_id],
+            set_={
+                "jellyfin_item_id": statement.excluded.jellyfin_item_id,
+                "jellyfin_user_id": statement.excluded.jellyfin_user_id,
+                "played_at": statement.excluded.played_at,
+                "last_synced_at": statement.excluded.last_synced_at,
+            },
+        )
+    )
+
+
 def promote_staging(db: Session, sync_run_id: str) -> None:
     """Atomically replace the visible Jellyfin snapshot from a completed stage."""
     now = utc_now()
@@ -285,6 +324,7 @@ def promote_staging(db: Session, sync_run_id: str) -> None:
         )
         db.execute(delete(JellyfinItem).where(~staged_item_exists))
         _promote_user_data(db, sync_run_id)
+        _promote_playback_events(db, sync_run_id)
 
         staged_library_exists = exists(
             select(JellyfinSyncStageLibrary.remote_item_id).where(

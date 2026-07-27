@@ -290,12 +290,6 @@
 .playback-history-control-block,
 .playback-history-provider-filter,
 .playback-history-users { display: grid; gap: 7px; }
-.playback-history-range-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
 .playback-history-control-block .history-range-picker-popover {
   right: auto;
   left: 0;
@@ -309,6 +303,25 @@
 }
 .playback-history-provider-filter { min-width: 180px; }
 .playback-history-provider-filter select { min-height: 38px; }
+.playback-history-display-control {
+  margin-left: auto;
+  justify-items: end;
+}
+.playback-history-display-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.playback-history-display-heading .tooltip-trigger {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+}
+.playback-history-display-heading .tooltip-trigger svg {
+  width: 12px;
+  height: 12px;
+}
 .playback-history-users {
   flex: 1 1 100%;
   padding-top: 12px;
@@ -385,13 +398,23 @@
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 .playback-history-display-toggle { flex: 0 0 auto; }
-.playback-history-display-toggle .library-history-range-button {
+.playback-history-display-toggle .library-history-range-button.tooltip-trigger {
   width: 36px;
+  height: auto;
+  min-height: 30px;
   padding: 0;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
 }
-.playback-history-display-toggle .library-history-range-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.42;
+.playback-history-display-toggle .library-history-range-button.tooltip-trigger:hover,
+.playback-history-display-toggle .library-history-range-button.tooltip-trigger:focus-visible,
+.playback-history-display-toggle .library-history-range-button.tooltip-trigger.active {
+  transform: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
 }
 .playback-history-display-toggle svg { width: 15px; height: 15px; }
 .playback-history-timeline-track {
@@ -592,13 +615,17 @@
   .playback-history-controls { align-items: stretch; }
   .playback-history-control-block,
   .playback-history-provider-filter { width: 100%; }
+  .playback-history-display-control {
+    width: auto;
+    margin-left: 0;
+    justify-items: start;
+  }
   .playback-history-control-block .library-history-range-toggle {
     width: 100%;
     overflow-x: auto;
   }
-  .playback-history-range-actions > .playback-history-display-toggle {
+  .playback-history-display-control .playback-history-display-toggle {
     width: auto;
-    margin-left: auto;
     overflow: visible;
   }
   .playback-history-main { padding: 12px; }

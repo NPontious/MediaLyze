@@ -1594,6 +1594,8 @@ export function FileDetailPage() {
   const navigate = useNavigate();
   const { appSettings } = useAppData();
   const inDepthDolbyVisionProfiles = appSettings.feature_flags.in_depth_dolby_vision_profiles;
+  const showAllPlaybacksWhenUnstacked =
+    appSettings.feature_flags.show_all_playbacks_when_unstacked;
   const [file, setFile] = useState<MediaFileDetail | null>(null);
   const [qualityDetail, setQualityDetail] = useState<MediaFileQualityScoreDetail | null>(null);
   const [qualityError, setQualityError] = useState(false);
@@ -1892,7 +1894,9 @@ export function FileDetailPage() {
       body: (
         <JellyfinStreamingDetails
           userData={jellyfinOverlay?.user_data ?? []}
+          playbackEvents={jellyfinOverlay?.playback_events ?? []}
           durationSeconds={file?.duration}
+          showAllPlaybacksWhenUnstacked={showAllPlaybacksWhenUnstacked}
         />
       ),
     },

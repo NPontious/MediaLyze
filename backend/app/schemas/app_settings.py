@@ -28,6 +28,7 @@ class FeatureFlagsRead(BaseModel):
     show_music_quality_score: bool = False
     unlimited_panel_size: bool = False
     in_depth_dolby_vision_profiles: bool = False
+    show_all_playbacks_when_unstacked: bool = False
 
 
 class FeatureFlagsUpdate(BaseModel):
@@ -37,6 +38,7 @@ class FeatureFlagsUpdate(BaseModel):
     show_music_quality_score: bool | None = None
     unlimited_panel_size: bool | None = None
     in_depth_dolby_vision_profiles: bool | None = None
+    show_all_playbacks_when_unstacked: bool | None = None
 
 
 class ScanPerformanceRead(BaseModel):

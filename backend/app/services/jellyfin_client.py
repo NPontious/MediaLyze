@@ -40,6 +40,13 @@ class JellyfinItemPage:
     total_record_count: int
 
 
+@dataclass(slots=True)
+class JellyfinActivityPage:
+    items: list[dict]
+    start_index: int
+    total_record_count: int
+
+
 class JellyfinClient:
     ITEM_PAGE_SIZE = 500
     REQUEST_ATTEMPTS = 3
@@ -309,6 +316,61 @@ class JellyfinClient:
             )
             for item in page.items
         ]
+
+    def iter_playback_activity_pages(
+        self,
+        *,
+        min_date: str | None = None,
+    ) -> Iterator[JellyfinActivityPage]:
+        """Yield Jellyfin's persisted playback-start activity entries.
+
+        Jellyfin's activity endpoint also returns playback-stop rows for the
+        broad ``Playback`` type filter. Keep only the start types because those
+        are the independently identifiable playback events.
+        """
+        start_index = 0
+        while True:
+            params: dict[str, str | int | bool] = {
+                "StartIndex": start_index,
+                "Limit": self.ITEM_PAGE_SIZE,
+                "HasUserId": True,
+                "Type": "Playback",
+                "SortBy": "DateCreated",
+                "SortOrder": "Ascending",
+            }
+            if min_date:
+                params["MinDate"] = min_date
+            payload = self._json(
+                self._request("/System/ActivityLog/Entries", params=params),
+                "playback activity",
+            )
+            if not isinstance(payload, dict):
+                raise JellyfinResponseError("Jellyfin playback activity response must be an object")
+            page = payload.get("Items")
+            total = payload.get("TotalRecordCount")
+            if not isinstance(page, list) or any(not isinstance(item, dict) for item in page):
+                raise JellyfinResponseError(
+                    "Jellyfin playback activity response requires an Items list"
+                )
+            if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+                raise JellyfinResponseError(
+                    "Jellyfin playback activity response requires TotalRecordCount"
+                )
+            yield JellyfinActivityPage(
+                items=[
+                    item
+                    for item in page
+                    if item.get("Type") in {"VideoPlayback", "AudioPlayback", "Playback"}
+                ],
+                start_index=start_index,
+                total_record_count=total,
+            )
+            next_index = start_index + len(page)
+            if next_index >= total:
+                return
+            if next_index <= start_index:
+                raise JellyfinResponseError("Jellyfin playback activity paging did not advance")
+            start_index = next_index
 
     def get_image(self, item_id: str, image_type: str, *, tag: str | None = None) -> JellyfinImage:
         params = {"tag": tag} if tag else None

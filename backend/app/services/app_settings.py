@@ -175,6 +175,12 @@ def _deserialize_feature_flags(payload: Any, settings: Settings) -> FeatureFlags
                 defaults.in_depth_dolby_vision_profiles,
             )
         ),
+        show_all_playbacks_when_unstacked=bool(
+            candidate.get(
+                "show_all_playbacks_when_unstacked",
+                defaults.show_all_playbacks_when_unstacked,
+            )
+        ),
     )
 
 

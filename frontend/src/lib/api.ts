@@ -33,6 +33,7 @@ export type ComparisonFieldId =
   | "bitrate"
   | "audio_bitrate"
   | "play_count"
+  | "users_played"
   | "audio_channels"
   | "sample_rate"
   | "resolution_mp"
@@ -447,6 +448,12 @@ export type JellyfinFileOverlay = {
     playback_position_ticks: number;
     last_played_date: string | null;
     is_favorite: boolean;
+  }>;
+  playback_events: Array<{
+    jellyfin_activity_id: number;
+    jellyfin_user_id: string;
+    user_name: string;
+    played_at: string;
   }>;
 };
 
@@ -1211,6 +1218,7 @@ export type AppSettings = {
     show_music_quality_score: boolean;
     unlimited_panel_size: boolean;
     in_depth_dolby_vision_profiles: boolean;
+    show_all_playbacks_when_unstacked: boolean;
   };
 };
 
@@ -2029,6 +2037,7 @@ export const api = {
       show_music_quality_score?: boolean;
       unlimited_panel_size?: boolean;
       in_depth_dolby_vision_profiles?: boolean;
+      show_all_playbacks_when_unstacked?: boolean;
     };
   }) =>
     request<AppSettings>("/app-settings", {

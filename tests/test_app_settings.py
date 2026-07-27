@@ -146,6 +146,7 @@ def test_get_app_settings_seeds_built_in_default_ignore_patterns_for_new_install
     assert loaded.feature_flags.hide_quality_score_meter is False
     assert loaded.feature_flags.unlimited_panel_size is False
     assert loaded.feature_flags.in_depth_dolby_vision_profiles is False
+    assert loaded.feature_flags.show_all_playbacks_when_unstacked is False
     assert loaded.pattern_recognition.analyze_bonus_content is True
     assert loaded.pattern_recognition.show_season_patterns.recognition_mode.value == "folder_depth"
     assert loaded.pattern_recognition.show_season_patterns.series_folder_depth == 1
@@ -466,6 +467,7 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
                     "hide_quality_score_meter": True,
                     "unlimited_panel_size": True,
                     "in_depth_dolby_vision_profiles": True,
+                    "show_all_playbacks_when_unstacked": True,
                 },
             ),
             settings,
@@ -489,6 +491,7 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
     assert updated.feature_flags.hide_quality_score_meter is True
     assert updated.feature_flags.unlimited_panel_size is True
     assert updated.feature_flags.in_depth_dolby_vision_profiles is True
+    assert updated.feature_flags.show_all_playbacks_when_unstacked is True
     assert loaded == updated
     assert stored is not None
     assert stored.value == {
@@ -523,6 +526,7 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
             "show_music_quality_score": False,
             "unlimited_panel_size": True,
             "in_depth_dolby_vision_profiles": True,
+            "show_all_playbacks_when_unstacked": True,
         },
     }
 

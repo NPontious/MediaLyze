@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from sqlalchemy import Float, cast, func, select
+from sqlalchemy import Float, case, cast, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.models.entities import (
@@ -47,6 +47,16 @@ PLAY_COUNT_BINS: Final[list[tuple[float | None, float | None]]] = [
     (50, 100),
     (100, None),
 ]
+USERS_PLAYED_BINS: Final[list[tuple[float | None, float | None]]] = [
+    (1, 2),
+    (2, 3),
+    (3, 4),
+    (4, 5),
+    (5, 6),
+    (6, 10),
+    (10, 25),
+    (25, None),
+]
 
 
 @dataclass(frozen=True)
@@ -71,6 +81,7 @@ class ComparisonSourceRow:
     bitrate: float | None
     audio_bitrate: float | None
     play_count: float
+    users_played: float
     audio_channels: float | None
     sample_rate: float | None
     container: str | None
@@ -100,6 +111,7 @@ COMPARISON_FIELD_DEFINITIONS: dict[ComparisonFieldId, ComparisonFieldDefinition]
     "bitrate": ComparisonFieldDefinition(field_id="bitrate", kind="numeric"),
     "audio_bitrate": ComparisonFieldDefinition(field_id="audio_bitrate", kind="numeric"),
     "play_count": ComparisonFieldDefinition(field_id="play_count", kind="numeric"),
+    "users_played": ComparisonFieldDefinition(field_id="users_played", kind="numeric"),
     "audio_channels": ComparisonFieldDefinition(field_id="audio_channels", kind="category"),
     "sample_rate": ComparisonFieldDefinition(field_id="sample_rate", kind="category"),
     "resolution_mp": ComparisonFieldDefinition(field_id="resolution_mp", kind="numeric"),
@@ -196,6 +208,8 @@ def _numeric_bins(field_id: ComparisonFieldId) -> list[tuple[float | None, float
         return RESOLUTION_MP_BINS
     if field_id == "play_count":
         return PLAY_COUNT_BINS
+    if field_id == "users_played":
+        return USERS_PLAYED_BINS
     return NUMERIC_BUCKET_CONFIGS[field_id].bins
 
 
@@ -239,6 +253,17 @@ def _comparison_source_rows(db: Session, *, library_id: int | None = None) -> li
         select(
             JellyfinMediaMatch.media_file_id.label("media_file_id"),
             func.coalesce(func.sum(JellyfinUserItemData.play_count), 0).label("play_count"),
+            func.count(
+                func.distinct(
+                    case(
+                        (
+                            JellyfinUserItemData.played.is_(True),
+                            JellyfinUserItemData.jellyfin_user_id,
+                        ),
+                        else_=None,
+                    )
+                )
+            ).label("users_played"),
         )
         .select_from(JellyfinMediaMatch)
         .join(
@@ -267,6 +292,7 @@ def _comparison_source_rows(db: Session, *, library_id: int | None = None) -> li
             cast(MediaFile.bitrate, Float).label("bitrate"),
             cast(MediaFile.audio_bitrate, Float).label("audio_bitrate"),
             cast(func.coalesce(playback.c.play_count, 0), Float).label("play_count"),
+            cast(func.coalesce(playback.c.users_played, 0), Float).label("users_played"),
             cast(MediaFile.audio_channels, Float).label("audio_channels"),
             cast(MediaFile.sample_rate, Float).label("sample_rate"),
             MediaFile.extension.label("container"),
@@ -307,6 +333,7 @@ def _comparison_source_rows(db: Session, *, library_id: int | None = None) -> li
             bitrate=row.bitrate,
             audio_bitrate=row.audio_bitrate,
             play_count=row.play_count,
+            users_played=row.users_played,
             audio_channels=row.audio_channels,
             sample_rate=row.sample_rate,
             container=row.container,
@@ -350,6 +377,8 @@ def _numeric_value(row: ComparisonSourceRow, field_id: ComparisonFieldId) -> flo
         return row.audio_bitrate if row.audio_bitrate is not None and row.audio_bitrate > 0 else None
     if field_id == "play_count":
         return row.play_count if row.play_count > 0 else None
+    if field_id == "users_played":
+        return row.users_played if row.users_played > 0 else None
     if field_id == "audio_channels":
         return row.audio_channels if row.audio_channels is not None and row.audio_channels > 0 else None
     if field_id == "sample_rate":

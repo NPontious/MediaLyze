@@ -174,6 +174,102 @@ def test_library_comparison_excludes_files_without_plays() -> None:
     assert sum(cell.count for cell in payload.heatmap_cells) == 1
 
 
+def test_library_comparison_counts_distinct_users_who_played_each_asset() -> None:
+    session_factory = _session_factory()
+
+    with session_factory() as db:
+        library = Library(
+            name="Users played comparison",
+            path="/tmp/users-played-comparison",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        media_file = MediaFile(
+            library_id=library.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=1_000_000_000,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+            quality_score=5,
+        )
+        item = JellyfinItem(
+            jellyfin_item_id="users-played-item",
+            item_type="Movie",
+            title="Movie",
+        )
+        db.add_all([media_file, item])
+        db.flush()
+        media_file_id = media_file.id
+        db.add(
+            JellyfinMediaMatch(
+                media_file_id=media_file.id,
+                jellyfin_item_id=item.id,
+                match_method="path",
+                status="matched",
+            )
+        )
+        db.add_all(
+            [
+                JellyfinUser(jellyfin_user_id="alice", name="Alice", enabled_for_sync=True),
+                JellyfinUser(jellyfin_user_id="bob", name="Bob", enabled_for_sync=True),
+                JellyfinUser(jellyfin_user_id="carol", name="Carol", enabled_for_sync=True),
+                JellyfinUser(jellyfin_user_id="disabled", name="Disabled", enabled_for_sync=False),
+            ]
+        )
+        db.flush()
+        db.add_all(
+            [
+                JellyfinUserItemData(
+                    jellyfin_item_id=item.id,
+                    jellyfin_user_id="alice",
+                    play_count=4,
+                    played=True,
+                ),
+                JellyfinUserItemData(
+                    jellyfin_item_id=item.id,
+                    jellyfin_user_id="bob",
+                    play_count=1,
+                    played=True,
+                ),
+                JellyfinUserItemData(
+                    jellyfin_item_id=item.id,
+                    jellyfin_user_id="carol",
+                    play_count=3,
+                    played=False,
+                ),
+                JellyfinUserItemData(
+                    jellyfin_item_id=item.id,
+                    jellyfin_user_id="disabled",
+                    play_count=99,
+                    played=True,
+                ),
+            ]
+        )
+        db.commit()
+
+        payload = get_library_comparison(
+            db,
+            library_id=library.id,
+            x_field="size",
+            y_field="users_played",
+        )
+
+    assert payload is not None
+    assert payload.included_files == 1
+    assert payload.scatter_points is not None
+    assert [(point.media_file_id, point.y_value) for point in payload.scatter_points] == [
+        (media_file_id, 2.0)
+    ]
+    assert payload.y_buckets[1].lower == 2
+    assert payload.y_buckets[1].upper == 3
+    assert payload.heatmap_cells[0].y_key == "2:3"
+
+
 def test_library_comparison_uses_resolution_categories_for_resolution_axis() -> None:
     session_factory = _session_factory()
 

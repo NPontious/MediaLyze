@@ -10,6 +10,7 @@ ComparisonFieldId = Literal[
     "bitrate",
     "audio_bitrate",
     "play_count",
+    "users_played",
     "audio_channels",
     "sample_rate",
     "resolution_mp",

@@ -50,6 +50,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
     },
     ...restOverrides,
@@ -506,6 +507,26 @@ describe("FileDetailPage", () => {
         last_played_date: "2026-07-14T12:00:00Z",
         is_favorite: false,
       }],
+      playback_events: [
+        {
+          jellyfin_activity_id: 41,
+          jellyfin_user_id: "user-1",
+          user_name: "Frederik",
+          played_at: "2026-07-14T12:00:00Z",
+        },
+        {
+          jellyfin_activity_id: 40,
+          jellyfin_user_id: "user-1",
+          user_name: "Frederik",
+          played_at: "2026-07-14T11:45:00Z",
+        },
+        {
+          jellyfin_activity_id: 39,
+          jellyfin_user_id: "user-1",
+          user_name: "Frederik",
+          played_at: "2026-07-10T08:00:00Z",
+        },
+      ],
     };
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
@@ -528,8 +549,10 @@ describe("FileDetailPage", () => {
     expect(screen.getByRole("group", { name: "History range" })).toBeInTheDocument();
     const playbackTable = screen.getByRole("table");
     expect(playbackTable).toBeInTheDocument();
-    expect(within(playbackTable).getByText("3")).toBeInTheDocument();
-    expect(screen.getByText(/Jellyfin supplies the latest playback time/)).toBeInTheDocument();
+    expect(within(playbackTable).getAllByText("1")).toHaveLength(3);
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(3);
+    expect(screen.getByText(/Individual playback starts imported/)).toBeInTheDocument();
+    expect(within(playbackTable).queryByText("Playback state")).not.toBeInTheDocument();
     expect(screen.queryByText("Matched by path")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "This match is wrong" })).not.toBeInTheDocument();
 
@@ -542,7 +565,12 @@ describe("FileDetailPage", () => {
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
     vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
-    vi.spyOn(api, "fileJellyfin").mockResolvedValue({ match: null, item: null, user_data: [] });
+    vi.spyOn(api, "fileJellyfin").mockResolvedValue({
+      match: null,
+      item: null,
+      user_data: [],
+      playback_events: [],
+    });
 
     renderPage(file.id);
 

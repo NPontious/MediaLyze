@@ -475,6 +475,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
     },
     ...restOverrides,
@@ -642,6 +643,7 @@ describe("LibraryDetailPage", () => {
     expect(await screen.findByText("Frederik")).toBeInTheDocument();
     expect(await screen.findByText("Louise")).toBeInTheDocument();
     expect(screen.getAllByRole("option", { name: "Play count" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("option", { name: "Users played" }).length).toBeGreaterThan(0);
     await waitFor(() =>
       expect(libraryStatisticsSpy).toHaveBeenLastCalledWith(
         String(libraryId),
@@ -2931,6 +2933,7 @@ describe("LibraryDetailPage", () => {
       feature_flags: {
         show_analyzed_files_csv_export: true,
         in_depth_dolby_vision_profiles: true,
+        show_all_playbacks_when_unstacked: false,
       },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));

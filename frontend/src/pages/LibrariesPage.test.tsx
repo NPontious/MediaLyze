@@ -105,6 +105,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       show_music_quality_score: false,
       unlimited_panel_size: false,
       in_depth_dolby_vision_profiles: false,
+      show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
     },
     ...restOverrides,
@@ -623,6 +624,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -663,6 +665,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -796,6 +799,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -827,6 +831,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -842,6 +847,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -873,6 +879,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -888,6 +895,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -919,6 +927,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -934,6 +943,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: true,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -965,6 +975,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: true,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -980,6 +991,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: true,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -1011,7 +1023,36 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: true,
+          show_all_playbacks_when_unstacked: false,
         },
+      }),
+    );
+  });
+
+  it("persists the show-all-unstacked-playbacks feature flag", async () => {
+    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
+      createAppSettings({
+        feature_flags: {
+          show_analyzed_files_csv_export: false,
+          show_full_width_app_shell: false,
+          hide_quality_score_meter: false,
+          show_music_quality_score: false,
+          unlimited_panel_size: false,
+          in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: true,
+        },
+      }),
+    );
+
+    renderPage({ activePanel: "appSettings" });
+
+    const checkbox = await screen.findByLabelText("Show all playbacks when unstacked");
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    fireEvent.click(checkbox);
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith({
+        feature_flags: { show_all_playbacks_when_unstacked: true },
       }),
     );
   });
@@ -1062,6 +1103,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -1106,6 +1148,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );
@@ -1280,6 +1323,7 @@ describe("LibrariesPage ignore patterns", () => {
           show_music_quality_score: false,
           unlimited_panel_size: false,
           in_depth_dolby_vision_profiles: false,
+          show_all_playbacks_when_unstacked: false,
         },
       }),
     );

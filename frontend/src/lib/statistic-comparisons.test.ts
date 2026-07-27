@@ -80,14 +80,22 @@ describe("statistic comparisons", () => {
     expect(musicFields).toContain("duration");
   });
 
-  it("offers play count only when the library has a playback provider", () => {
-    expect(
-      getComparisonFieldDefinitionsForLibraryType("movies").map((field) => field.id),
-    ).not.toContain("play_count");
-    expect(
-      getComparisonFieldDefinitionsForLibraryType("movies", { hasPlaybackData: true }).map((field) => field.id),
-    ).toContain("play_count");
+  it("offers playback comparison fields only when the library has a playback provider", () => {
+    const fieldsWithoutPlayback = getComparisonFieldDefinitionsForLibraryType("movies").map((field) => field.id);
+    const fieldsWithPlayback = getComparisonFieldDefinitionsForLibraryType("movies", {
+      hasPlaybackData: true,
+    }).map((field) => field.id);
+
+    expect(fieldsWithoutPlayback).not.toContain("play_count");
+    expect(fieldsWithoutPlayback).not.toContain("users_played");
+    expect(fieldsWithPlayback).toContain("play_count");
+    expect(fieldsWithPlayback).toContain("users_played");
     expect(getAvailableComparisonRenderers("size", "play_count")).toEqual([
+      "heatmap",
+      "scatter",
+      "bar",
+    ]);
+    expect(getAvailableComparisonRenderers("size", "users_played")).toEqual([
       "heatmap",
       "scatter",
       "bar",

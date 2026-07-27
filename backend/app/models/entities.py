@@ -319,6 +319,18 @@ class JellyfinSyncStageUserData(Base):
     last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 
+class JellyfinSyncStagePlaybackEvent(Base):
+    __tablename__ = "jellyfin_sync_stage_playback_events"
+    __table_args__ = (Index("ix_jellyfin_sync_stage_playback_events_run", "sync_run_id"),)
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    jellyfin_activity_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    jellyfin_item_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    jellyfin_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    played_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
 class JellyfinUser(TimestampMixin, Base):
     __tablename__ = "jellyfin_users"
 
@@ -443,6 +455,24 @@ class JellyfinUserItemData(Base):
     playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class JellyfinPlaybackEvent(Base):
+    __tablename__ = "jellyfin_playback_events"
+    __table_args__ = (
+        Index("ix_jellyfin_playback_events_item_played_at", "jellyfin_item_id", "played_at"),
+        Index("ix_jellyfin_playback_events_user", "jellyfin_user_id"),
+    )
+
+    jellyfin_activity_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    jellyfin_item_id: Mapped[int] = mapped_column(
+        ForeignKey("jellyfin_items.id", ondelete="CASCADE"), nullable=False
+    )
+    jellyfin_user_id: Mapped[str] = mapped_column(
+        ForeignKey("jellyfin_users.jellyfin_user_id", ondelete="CASCADE"), nullable=False
+    )
+    played_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
 
 
