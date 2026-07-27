@@ -237,4 +237,15 @@ describe("library statistics settings", () => {
       getVisibleLibraryStatisticPanels(settings, "mixed", { hasVideoMetadata: true }).map((entry) => entry.id),
     ).toContain("video_bit_depth");
   });
+
+  it("shows the user play panel only for libraries with a playback provider", () => {
+    const settings = getLibraryStatisticsSettings();
+
+    expect(
+      getVisibleLibraryStatisticPanels(settings, "movies").map((entry) => entry.id),
+    ).not.toContain("user_plays");
+    expect(
+      getVisibleLibraryStatisticPanels(settings, "movies", { hasPlaybackProvider: true }).map((entry) => entry.id),
+    ).toContain("user_plays");
+  });
 });

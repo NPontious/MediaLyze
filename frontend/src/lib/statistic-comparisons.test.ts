@@ -80,6 +80,20 @@ describe("statistic comparisons", () => {
     expect(musicFields).toContain("duration");
   });
 
+  it("offers play count only when the library has a playback provider", () => {
+    expect(
+      getComparisonFieldDefinitionsForLibraryType("movies").map((field) => field.id),
+    ).not.toContain("play_count");
+    expect(
+      getComparisonFieldDefinitionsForLibraryType("movies", { hasPlaybackData: true }).map((field) => field.id),
+    ).toContain("play_count");
+    expect(getAvailableComparisonRenderers("size", "play_count")).toEqual([
+      "heatmap",
+      "scatter",
+      "bar",
+    ]);
+  });
+
   it("normalizes invalid music comparison selections to supported fields", () => {
     const normalized = normalizeComparisonSelectionForLibraryType(
       {

@@ -596,6 +596,7 @@ export const ComparisonChartPanel = memo(
     previousProps.resizeToken === nextProps.resizeToken &&
     previousProps.loading === nextProps.loading &&
     previousProps.error === nextProps.error &&
+    previousProps.availableFields === nextProps.availableFields &&
     Boolean(previousProps.onOpenFile) === Boolean(nextProps.onOpenFile) &&
     Boolean(previousProps.onSelectFilters) === Boolean(nextProps.onSelectFilters),
 );

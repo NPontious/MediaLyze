@@ -1777,6 +1777,17 @@ export function UiElementsPage() {
               <VariantCard title="Distribution list" source={`${dashboard} / ${libraryDetail}`} classes={["distribution-list", "distribution-item", "distribution-bar"]}>
                 <DistributionList items={distributionItems} />
               </VariantCard>
+              <VariantCard title="Playback by user" source={`${libraryDetail} > Linked Jellyfin library`} classes={["async-panel", "distribution-list", "distribution-row"]}>
+                <AsyncPanel title="Plays by user">
+                  <DistributionList
+                    items={[
+                      { label: "Frederik", value: 18 },
+                      { label: "Louise", value: 11 },
+                      { label: "Kids", value: 6 },
+                    ]}
+                  />
+                </AsyncPanel>
+              </VariantCard>
               <VariantCard title="Distribution chart panel" source={`${libraryDetail} > Numeric panel`} classes={["async-panel", "distribution-chart-mode-toggle", "distribution-chart-canvas"]} wide>
                 <DistributionChartPanel title="Quality score" distribution={numericDistribution} metricId="quality_score" />
               </VariantCard>

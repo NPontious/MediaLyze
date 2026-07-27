@@ -45,6 +45,7 @@ from backend.app.services.jellyfin_progress import (
     update_jellyfin_progress,
     update_jellyfin_progress_track,
 )
+from backend.app.services.stats_cache import stats_cache
 from backend.app.utils.time import utc_now
 
 
@@ -538,6 +539,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
         connection.last_sync_finished_at = finished_at
         connection.last_successful_sync_at = finished_at
         db.commit()
+        stats_cache.invalidate(str(id(db.get_bind())))
         return {
             "status": "success",
             "libraries_synced": library_count,

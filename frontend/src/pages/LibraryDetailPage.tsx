@@ -1685,6 +1685,7 @@ export function LibraryDetailPage() {
   const fallbackSummary = findLibrarySummary(libraries, libraryId);
   const displayLibrary = librarySummary ?? fallbackSummary;
   const linkedJellyfinLibrary = displayLibrary?.linked_jellyfin_library ?? null;
+  const hasPlaybackData = Boolean(linkedJellyfinLibrary);
   const activeLibraryType = displayLibrary?.type;
   const showMusicQualityScore = appSettings.feature_flags.show_music_quality_score;
   const hasVideoMetadata =
@@ -1822,8 +1823,8 @@ export function LibraryDetailPage() {
     [savedTableViewSettings, activeLibraryType, showMusicQualityScore],
   );
   const availableComparisonFields = useMemo(
-    () => getComparisonFieldDefinitionsForLibraryType(activeLibraryType, { showMusicQualityScore }),
-    [activeLibraryType, showMusicQualityScore],
+    () => getComparisonFieldDefinitionsForLibraryType(activeLibraryType, { showMusicQualityScore, hasPlaybackData }),
+    [activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const visibleLayoutPanels = useMemo(
     () =>
@@ -1838,6 +1839,7 @@ export function LibraryDetailPage() {
             !isLibraryStatisticDefinitionVisibleForLibraryType(definition.statisticDefinition, activeLibraryType, {
               showMusicQualityScore,
               hasVideoMetadata,
+              hasPlaybackProvider: hasPlaybackData,
             })
           ) {
             return null;
@@ -1845,7 +1847,7 @@ export function LibraryDetailPage() {
           return { item, definition };
         })
         .filter((entry): entry is VisibleLibraryLayoutPanel => Boolean(entry)),
-    [activeStatisticLayout.items, activeLibraryType, hasVideoMetadata, showMusicQualityScore],
+    [activeStatisticLayout.items, activeLibraryType, hasPlaybackData, hasVideoMetadata, showMusicQualityScore],
   );
   const visibleLibraryStatisticPanelIds = useMemo(
     () =>
@@ -1873,11 +1875,12 @@ export function LibraryDetailPage() {
           const selection = item.comparisonSelection ?? getComparisonSelection("library");
           const normalizedSelection = normalizeComparisonSelectionForLibraryType(selection, activeLibraryType, {
             showMusicQualityScore,
+            hasPlaybackData,
           });
           return `${item.instanceId}:${normalizedSelection.xField}:${normalizedSelection.yField}`;
         })
         .join("|"),
-    [comparisonPanels, activeLibraryType, showMusicQualityScore],
+    [comparisonPanels, activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const availableStatisticPanelDefinitions = useMemo(
     () =>
@@ -1889,9 +1892,10 @@ export function LibraryDetailPage() {
         return isLibraryStatisticDefinitionVisibleForLibraryType(panelDefinition.statisticDefinition, activeLibraryType, {
           showMusicQualityScore,
           hasVideoMetadata,
+          hasPlaybackProvider: hasPlaybackData,
         });
       }),
-    [draftStatisticLayout, activeLibraryType, hasVideoMetadata, showMusicQualityScore],
+    [draftStatisticLayout, activeLibraryType, hasPlaybackData, hasVideoMetadata, showMusicQualityScore],
   );
   const activeColumns = useMemo(
     () => fileColumns.filter((column) => visibleColumns.includes(column.key)),
@@ -3038,7 +3042,7 @@ export function LibraryDetailPage() {
       const selection = normalizeComparisonSelectionForLibraryType(
         item.comparisonSelection ?? getComparisonSelection("library"),
         activeLibraryType,
-        { showMusicQualityScore },
+        { showMusicQualityScore, hasPlaybackData },
       );
       const queryKey = buildLibraryComparisonQueryKey(libraryId, selection);
       const cachedComparison = !force ? libraryComparisonCache.get(queryKey) ?? null : null;
@@ -3234,7 +3238,7 @@ export function LibraryDetailPage() {
         const selection = normalizeComparisonSelectionForLibraryType(
           item.comparisonSelection ?? getComparisonSelection("library"),
           activeLibraryType,
-          { showMusicQualityScore },
+          { showMusicQualityScore, hasPlaybackData },
         );
         libraryComparisonCache.delete(buildLibraryComparisonQueryKey(libraryId, selection));
       }
@@ -3354,7 +3358,7 @@ export function LibraryDetailPage() {
           renderer: sanitizeComparisonRenderer(nextSelection.xField, nextSelection.yField, nextSelection.renderer),
         },
         activeLibraryType,
-        { showMusicQualityScore },
+        { showMusicQualityScore, hasPlaybackData },
       ),
     );
     updateStatisticLayout(
@@ -3619,7 +3623,7 @@ export function LibraryDetailPage() {
               const selection = normalizeComparisonSelectionForLibraryType(
                 panel.item.comparisonSelection ?? getComparisonSelection("library"),
                 activeLibraryType,
-                { showMusicQualityScore },
+                { showMusicQualityScore, hasPlaybackData },
               );
               content = (
                 <ComparisonChartPanel
@@ -3723,7 +3727,9 @@ export function LibraryDetailPage() {
                   : statisticDefinition.panelFormatKind
                   ? formatCodecLabel(rawLabel, statisticDefinition.panelFormatKind)
                   : rawLabel;
-                const isFilterable = statisticDefinition.id !== "video_bit_depth";
+                const isFilterable =
+                  statisticDefinition.id !== "video_bit_depth" &&
+                  statisticDefinition.id !== "user_plays";
                 const isApplied = hasSearchValueTokens(fieldValues[statisticDefinition.id], filterValue);
                 return {
                   key: `${statisticDefinition.id}:${rawLabel}`,

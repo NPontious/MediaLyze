@@ -103,4 +103,5 @@ class LibraryStatistics(BaseModel):
     subtitle_language_distribution: list[DistributionItem]
     subtitle_codec_distribution: list[DistributionItem]
     subtitle_source_distribution: list[DistributionItem]
+    user_play_count_distribution: list[DistributionItem]
     numeric_distributions: dict[NumericDistributionMetricId, NumericDistribution]

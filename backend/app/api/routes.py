@@ -829,6 +829,7 @@ def jellyfin_users_update(
             )
         )
     db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
     return users
 
 
@@ -1203,6 +1204,7 @@ def jellyfin_match_create(
             displaced_item.mismatch_reason = "manual_match_reassigned"
             displaced_item.suggested_media_file_id = None
     db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
     db.refresh(match)
     return match
 
@@ -1218,6 +1220,7 @@ def jellyfin_match_delete(match_id: int, db: Session = Depends(get_db_session)) 
         item.match_status = "ignored"
         item.mismatch_reason = "manual_rejected"
     db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
 
 
 @router.get("/libraries", response_model=list[LibrarySummary])

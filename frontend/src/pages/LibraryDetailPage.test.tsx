@@ -114,6 +114,7 @@ function createLibraryStatistics(overrides: Partial<LibraryStatistics> = {}): Li
     subtitle_language_distribution: [{ label: "en", value: 2 }],
     subtitle_codec_distribution: [{ label: "srt", value: 2 }],
     subtitle_source_distribution: [{ label: "external", value: 2 }],
+    user_play_count_distribution: [],
     numeric_distributions: {
       quality_score: {
         total: 2,
@@ -615,6 +616,41 @@ beforeEach(() => {
 });
 
 describe("LibraryDetailPage", () => {
+  it("shows the per-user play panel only for a linked Jellyfin library", async () => {
+    const libraryId = 99101;
+    mockAppSettings();
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
+      linked_jellyfin_library: {
+        id: 7,
+        name: "Movies",
+        last_synced_at: "2026-07-17T10:00:00Z",
+      },
+    }));
+    const libraryStatisticsSpy = vi.spyOn(api, "libraryStatistics").mockResolvedValue(
+      createLibraryStatistics({
+        user_play_count_distribution: [
+          { label: "Frederik", value: 8 },
+          { label: "Louise", value: 3 },
+        ],
+      }),
+    );
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("Plays by user")).toBeInTheDocument();
+    expect(screen.getByText("Frederik")).toBeInTheDocument();
+    expect(screen.getByText("Louise")).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "Play count" }).length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(libraryStatisticsSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.any(AbortSignal),
+        expect.arrayContaining(["user_plays"]),
+      ),
+    );
+  });
+
   it("switches the analyzed-file name source without exposing Jellyfin playback metadata", async () => {
     const libraryId = 100;
     mockAppSettings();

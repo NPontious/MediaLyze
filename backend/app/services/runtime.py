@@ -56,6 +56,7 @@ from backend.app.services.jellyfin_progress import (
 from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_sync import run_jellyfin_sync
 from backend.app.services.path_access import is_watch_supported_for_library
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.telemetry import (
     send_current_telemetry_snapshot,
     send_initial_telemetry_snapshot,
@@ -453,6 +454,7 @@ class ScanRuntimeManager:
             try:
                 refresh_jellyfin_mapping_state(db)
                 recompute_jellyfin_matches(db, commit_batch_size=250)
+                stats_cache.invalidate(str(id(db.get_bind())))
             except Exception as exc:
                 db.rollback()
                 error = str(exc)[:2048]

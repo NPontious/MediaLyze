@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ Enhancements
 
+* Add per-user Jellyfin play-count statistics for linked libraries and make non-zero play counts available as a metric-comparison axis
 * Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
 * Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
 * Accelerate Docker and desktop publishing with native parallel AMD64/ARM64 image builds, persistent dependency and image-layer caches, and consolidated manually selectable dev/release workflows

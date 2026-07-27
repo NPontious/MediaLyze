@@ -13,7 +13,10 @@ from backend.app.core.config import Settings
 from backend.app.models.entities import (
     AudioStream,
     ExternalSubtitle,
+    JellyfinItem,
     JellyfinLibrary,
+    JellyfinUser,
+    JellyfinUserItemData,
     Library,
     LibraryRoot,
     MediaChapter,
@@ -119,6 +122,7 @@ _DISTRIBUTION_FIELD_BY_PANEL = {
     "subtitle_languages": "subtitle_language_distribution",
     "subtitle_codecs": "subtitle_codec_distribution",
     "subtitle_sources": "subtitle_source_distribution",
+    "user_plays": "user_play_count_distribution",
 }
 
 
@@ -1022,6 +1026,45 @@ def get_library_statistics(
             ).all()
         )
 
+    user_play_count_distribution = []
+    linked_jellyfin_library_id = (
+        db.scalar(
+            select(JellyfinLibrary.id).where(
+                JellyfinLibrary.linked_library_id == library_id
+            )
+        )
+        if wants("user_plays")
+        else None
+    )
+    if linked_jellyfin_library_id is not None:
+        user_play_count_distribution = _distribution_items(
+            db.execute(
+                select(
+                    JellyfinUser.name,
+                    func.sum(JellyfinUserItemData.play_count).label("play_count"),
+                )
+                .select_from(JellyfinUser)
+                .join(
+                    JellyfinUserItemData,
+                    JellyfinUserItemData.jellyfin_user_id == JellyfinUser.jellyfin_user_id,
+                )
+                .join(
+                    JellyfinItem,
+                    JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id,
+                )
+                .where(
+                    JellyfinUser.enabled_for_sync.is_(True),
+                    JellyfinItem.library_id == linked_jellyfin_library_id,
+                    JellyfinUserItemData.play_count > 0,
+                )
+                .group_by(JellyfinUser.jellyfin_user_id, JellyfinUser.name)
+                .order_by(
+                    func.sum(JellyfinUserItemData.play_count).desc(),
+                    JellyfinUser.name.asc(),
+                )
+            ).all()
+        )
+
     numeric_distributions = build_numeric_distributions(
         db,
         library_id=library_id,
@@ -1097,6 +1140,7 @@ def get_library_statistics(
             for key, value in _sorted_count_items(subtitle_codec_counts)
         ],
         subtitle_source_distribution=subtitle_source_distribution,
+        user_play_count_distribution=user_play_count_distribution,
         numeric_distributions=numeric_distributions,
     )
     return _statistics_panel_view(payload, panel_filter, hidden_panel_ids)

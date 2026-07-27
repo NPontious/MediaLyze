@@ -25,6 +25,7 @@ export type LibraryStatisticId =
   | "quality_score"
   | "bitrate"
   | "audio_bitrate"
+  | "user_plays"
   | "bit_depth"
   | "audio_artists"
   | "audio_albums"
@@ -94,7 +95,8 @@ type LibraryStatisticPanelDataKey =
   | "chapter_count_distribution"
   | "subtitle_language_distribution"
   | "subtitle_codec_distribution"
-  | "subtitle_source_distribution";
+  | "subtitle_source_distribution"
+  | "user_play_count_distribution";
 
 type DashboardStatisticPanelDataKey =
   | "container_distribution"
@@ -189,6 +191,7 @@ const AUDIOBOOK_ONLY_STATISTIC_IDS = new Set<LibraryStatisticId>([
 type MusicVisibilityOptions = {
   showMusicQualityScore?: boolean;
   hasVideoMetadata?: boolean;
+  hasPlaybackProvider?: boolean;
 };
 
 function buildStorageKey(storageScope?: string): string {
@@ -244,6 +247,20 @@ export const LIBRARY_STATISTIC_DEFINITIONS: LibraryStatisticDefinition[] = [
     panelKind: "comparison",
     panelTitleKey: "libraryDetail.comparisonPanel",
     dashboardTitleKey: "dashboard.comparisonPanel",
+  },
+  {
+    id: "user_plays",
+    nameKey: "libraryStatistics.items.userPlays",
+    supportsPanel: true,
+    supportsTable: false,
+    supportsTableTooltip: false,
+    supportsDashboard: false,
+    defaultPanelEnabled: true,
+    defaultTableEnabled: false,
+    defaultTableTooltipEnabled: false,
+    defaultDashboardEnabled: false,
+    panelTitleKey: "libraryDetail.userPlays",
+    panelDataKey: "user_play_count_distribution",
   },
   {
     id: "video_codec",
@@ -864,6 +881,9 @@ export function isLibraryStatisticDefinitionVisibleForLibraryType(
   libraryType?: LibraryType | null,
   options?: MusicVisibilityOptions,
 ): boolean {
+  if (definition.id === "user_plays") {
+    return options?.hasPlaybackProvider === true;
+  }
   if (definition.id === "video_bit_depth" && options?.hasVideoMetadata === false) {
     return false;
   }

@@ -32,6 +32,7 @@ export type ComparisonFieldId =
   | "quality_score"
   | "bitrate"
   | "audio_bitrate"
+  | "play_count"
   | "audio_channels"
   | "sample_rate"
   | "resolution_mp"
@@ -733,6 +734,7 @@ export type LibraryStatistics = {
   subtitle_language_distribution: DistributionItem[];
   subtitle_codec_distribution: DistributionItem[];
   subtitle_source_distribution: DistributionItem[];
+  user_play_count_distribution: DistributionItem[];
   numeric_distributions: Partial<Record<NumericDistributionMetricId, NumericDistribution>>;
 };
 
