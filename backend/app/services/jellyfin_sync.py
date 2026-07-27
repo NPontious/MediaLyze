@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-from contextlib import nullcontext
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack, nullcontext
 from collections.abc import Iterator
+from datetime import datetime
+from threading import Event
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -41,6 +43,9 @@ from backend.app.services.jellyfin_progress import (
     update_jellyfin_progress,
 )
 from backend.app.utils.time import utc_now
+
+
+JELLYFIN_USER_SYNC_WORKERS = 4
 
 
 class JellyfinSyncCancelled(JellyfinError):
@@ -259,6 +264,124 @@ def _stage_user_data_row(
     }
 
 
+def _sync_enabled_user_data(
+    db: Session,
+    *,
+    sync_run_id: str,
+    enabled_users: list[dict],
+    base_url: str,
+    api_key: str,
+    now: datetime,
+) -> None:
+    """Fetch user-scoped pages concurrently while keeping SQLite writes serialized."""
+    for batch_start in range(0, len(enabled_users), JELLYFIN_USER_SYNC_WORKERS):
+        batch = enabled_users[batch_start : batch_start + JELLYFIN_USER_SYNC_WORKERS]
+        batch_abort = Event()
+
+        def check_batch_cancellation(abort_event: Event = batch_abort) -> None:
+            if abort_event.is_set():
+                raise JellyfinSyncCancelled("Jellyfin user synchronization stopped")
+            _raise_if_sync_cancelled()
+
+        with ExitStack() as stack:
+            streams: list[tuple[dict, Iterator[JellyfinItemPage]]] = []
+            for user_row in batch:
+                user_client = JellyfinClient(
+                    base_url,
+                    api_key,
+                    cancellation_check=check_batch_cancellation,
+                )
+                client = stack.enter_context(
+                    user_client
+                    if hasattr(user_client, "__enter__")
+                    else nullcontext(user_client)
+                )
+                streams.append(
+                    (
+                        user_row,
+                        _iter_item_pages(
+                            client,
+                            user_id=str(user_row["jellyfin_user_id"]),
+                            user_data_only=True,
+                        ),
+                    )
+                )
+
+            executor = stack.enter_context(
+                ThreadPoolExecutor(
+                    max_workers=len(streams),
+                    thread_name_prefix="jellyfin-user-sync",
+                )
+            )
+            pending = {
+                executor.submit(next, pages, None): (user_row, pages)
+                for user_row, pages in streams
+            }
+            try:
+                while pending:
+                    _raise_if_sync_cancelled()
+                    completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in completed:
+                        user_row, pages = pending.pop(future)
+                        page = future.result()
+                        user_id = str(user_row["jellyfin_user_id"])
+                        if page is None:
+                            db.execute(
+                                JellyfinSyncStageUser.__table__.update()
+                                .where(
+                                    JellyfinSyncStageUser.sync_run_id == sync_run_id,
+                                    JellyfinSyncStageUser.jellyfin_user_id == user_id,
+                                )
+                                .values(last_synced_at=now)
+                            )
+                            db.commit()
+                            continue
+
+                        rows = []
+                        for payload in page.items:
+                            remote_item_id = str(payload.get("Id") or "").strip()
+                            if not remote_item_id:
+                                continue
+                            user_data = payload.get("UserData")
+                            if not isinstance(user_data, dict):
+                                user_data = {}
+                            rows.append(
+                                _stage_user_data_row(
+                                    sync_run_id,
+                                    remote_item_id,
+                                    user_id,
+                                    user_data,
+                                    now,
+                                )
+                            )
+                        commit_stage_page(
+                            db,
+                            JellyfinSyncStageUserData,
+                            rows,
+                            conflict_columns=(
+                                "sync_run_id",
+                                "jellyfin_item_id",
+                                "jellyfin_user_id",
+                            ),
+                        )
+                        current = min(
+                            page.start_index + len(page.items),
+                            page.total_record_count,
+                        )
+                        update_jellyfin_progress(
+                            "items",
+                            detail=str(user_row["name"]),
+                            current=current,
+                            total=page.total_record_count,
+                        )
+                        pending[executor.submit(next, pages, None)] = (
+                            user_row,
+                            pages,
+                        )
+            finally:
+                batch_abort.set()
+
+
 def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, int | str]:
     connection = get_or_create_jellyfin_connection(db)
     if not connection.enabled:
@@ -369,54 +492,14 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                     total=page.total_record_count,
                 )
 
-            enabled_users = [row for row in user_rows if row["enabled_for_sync"]]
-            for user_row in enabled_users:
-                _raise_if_sync_cancelled()
-                detail = str(user_row["name"])
-                user_id = str(user_row["jellyfin_user_id"])
-
-                def report_user_progress(current: int, total: int | None) -> None:
-                    _raise_if_sync_cancelled()
-                    update_jellyfin_progress("items", detail=detail, current=current, total=total)
-
-                for page in _iter_item_pages(
-                    client,
-                    user_id=user_id,
-                    user_data_only=True,
-                    progress_callback=report_user_progress,
-                ):
-                    rows = []
-                    for payload in page.items:
-                        remote_item_id = str(payload.get("Id") or "").strip()
-                        if not remote_item_id:
-                            continue
-                        user_data = payload.get("UserData")
-                        if not isinstance(user_data, dict):
-                            user_data = {}
-                        rows.append(
-                            _stage_user_data_row(
-                                sync_run_id, remote_item_id, user_id, user_data, now
-                            )
-                        )
-                    commit_stage_page(
-                        db,
-                        JellyfinSyncStageUserData,
-                        rows,
-                        conflict_columns=(
-                            "sync_run_id",
-                            "jellyfin_item_id",
-                            "jellyfin_user_id",
-                        ),
-                    )
-                db.execute(
-                    JellyfinSyncStageUser.__table__.update()
-                    .where(
-                        JellyfinSyncStageUser.sync_run_id == sync_run_id,
-                        JellyfinSyncStageUser.jellyfin_user_id == user_id,
-                    )
-                    .values(last_synced_at=now)
-                )
-                db.commit()
+            _sync_enabled_user_data(
+                db,
+                sync_run_id=sync_run_id,
+                enabled_users=[row for row in user_rows if row["enabled_for_sync"]],
+                base_url=connection.base_url,
+                api_key=api_key,
+                now=now,
+            )
 
         item_count = int(
             db.scalar(

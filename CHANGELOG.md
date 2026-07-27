@@ -4,47 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
-### 🐛 Fixed
-
-* Keep cached dashboard and library statistics visible during post-scan refreshes, show loading and empty states accurately, and avoid redundant full-statistic rebuilds for panels that are not visible.
-* Route manual and scheduled Jellyfin synchronizations through one persisted background job so concurrent triggers share the active run and manual requests return immediately.
-* Paginate Jellyfin item synchronization and retry transient read failures on large media collections.
-* Stop the Jellyfin settings panel from repeatedly reloading and flickering after navigation-state refreshes.
-* Keep Jellyfin settings visible after action or validation errors and show each error beside the affected section or library.
-* Apply Jellyfin path mappings and library associations immediately, while coalescing path and asset-match recalculation into a visible background job that no longer blocks the settings UI.
-* Prevent Jellyfin API keys from crossing redirect origins, validate successful API responses before cleanup, and retry transient `429`/gateway failures through a pooled HTTP client.
-* Preserve Jellyfin library links across remote renames, keep match state consistent during reassignment and path conflicts, and remove stale or disabled-user playback data.
-* Add the missing upgrade migration for persisted Jellyfin sync-job cancellation state so existing development databases start successfully.
-
-### ✨ Enhancements
-
-* Separate Jellyfin catalog freshness from local file matching, link zero-match warnings directly to the affected library mapping, and add searchable grouped playback-user selection with all/none actions.
-* Group and search Settings navigation, persist every settings section in the URL for shareable browser-history-aware links, and focus directly linked library controls.
-* Apply all Jellyfin path-mapping changes through one atomic batch request, reload the catalog once, and represent partially enabled multi-path mappings explicitly.
-* Replace inline Jellyfin library, playback, and title metadata in analyzed-file rows with a linked-library-only file/Jellyfin name switch, and add structured Jellyfin-name search.
-* Stage Jellyfin pages with native SQLite bulk UPSERTs and atomically promote only complete snapshots, with a reproducible 100,000-item benchmark.
-* Persist Jellyfin sync heartbeat, phase, detail, and item counters on the sync job for multi-process status polling.
-* Aggregate Jellyfin catalog and library overview metrics directly in SQL instead of materializing the full catalog in Python.
-* Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle.
-* Replace the large linked-Jellyfin banner on library pages with a compact, unframed Jellyfin icon and last-sync tooltip beside the library title.
-* Avoid duplicating MediaLyze library statistics with a separate Jellyfin catalog overview panel in linked libraries.
-* Allow running manual or scheduled Jellyfin synchronizations to be canceled from Settings without replacing the previously cached catalog with partial data.
-* Show live Jellyfin synchronization phases, item progress, and an animated running state in Settings.
-* Disable scheduled Jellyfin synchronization by setting its interval to `0`, without disabling manual sync.
-* Save Jellyfin connection fields automatically and remove their explicit save action.
-* Keep Jellyfin Settings focused on connection, synchronization, and playback-user selection; select the associated Jellyfin catalog directly inside each MediaLyze library without exposing path mappings there.
-* Let the Add Library dialog use any unassigned Jellyfin library as a name and media-type template, then link it automatically after the local MediaLyze path is created.
-* Collapse MediaLyze library cards by default, expand them from a compact chevron before the library name, and organize their settings into described Jellyfin association, media source, and scanning/analysis sections with responsive field layouts.
-* Configure optional Jellyfin-to-MediaLyze mount-point mappings in a compact inline row beside each MediaLyze library's Jellyfin association, with a persisted activation switch, contextual help tooltip, and an emphasized icon action while changes are unsaved.
-* Keep Jellyfin as an optional overlay in existing MediaLyze libraries instead of exposing a separate Jellyfin-only library UI. Linked libraries gain catalog distributions and matched rows gain titles, years, and playback counts; file details place metadata in Overview, playback in Streaming, and Jellyfin artwork beside embedded covers.
-* Align Jellyfin settings fields with the compact 36-pixel input style used by newer settings controls.
-* Allow detected Jellyfin libraries to create MediaLyze libraries from the Add Library dialog or be selected from a dropdown in an existing MediaLyze library.
-* Stream validated Jellyfin catalog pages into batched database writes, paginate catalog browsing in SQL, and bind the byte-limited image cache to the configured Jellyfin server.
-* Separate Jellyfin configuration from activation, add an explicit connection-removal action, support `JELLYFIN_API_KEY_FILE`, and reduce redundant Settings requests while isolating sync polling in a reusable hook.
-
 ### ✨ New
 
 - add a read-only Jellyfin integration with scheduled catalog and multi-user playback sync, path-based asset matching, image proxying, library mount diagnostics, optional MediaLyze-library creation, and per-library Jellyfin added-date history reconstruction
+
+### ✨ Enhancements
+
+* Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links.
+* Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle.
+* Fetch enabled Jellyfin users' playback data with bounded concurrency while keeping SQLite staging writes serialized.
+
+### 🐛 Fixed
+
+* Keep cached dashboard and library statistics visible during post-scan refreshes, show loading and empty states accurately, and avoid redundant full-statistic rebuilds for panels that are not visible.
+* Keep Jellyfin synchronization cancellation responsive while large HTTP responses are still being received so the Settings page unlocks when the job stops.
+
+### 🔒 Security
+
+* Pin all transitive desktop `brace-expansion` branches to their patched releases to prevent exponential-time brace-pattern expansion during Electron packaging.
+* Update the transitive desktop `tar` package to 7.5.22 to prevent crafted PAX metadata from crashing Electron packaging.
 
 ## v0.16.3
 

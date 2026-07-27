@@ -120,6 +120,35 @@ describe("JellyfinSettingsPanel", () => {
     expect(await screen.findByText(/cancellation requested/i)).toBeInTheDocument();
   });
 
+  it("leaves the canceling state and unlocks settings after cancellation completes", async () => {
+    const canceledStatus = {
+      ...STATUS,
+      last_status: "canceled",
+      last_sync_finished_at: "2026-07-15T10:01:00Z",
+      sync_job_status: "canceled",
+      sync_job_active: false,
+      sync_summary: { status: "canceled" },
+      cancellation_requested: true,
+    } as JellyfinSyncStatus;
+    let cancellationRequested = false;
+    vi.spyOn(api, "jellyfinSyncStatus").mockImplementation(
+      async () => cancellationRequested ? canceledStatus : STATUS,
+    );
+    vi.spyOn(api, "jellyfinUsers").mockResolvedValue([]);
+    vi.spyOn(api, "cancelJellyfinSync").mockImplementation(async () => {
+      cancellationRequested = true;
+      return { job_id: 41, status: "running", cancellation_requested: true };
+    });
+
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel sync" }));
+
+    expect(await screen.findByText("Jellyfin synchronization was canceled.", {}, { timeout: 2500 })).toBeInTheDocument();
+    expect(screen.queryByText("Canceling synchronization")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeEnabled();
+  });
+
   it("uses zero minutes to disable only scheduled synchronization", async () => {
     const idleConnection = { ...CONNECTION, last_status: "success" };
     vi.spyOn(api, "jellyfinSyncStatus").mockResolvedValue(idleSyncStatus(idleConnection));

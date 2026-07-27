@@ -3427,6 +3427,10 @@ html[data-theme="dark"] .comparison-chart-renderer-option.active {
   gap: 0;
 }
 
+.library-scan-progress {
+  margin-top: 8px;
+}
+
 .library-settings-card.is-deleting {
   border-color: rgba(160, 72, 54, 0.24);
   opacity: 0.72;

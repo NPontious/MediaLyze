@@ -5905,7 +5905,7 @@ export function LibrariesPage() {
                     </div>
                   ) : activeLibraryScanJob ? (
                     <div
-                      className={`progress${
+                      className={`progress library-scan-progress${
                         isDeterminateScanProgress(
                           activeLibraryScanJob.progress_mode,
                           activeLibraryScanJob.files_total,

@@ -1524,7 +1524,7 @@ export function UiElementsPage() {
                   <div className="jellyfin-user-groups"><section className="jellyfin-user-group"><h4>Selected <span>7</span></h4><div className="jellyfin-user-grid"><label><input type="checkbox" defaultChecked /> Alice</label><label><input type="checkbox" defaultChecked /> Bob</label></div></section><section className="jellyfin-user-group"><h4>Not selected <span>15</span></h4><div className="jellyfin-user-grid"><label><input type="checkbox" /> Guest</label></div></section></div>
                 </div>
               </VariantCard>
-              <VariantCard title="Collapsed MediaLyze library settings" source={`${settings} > Libraries`} classes={["library-settings-card", "is-collapsed", "library-settings-chevron"]} wide>
+              <VariantCard title="Collapsed MediaLyze library settings with active scan" source={`${settings} > Libraries`} classes={["library-settings-card", "is-collapsed", "library-settings-chevron", "library-scan-progress"]} wide>
                 <article className="media-card library-settings-card is-collapsed">
                   <div className="library-settings-header">
                     <div className="item-meta">
@@ -1542,6 +1542,7 @@ export function UiElementsPage() {
                       </div>
                     </div>
                   </div>
+                  <div className="progress library-scan-progress"><span style={{ width: "42%" }} /></div>
                 </article>
               </VariantCard>
               <VariantCard title="Expanded MediaLyze library settings" source={`${settings} > Libraries`} classes={["library-settings-card", "is-expanded", "library-settings-body", "library-settings-section"]} wide>

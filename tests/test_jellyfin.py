@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 import os
 from pathlib import Path
-from threading import Lock
+from threading import Barrier, Lock
 import tempfile
 from types import SimpleNamespace
 
@@ -313,6 +313,40 @@ def test_client_retries_transient_timeouts(monkeypatch: pytest.MonkeyPatch) -> N
         "http://jellyfin:8096", "secret", transport=httpx.MockTransport(handler)
     ).get_system_info()["Version"] == "10.11"
     assert attempts == 3
+
+
+def test_client_checks_cancellation_while_reading_response() -> None:
+    cancellation_requested = False
+    chunks_read = 0
+
+    class CancelingResponseStream(httpx.SyncByteStream):
+        def __iter__(self):
+            nonlocal cancellation_requested, chunks_read
+            chunks_read += 1
+            yield b'{"ServerName":'
+            cancellation_requested = True
+            chunks_read += 1
+            yield b'"Test"'
+            chunks_read += 1
+            yield b"}"
+
+    def check_cancellation() -> None:
+        if cancellation_requested:
+            raise RuntimeError("synchronization canceled")
+
+    client = JellyfinClient(
+        "http://jellyfin:8096",
+        "secret",
+        cancellation_check=check_cancellation,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, stream=CancelingResponseStream())
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="synchronization canceled"):
+        client.get_system_info()
+
+    assert chunks_read == 2
 
 
 def test_client_rejects_cross_origin_redirect_without_forwarding_key() -> None:
@@ -965,6 +999,151 @@ def test_sync_persists_separate_user_data(
 
     rows = list(db.scalars(select(JellyfinUserItemData).order_by(JellyfinUserItemData.jellyfin_user_id)))
     assert [(row.jellyfin_user_id, row.play_count) for row in rows] == [("u1", 1), ("u2", 3)]
+
+
+def test_sync_fetches_enabled_user_data_concurrently(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_fetch_barrier = Barrier(2, timeout=2)
+    fetched_users: set[str] = set()
+    fetched_users_lock = Lock()
+    db.add_all([
+        JellyfinConnection(
+            id=1,
+            base_url="http://jellyfin:8096",
+            api_key="secret",
+            enabled=True,
+        ),
+        JellyfinUser(jellyfin_user_id="u1", name="Alice", enabled_for_sync=True),
+        JellyfinUser(jellyfin_user_id="u2", name="Bob", enabled_for_sync=True),
+    ])
+    db.commit()
+
+    class ConcurrentFakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_system_info(self):
+            return {"ServerName": "Test", "Version": "10.11"}
+
+        def get_users(self):
+            return [{"Id": "u1", "Name": "Alice"}, {"Id": "u2", "Name": "Bob"}]
+
+        def get_virtual_folders(self):
+            return []
+
+        def get_items(self, *, user_id=None, progress_callback=None):
+            if user_id is not None:
+                with fetched_users_lock:
+                    fetched_users.add(user_id)
+                user_fetch_barrier.wait()
+            items = [{
+                "Id": "item-1",
+                "Name": "Movie",
+                "Type": "Movie",
+                "UserData": {"PlayCount": 1 if user_id == "u1" else 2},
+            }]
+            if progress_callback:
+                progress_callback(len(items), len(items))
+            return items
+
+    monkeypatch.setattr(
+        "backend.app.services.jellyfin_sync.JellyfinClient",
+        ConcurrentFakeClient,
+    )
+
+    result = run_jellyfin_sync(db)
+
+    rows = list(
+        db.scalars(
+            select(JellyfinUserItemData).order_by(
+                JellyfinUserItemData.jellyfin_user_id
+            )
+        )
+    )
+    assert result["status"] == "success"
+    assert fetched_users == {"u1", "u2"}
+    assert [(row.jellyfin_user_id, row.play_count) for row in rows] == [
+        ("u1", 1),
+        ("u2", 2),
+    ]
+
+
+def test_cancel_during_parallel_user_sync_preserves_cached_snapshot(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached = JellyfinItem(
+        jellyfin_item_id="cached-item",
+        item_type="Movie",
+        title="Cached movie",
+    )
+    db.add_all([
+        JellyfinConnection(
+            id=1,
+            base_url="http://jellyfin:8096",
+            api_key="secret",
+            enabled=True,
+        ),
+        cached,
+        JellyfinUser(jellyfin_user_id="u1", name="Alice", enabled_for_sync=True),
+        JellyfinUser(jellyfin_user_id="u2", name="Bob", enabled_for_sync=True),
+    ])
+    db.flush()
+    db.add(
+        JellyfinUserItemData(
+            jellyfin_item_id=cached.id,
+            jellyfin_user_id="u1",
+            play_count=7,
+        )
+    )
+    db.commit()
+
+    class CancelingUserClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_system_info(self):
+            return {"ServerName": "Test", "Version": "10.11"}
+
+        def get_users(self):
+            return [{"Id": "u1", "Name": "Alice"}, {"Id": "u2", "Name": "Bob"}]
+
+        def get_virtual_folders(self):
+            return []
+
+        def get_items(self, *, user_id=None, progress_callback=None):
+            if user_id == "u1":
+                request_jellyfin_cancellation()
+            return [{
+                "Id": "new-item",
+                "Name": "New movie",
+                "Type": "Movie",
+                "UserData": {"PlayCount": 1},
+            }]
+
+    monkeypatch.setattr(
+        "backend.app.services.jellyfin_sync.JellyfinClient",
+        CancelingUserClient,
+    )
+
+    result = run_jellyfin_sync(db)
+
+    assert result["status"] == "canceled"
+    assert db.scalar(
+        select(JellyfinItem).where(JellyfinItem.jellyfin_item_id == "cached-item")
+    ) is not None
+    assert db.scalar(
+        select(JellyfinItem).where(JellyfinItem.jellyfin_item_id == "new-item")
+    ) is None
+    cached_user_data = db.scalar(
+        select(JellyfinUserItemData).where(
+            JellyfinUserItemData.jellyfin_item_id == cached.id
+        )
+    )
+    assert cached_user_data is not None
+    assert cached_user_data.play_count == 7
 
 
 def test_history_uses_fallback_when_jellyfin_date_is_missing(db: Session, tmp_path: Path) -> None:

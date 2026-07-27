@@ -119,6 +119,36 @@ class JellyfinClient:
             sleep(step)
             remaining -= step
 
+    def _get_streamed_response(
+        self,
+        url: str,
+        *,
+        params: dict | None,
+    ) -> httpx.Response:
+        """Read a response incrementally so cancellation can stop large payloads."""
+        request = self._client.build_request(
+            "GET",
+            url,
+            params=params,
+            headers={"X-Emby-Token": self.api_key, "Accept": "application/json"},
+        )
+        response = self._client.send(request, stream=True)
+        try:
+            content = bytearray()
+            for chunk in response.iter_bytes():
+                self._check_cancelled()
+                content.extend(chunk)
+            self._check_cancelled()
+            return httpx.Response(
+                response.status_code,
+                headers=response.headers,
+                content=bytes(content),
+                request=response.request,
+                extensions=response.extensions,
+            )
+        finally:
+            response.close()
+
     def _request(self, path: str, *, params: dict | None = None) -> httpx.Response:
         url = f"{self.base_url}{path}"
         redirects = 0
@@ -126,10 +156,9 @@ class JellyfinClient:
             for attempt in range(self.REQUEST_ATTEMPTS):
                 self._check_cancelled()
                 try:
-                    response = self._client.get(
+                    response = self._get_streamed_response(
                         url,
                         params=params,
-                        headers={"X-Emby-Token": self.api_key, "Accept": "application/json"},
                     )
                 except (httpx.TimeoutException, httpx.NetworkError) as exc:
                     if attempt + 1 >= self.REQUEST_ATTEMPTS:

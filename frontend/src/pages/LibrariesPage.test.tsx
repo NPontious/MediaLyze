@@ -2497,11 +2497,12 @@ describe("LibrariesPage settings panels", () => {
       createScanJob({ id: 42, library_id: 1, library_name: "Movies", status: "running" }),
     ]);
 
-    renderPage();
+    const { container } = renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit library Movies" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Change path" })).toBeDisabled());
+    expect(container.querySelector(".library-scan-progress")).toHaveClass("progress");
   });
 
   it("keeps recent scan logs out of the active panel by default", async () => {
