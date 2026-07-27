@@ -391,10 +391,14 @@ export function HistoryRangeToggle({
         );
         if (option.mode === "custom") {
           return (
-            <div key={option.mode} ref={rangePickerRef} className="library-history-range-custom-shell">
+            <div
+              key={option.mode}
+              ref={rangePickerRef}
+              className="library-history-range-custom-shell"
+              data-toggle-key="custom"
+            >
               <button
                 type="button"
-                data-toggle-key="custom"
                 className={`library-history-range-button${isActive ? " active" : ""} library-history-range-button-custom`}
                 onClick={() => selectRangePreset(option.mode)}
                 aria-pressed={isActive}

@@ -477,11 +477,13 @@ export function PlaybackHistoryPanel({
                         onClick={() => setSelectedId(entry.id)}
                       >
                         <td>
-                          <span
-                            className="playback-history-table-dot"
-                            style={{ "--playback-user-color": USER_COLORS[userIndex % USER_COLORS.length] } as CSSProperties}
-                          />
-                          {formatTimestamp(entry.lastPlayedAt, i18n.language)}
+                          <span className="playback-history-timestamp">
+                            <span
+                              className="playback-history-table-dot"
+                              style={{ "--playback-user-color": USER_COLORS[userIndex % USER_COLORS.length] } as CSSProperties}
+                            />
+                            {formatTimestamp(entry.lastPlayedAt, i18n.language)}
+                          </span>
                         </td>
                         <td>{entry.userName}</td>
                         <td><span className="playback-history-provider"><Server aria-hidden="true" />{entry.provider}</span></td>

@@ -221,6 +221,15 @@ def test_library_file_rows_include_metadata_only_for_matched_jellyfin_items(db: 
     assert rows["Unmatched.mkv"].jellyfin_title is None
     assert rows["Unmatched.mkv"].jellyfin_play_count is None
 
+    sorted_page = list_library_files(
+        db,
+        matched_media.library_id,
+        limit=10,
+        sort_key="play_count",
+        sort_direction="desc",
+    )
+    assert [row.filename for row in sorted_page.items] == ["Matched.mkv", "Unmatched.mkv"]
+
 
 def test_client_rejects_malformed_url() -> None:
     with pytest.raises(JellyfinConfigurationError):

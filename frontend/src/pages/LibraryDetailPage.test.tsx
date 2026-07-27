@@ -639,8 +639,8 @@ describe("LibraryDetailPage", () => {
     renderPage(libraryId);
 
     expect(await screen.findByText("Plays by user")).toBeInTheDocument();
-    expect(screen.getByText("Frederik")).toBeInTheDocument();
-    expect(screen.getByText("Louise")).toBeInTheDocument();
+    expect(await screen.findByText("Frederik")).toBeInTheDocument();
+    expect(await screen.findByText("Louise")).toBeInTheDocument();
     expect(screen.getAllByRole("option", { name: "Play count" }).length).toBeGreaterThan(0);
     await waitFor(() =>
       expect(libraryStatisticsSpy).toHaveBeenLastCalledWith(
@@ -651,7 +651,7 @@ describe("LibraryDetailPage", () => {
     );
   });
 
-  it("switches the analyzed-file name source without exposing Jellyfin playback metadata", async () => {
+  it("switches the analyzed-file name source and exposes playback only through the selected play-count column", async () => {
     const libraryId = 100;
     mockAppSettings();
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId, {
@@ -745,6 +745,18 @@ describe("LibraryDetailPage", () => {
     expect(screen.queryByText("Plays: 4")).not.toBeInTheDocument();
     expect(screen.queryByText("Jellyfin metadata only")).not.toBeInTheDocument();
     expect(screen.queryByText("Jellyfin Library")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit table view" }));
+    const playCountSettingsRow = screen
+      .getAllByText("Play count")
+      .map((element) => element.closest("tr"))
+      .find((row): row is HTMLTableRowElement => row !== null);
+    expect(playCountSettingsRow).toBeDefined();
+    fireEvent.click(within(playCountSettingsRow!).getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save panel layout" }));
+
+    expect(await screen.findByRole("columnheader", { name: /Play count/ })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "4" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Quick scan" }));
     await waitFor(() => expect(scanLibrarySpy).toHaveBeenCalledWith(libraryId, "incremental"));
@@ -997,6 +1009,30 @@ describe("LibraryDetailPage", () => {
     expect(screen.getByText("7.5/10")).toBeInTheDocument();
     expect(screen.getByText("4.5 Mb/s")).toBeInTheDocument();
     expect(screen.getByText("224 kb/s")).toBeInTheDocument();
+  });
+
+  it("renders Jellyfin play counts as plain integers", () => {
+    const columns = buildFileColumns(
+      i18next.t.bind(i18next),
+      {},
+      {},
+      {},
+      {},
+      vi.fn(),
+      vi.fn(),
+      new Set(),
+      false,
+    );
+    const playCountColumn = columns.find((column) => column.key === "play_count");
+    const file = {
+      ...createFilesPage(126).items[0],
+      jellyfin_play_count: 12,
+    };
+
+    expect(playCountColumn).toBeDefined();
+    expect(playCountColumn?.measureValue(file)).toBe("12");
+    render(<MemoryRouter>{playCountColumn?.render(file)}</MemoryRouter>);
+    expect(screen.getByText("12")).toBeInTheDocument();
   });
 
   it("renders the new music metadata columns", () => {

@@ -252,7 +252,7 @@ export const LIBRARY_STATISTIC_DEFINITIONS: LibraryStatisticDefinition[] = [
     id: "user_plays",
     nameKey: "libraryStatistics.items.userPlays",
     supportsPanel: true,
-    supportsTable: false,
+    supportsTable: true,
     supportsTableTooltip: false,
     supportsDashboard: false,
     defaultPanelEnabled: true,
@@ -261,6 +261,8 @@ export const LIBRARY_STATISTIC_DEFINITIONS: LibraryStatisticDefinition[] = [
     defaultDashboardEnabled: false,
     panelTitleKey: "libraryDetail.userPlays",
     panelDataKey: "user_play_count_distribution",
+    tableColumnKey: "play_count",
+    tableNameKey: "libraryStatistics.items.playCount",
   },
   {
     id: "video_codec",

@@ -907,6 +907,7 @@ export type MediaFileSortKey =
   | "duration"
   | "bitrate"
   | "audio_bitrate"
+  | "play_count"
   | "bit_depth"
   | "audio_title"
   | "audio_artist"
@@ -1103,6 +1104,7 @@ export type GroupedSeriesTableRow = {
   quality_score_average: number | null;
   bitrate_average: number | null;
   audio_bitrate_average: number | null;
+  play_count_total?: number | null;
   children_loaded: boolean;
 };
 

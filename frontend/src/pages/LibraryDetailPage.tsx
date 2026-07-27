@@ -146,6 +146,7 @@ type GroupedAnalyzedFilesMetrics = {
   hdr_type: string | null;
   bitrate: number | null;
   audio_bitrate: number | null;
+  jellyfin_play_count?: number | null;
   bit_depth?: number | null;
   audio_codecs: string[];
   audio_spatial_profiles: string[];
@@ -522,6 +523,9 @@ function buildGroupedAnalyzedFilesMetrics(files: MediaFileRow[]): GroupedAnalyze
     hdr_type: commonScalar(files.map((file) => file.hdr_type ?? "sdr"), () => false),
     bitrate: averageNumber(files.map((file) => file.bitrate)),
     audio_bitrate: averageNumber(files.map((file) => file.audio_bitrate)),
+    jellyfin_play_count: files.some((file) => file.jellyfin_play_count !== null && file.jellyfin_play_count !== undefined)
+      ? files.reduce((sum, file) => sum + (file.jellyfin_play_count ?? 0), 0)
+      : null,
     bit_depth: commonScalar(files.map((file) => file.bit_depth), (value) => value == null),
     audio_codecs: commonArray(files.map((file) => file.audio_codecs)),
     audio_spatial_profiles: commonArray(files.map((file) => file.audio_spatial_profiles)),
@@ -544,6 +548,7 @@ function buildGroupedAnalyzedFilesMetricsFromSeries(entry: GroupedSeriesTableRow
     hdr_type: null,
     bitrate: entry.bitrate_average,
     audio_bitrate: entry.audio_bitrate_average,
+    jellyfin_play_count: entry.play_count_total,
     bit_depth: null,
     audio_codecs: [],
     audio_spatial_profiles: [],
@@ -986,6 +991,19 @@ export function buildFileColumns(
         formatBitrate(isGroupedAnalyzedFilesRow(row) ? row.metrics.audio_bitrate : row.audio_bitrate),
       render: (row) =>
         formatBitrate(isGroupedAnalyzedFilesRow(row) ? row.metrics.audio_bitrate : row.audio_bitrate),
+    },
+    {
+      key: "play_count",
+      labelKey: "libraryStatistics.items.playCount",
+      sizing: { mode: "content", minPx: 92, maxPx: 124 },
+      measureValue: (row) => {
+        const value = isGroupedAnalyzedFilesRow(row) ? row.metrics.jellyfin_play_count : row.jellyfin_play_count;
+        return value === null || value === undefined ? t("fileTable.na") : String(Math.trunc(value));
+      },
+      render: (row) => {
+        const value = isGroupedAnalyzedFilesRow(row) ? row.metrics.jellyfin_play_count : row.jellyfin_play_count;
+        return value === null || value === undefined ? t("fileTable.na") : String(Math.trunc(value));
+      },
     },
     {
       key: "bit_depth",
@@ -1767,9 +1785,10 @@ export function LibraryDetailPage() {
       new Set<FileColumnKey>(
         getEnabledLibraryStatisticTableTooltipColumns(savedTableViewSettings, activeLibraryType, {
           showMusicQualityScore,
+          hasPlaybackProvider: hasPlaybackData,
         }),
       ),
-    [savedTableViewSettings, activeLibraryType, showMusicQualityScore],
+    [savedTableViewSettings, activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const fileColumns = useMemo(
     () => {
@@ -1819,8 +1838,11 @@ export function LibraryDetailPage() {
   const baseSearchConfig = useMemo(() => getLibraryFileSearchConfig("file"), []);
   const BaseSearchIcon = baseSearchConfig.icon;
   const visibleStatisticColumns = useMemo(
-    () => getVisibleLibraryStatisticTableColumns(savedTableViewSettings, activeLibraryType, { showMusicQualityScore }),
-    [savedTableViewSettings, activeLibraryType, showMusicQualityScore],
+    () => getVisibleLibraryStatisticTableColumns(savedTableViewSettings, activeLibraryType, {
+      showMusicQualityScore,
+      hasPlaybackProvider: hasPlaybackData,
+    }),
+    [savedTableViewSettings, activeLibraryType, hasPlaybackData, showMusicQualityScore],
   );
   const availableComparisonFields = useMemo(
     () => getComparisonFieldDefinitionsForLibraryType(activeLibraryType, { showMusicQualityScore, hasPlaybackData }),
@@ -4172,6 +4194,7 @@ export function LibraryDetailPage() {
                         libraryType={activeLibraryType}
                         showMusicQualityScore={showMusicQualityScore}
                         hasVideoMetadata={hasVideoMetadata}
+                        hasPlaybackProvider={hasPlaybackData}
                         onChange={(nextSettings) => setDraftTableViewSettings(cloneLibraryStatisticsSettings(nextSettings))}
                       />
                     ) : (

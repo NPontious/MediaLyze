@@ -83,6 +83,7 @@ FileSortKey = Literal[
     "duration",
     "bitrate",
     "audio_bitrate",
+    "play_count",
     "bit_depth",
     "audio_title",
     "audio_artist",
@@ -285,6 +286,8 @@ def _cursor_sort_value(row: MediaFileTableRow, sort_key: FileSortKey):
         return row.bitrate or 0
     if sort_key == "audio_bitrate":
         return row.audio_bitrate or 0
+    if sort_key == "play_count":
+        return row.jellyfin_play_count or 0
     if sort_key == "bit_depth":
         return row.bit_depth or 0
     if sort_key == "audio_codecs":
@@ -725,6 +728,28 @@ def _subtitle_source_sort_expr(subtitle_aggregates):
     )
 
 
+def _jellyfin_play_count_expression():
+    return (
+        select(func.coalesce(func.sum(JellyfinUserItemData.play_count), 0))
+        .select_from(JellyfinMediaMatch)
+        .join(JellyfinItem, JellyfinItem.id == JellyfinMediaMatch.jellyfin_item_id)
+        .join(JellyfinUserItemData, JellyfinUserItemData.jellyfin_item_id == JellyfinItem.id)
+        .join(
+            JellyfinUser,
+            and_(
+                JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id,
+                JellyfinUser.enabled_for_sync.is_(True),
+            ),
+        )
+        .where(
+            JellyfinMediaMatch.media_file_id == MediaFile.id,
+            JellyfinMediaMatch.status == "matched",
+        )
+        .correlate(MediaFile)
+        .scalar_subquery()
+    )
+
+
 def _sort_expression(sort_key: FileSortKey, primary_video_streams, audio_aggregates, subtitle_aggregates):
     if sort_key == "file":
         return func.lower(MediaFile.relative_path)
@@ -750,6 +775,8 @@ def _sort_expression(sort_key: FileSortKey, primary_video_streams, audio_aggrega
         return func.coalesce(cast(MediaFile.bitrate, Float), cast(MediaFile.audio_bitrate, Float), 0)
     if sort_key == "audio_bitrate":
         return func.coalesce(cast(MediaFile.audio_bitrate, Float), 0)
+    if sort_key == "play_count":
+        return _jellyfin_play_count_expression()
     if sort_key == "bit_depth":
         return func.coalesce(audio_aggregates.c.max_audio_bit_depth, 0)
     if sort_key == "audio_title":
@@ -1677,14 +1704,17 @@ def list_grouped_library_files(
             ).all()
         )
         visible_series_rows = [_row_from_model(media_file, resolution_categories) for media_file in _load_media_files_by_ids(db, visible_series_file_ids)]
+        _add_jellyfin_metadata(db, visible_series_rows)
         for series_id in series_ids:
             series_rows = [row for row in visible_series_rows if row.series_id == series_id]
+            play_counts = [row.jellyfin_play_count for row in series_rows if row.jellyfin_play_count is not None]
             series_metrics_by_id[series_id] = {
                 "total_size_bytes": sum(row.size_bytes for row in series_rows),
                 "total_duration_seconds": sum(row.duration or 0 for row in series_rows),
                 "quality_score_average": _average_present([row.quality_score for row in series_rows]),
                 "bitrate_average": _average_present([row.bitrate for row in series_rows]),
                 "audio_bitrate_average": _average_present([row.audio_bitrate for row in series_rows]),
+                "play_count_total": sum(play_counts) if play_counts else None,
             }
     items = []
     for row in page_rows:
@@ -1705,6 +1735,7 @@ def list_grouped_library_files(
                     quality_score_average=float(metrics["quality_score_average"]) if metrics.get("quality_score_average") is not None else None,
                     bitrate_average=float(metrics["bitrate_average"]) if metrics.get("bitrate_average") is not None else None,
                     audio_bitrate_average=float(metrics["audio_bitrate_average"]) if metrics.get("audio_bitrate_average") is not None else None,
+                    play_count_total=int(metrics["play_count_total"]) if metrics.get("play_count_total") is not None else None,
                     children_loaded=False,
                 )
             )

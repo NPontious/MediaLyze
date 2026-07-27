@@ -328,6 +328,7 @@ class GroupedSeriesTableRowRead(BaseModel):
     quality_score_average: float | None = None
     bitrate_average: float | None = None
     audio_bitrate_average: float | None = None
+    play_count_total: int | None = None
     children_loaded: bool = False
 
 

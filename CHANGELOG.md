@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ Enhancements
 
+* Add the aggregated playback-provider play count as an optional integer column in the library Analyzed files panel
 * Add per-user Jellyfin play-count statistics for linked libraries and make non-zero play counts available as a metric-comparison axis
 * Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
 * Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
@@ -17,6 +18,8 @@ All notable changes to this project will be documented in this file.
 
 ### 🐛 Fixed
 
+* Keep the file-detail playback-history range highlighter aligned with the Custom selection
+* Vertically center file-detail playback-history timestamps with the rest of their table rows and remove the short separator beneath the timestamp cell
 * Keep the file-detail Streaming date picker inside the content area, add runtime-aware playback grouping, and compact its export action and playback rows
 * Open every file detail view on Overview instead of carrying the previously selected subsection across files
 * Fix hardware/software profile dark-mode palette

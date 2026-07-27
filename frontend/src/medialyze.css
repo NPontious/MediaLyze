@@ -552,14 +552,18 @@
   font-size: 0.72rem;
   font-weight: 700;
 }
-.playback-history-table td { font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.playback-history-table td {
+  vertical-align: middle;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
 .playback-history-table tbody tr { cursor: pointer; }
 .playback-history-table tbody tr:hover { background: color-mix(in srgb, var(--ink) 3%, transparent); }
 .playback-history-table tbody tr.is-selected {
   background: color-mix(in srgb, var(--accent) 7%, transparent);
   box-shadow: inset 3px 0 var(--accent);
 }
-.playback-history-table td:first-child { display: flex; align-items: center; gap: 8px; }
+.playback-history-timestamp { display: inline-flex; align-items: center; gap: 8px; }
 .playback-history-table td:last-child { width: 30px; color: var(--muted); }
 .playback-history-table td:last-child svg { width: 16px; }
 .playback-history-provider,
