@@ -1,7 +1,7 @@
 import "../i18n";
 
 import type { ComponentProps } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -245,9 +245,9 @@ describe("JellyfinSettingsPanel", () => {
     const idleConnection = { ...CONNECTION, last_status: "success" };
     vi.spyOn(api, "jellyfinSyncStatus").mockResolvedValue(idleSyncStatus(idleConnection));
     vi.spyOn(api, "jellyfinUsers").mockResolvedValue([
-      { jellyfin_user_id: "1", name: "Alice", enabled_for_sync: true, last_synced_at: null },
-      { jellyfin_user_id: "2", name: "Bob", enabled_for_sync: false, last_synced_at: null },
       { jellyfin_user_id: "3", name: "Carla", enabled_for_sync: true, last_synced_at: null },
+      { jellyfin_user_id: "2", name: "Bob", enabled_for_sync: false, last_synced_at: null },
+      { jellyfin_user_id: "1", name: "Alice", enabled_for_sync: true, last_synced_at: null },
     ]);
     const updateUsers = vi.spyOn(api, "updateJellyfinUsers").mockImplementation(async (ids) => [
       { jellyfin_user_id: "1", name: "Alice", enabled_for_sync: ids.includes("1"), last_synced_at: null },
@@ -258,8 +258,12 @@ describe("JellyfinSettingsPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("2 of 3 selected")).toBeInTheDocument();
-    expect(screen.getByText("Selected")).toBeInTheDocument();
-    expect(screen.getByText("Not selected")).toBeInTheDocument();
+    const selectedGroup = screen.getByRole("region", { name: "Selected" });
+    const unselectedGroup = screen.getByRole("region", { name: "Not selected" });
+    expect(within(selectedGroup).getAllByRole("checkbox").map((checkbox) => checkbox.parentElement?.textContent?.trim()))
+      .toEqual(["Alice", "Carla"]);
+    expect(within(unselectedGroup).getAllByRole("checkbox").map((checkbox) => checkbox.parentElement?.textContent?.trim()))
+      .toEqual(["Bob"]);
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playback users" }), {
       target: { value: "bob" },
     });

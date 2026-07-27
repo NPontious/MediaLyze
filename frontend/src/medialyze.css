@@ -133,9 +133,22 @@
   .jellyfin-sync-steps li.is-active > span { animation: none; }
 }
 
+.jellyfin-users-heading { align-items: center; }
+.jellyfin-users-count {
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
 .jellyfin-user-selection,
 .jellyfin-user-groups,
-.jellyfin-user-group { display: grid; gap: 12px; }
+.jellyfin-user-group { display: grid; }
+.jellyfin-user-selection {
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 82%, var(--ink) 2%);
+}
+.jellyfin-user-groups { gap: 10px; }
 .jellyfin-user-selection-toolbar {
   display: flex;
   align-items: center;
@@ -146,7 +159,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  width: min(360px, 100%);
+  width: min(420px, 100%);
 }
 .jellyfin-user-search > svg {
   position: absolute;
@@ -157,12 +170,23 @@
   pointer-events: none;
 }
 .jellyfin-settings .jellyfin-user-search input { width: 100%; padding-left: 36px; }
-.jellyfin-user-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.jellyfin-user-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.jellyfin-user-bulk-button.secondary.small {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 7px;
+}
 .jellyfin-user-group {
-  padding: 12px;
-  border: 1px solid rgba(31, 28, 22, 0.1);
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   border-radius: 8px;
-  background: rgba(31, 28, 22, 0.025);
+  background: color-mix(in srgb, var(--panel) 68%, var(--ink) 1.5%);
 }
 .jellyfin-user-group-heading {
   display: flex;
@@ -173,20 +197,48 @@
   font-size: 0.78rem;
   font-weight: 750;
 }
+.jellyfin-user-group-heading h4 {
+  margin: 0;
+  color: inherit;
+  font: inherit;
+}
+.jellyfin-user-group-heading .badge {
+  min-height: 22px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
 .jellyfin-user-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px 14px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 12px;
 }
 .jellyfin-user-list label {
   display: inline-flex;
   gap: 8px;
   align-items: center;
-  min-height: 30px;
-  padding: 3px 5px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
   border-radius: 6px;
+  font-size: 0.84rem;
+  transition: background 0.16s ease, border-color 0.16s ease;
 }
-.jellyfin-user-list label:hover { background: rgba(31, 28, 22, 0.04); }
+.jellyfin-user-list label:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.jellyfin-user-list label:focus-within {
+  border-color: color-mix(in srgb, var(--accent-2) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 7%, transparent);
+}
+.jellyfin-user-list input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent-2);
+}
+.jellyfin-user-selection[aria-busy="true"] .jellyfin-user-list label { color: var(--muted); }
 .jellyfin-library-list { gap: 0; }
 .jellyfin-library-card { gap: 8px; padding: 10px 0; border-bottom: 1px solid rgba(31, 28, 22, 0.12); }
 .jellyfin-library-card:last-child { border-bottom: 0; }
@@ -222,6 +274,7 @@
   .jellyfin-status-grid { grid-template-columns: minmax(0, 1fr); }
   .jellyfin-user-selection-toolbar { align-items: stretch; flex-direction: column; }
   .jellyfin-user-search { width: 100%; }
+  .jellyfin-user-bulk-actions { justify-content: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

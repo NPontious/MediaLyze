@@ -122,9 +122,10 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
   const usersBusy = pending?.startsWith("user-") ?? false;
   const selectedUserCount = users.filter((user) => user.enabled_for_sync).length;
   const normalizedUserSearch = userSearch.trim().toLocaleLowerCase();
-  const visibleUsers = normalizedUserSearch
+  const visibleUsers = (normalizedUserSearch
     ? users.filter((user) => user.name.toLocaleLowerCase().includes(normalizedUserSearch))
-    : users;
+    : [...users]
+  ).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   const visibleSelectedUsers = visibleUsers.filter((user) => user.enabled_for_sync);
   const visibleUnselectedUsers = visibleUsers.filter((user) => !user.enabled_for_sync);
   const parsedSyncInterval = normalizedSyncInterval(syncInterval);
@@ -361,10 +362,11 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
 
   function renderUserGroup(group: "selected" | "unselected", groupUsers: JellyfinUser[]) {
     if (!groupUsers.length) return null;
+    const headingId = `jellyfin-user-group-${group}`;
     return (
-      <div className="jellyfin-user-group">
+      <section className="jellyfin-user-group" aria-labelledby={headingId}>
         <div className="jellyfin-user-group-heading">
-          <span>{t(`jellyfin.userGroups.${group}`)}</span>
+          <h4 id={headingId}>{t(`jellyfin.userGroups.${group}`)}</h4>
           <span className="badge">{groupUsers.length}</span>
         </div>
         <div className="jellyfin-user-list">
@@ -380,7 +382,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
             </label>
           ))}
         </div>
-      </div>
+      </section>
     );
   }
 
@@ -566,15 +568,17 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
           </div>
         </section>
 
-        <section className="jellyfin-settings-section">
+        <section className="jellyfin-settings-section jellyfin-users-section" aria-labelledby="jellyfin-users-heading">
           <div className="jellyfin-section-heading jellyfin-users-heading">
             <div>
-              <h3>{t("jellyfin.users")}</h3>
-              <p>{t("jellyfin.usersSelected", { selected: selectedUserCount, total: users.length })}</p>
+              <h3 id="jellyfin-users-heading">{t("jellyfin.users")}</h3>
+              <p className="jellyfin-users-count" aria-live="polite">
+                {t("jellyfin.usersSelected", { selected: selectedUserCount, total: users.length })}
+              </p>
             </div>
           </div>
           {!users.length ? <div className="notice">{t("jellyfin.usersEmpty")}</div> : (
-            <div className="jellyfin-user-selection">
+            <div className="jellyfin-user-selection" aria-busy={usersBusy}>
               <div className="jellyfin-user-selection-toolbar">
                 <label className="jellyfin-user-search">
                   <Search aria-hidden="true" />
@@ -589,7 +593,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
                 <div className="jellyfin-user-bulk-actions" role="group" aria-label={t("jellyfin.userBulkActions")}>
                   <button
                     type="button"
-                    className="secondary small"
+                    className="secondary small jellyfin-user-bulk-button"
                     disabled={usersBusy || selectedUserCount === users.length}
                     onClick={() => void selectAllUsers()}
                   >
@@ -597,7 +601,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
                   </button>
                   <button
                     type="button"
-                    className="secondary small"
+                    className="secondary small jellyfin-user-bulk-button"
                     disabled={usersBusy || selectedUserCount === 0}
                     onClick={() => void selectNoUsers()}
                   >

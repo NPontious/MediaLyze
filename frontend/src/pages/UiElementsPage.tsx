@@ -1509,7 +1509,7 @@ export function UiElementsPage() {
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />
               </VariantCard>
-              <VariantCard title="Jellyfin connection lifecycle, catalog status, local matching, and playback users" source={`${settings} > Jellyfin`} classes={["jellyfin-form-grid", "jellyfin-actions", "jellyfin-sync-progress", "jellyfin-status-grid", "jellyfin-user-toolbar"]} wide>
+              <VariantCard title="Jellyfin connection lifecycle, catalog status, local matching, and playback users" source={`${settings} > Jellyfin`} classes={["jellyfin-form-grid", "jellyfin-actions", "jellyfin-sync-progress", "jellyfin-status-grid", "jellyfin-user-selection", "jellyfin-user-selection-toolbar", "jellyfin-user-groups"]} wide>
                 <div className="jellyfin-settings-section">
                   <div className="jellyfin-section-heading"><Server aria-hidden="true" /><div><h3>Connection</h3><p>Read-only external metadata source.</p></div></div>
                   <div className="jellyfin-form-grid"><label><span>Server URL</span><input defaultValue="http://jellyfin:8096" /></label><label><span>API key</span><input type="password" defaultValue="configured-key" /></label><div className="jellyfin-form-field"><span className="jellyfin-field-label"><label htmlFor="catalog-jellyfin-sync-interval">Sync interval</label><TooltipTrigger ariaLabel="Explain sync interval" content="Enter 0 to disable scheduled synchronization.">?</TooltipTrigger></span><input id="catalog-jellyfin-sync-interval" type="number" min="0" defaultValue="0" /></div></div>
@@ -1519,11 +1519,19 @@ export function UiElementsPage() {
                     <div className="jellyfin-sync-summary status-success"><Check aria-hidden="true" /><div><span className="jellyfin-status-eyebrow">Catalog synchronization</span><strong>Catalog current</strong><span>Last successful sync: today</span></div></div>
                     <div className="jellyfin-sync-summary status-warning"><AlertTriangle aria-hidden="true" /><div><span className="jellyfin-status-eyebrow">Local file association</span><strong>0% locally matched</strong><span>0 of 1,901 items matched</span><div className="jellyfin-match-warning"><span>No Jellyfin items are associated with local files yet.</span><a href="#path-mapping">Open path mapping <ArrowUpRight aria-hidden="true" /></a></div></div></div>
                   </div>
-                  <div className="jellyfin-user-toolbar">
-                    <label className="jellyfin-user-search"><span className="sr-only">Search playback users</span><Search aria-hidden="true" /><input type="search" placeholder="Search users…" /></label>
-                    <div className="jellyfin-user-bulk-actions" role="group" aria-label="Playback user bulk selection"><span>7 of 22 selected</span><button type="button" className="secondary small">Select all</button><button type="button" className="secondary small">Select none</button></div>
+                  <div className="jellyfin-section-heading jellyfin-users-heading">
+                    <div><h3>Playback users</h3><p className="jellyfin-users-count">7 of 22 selected</p></div>
                   </div>
-                  <div className="jellyfin-user-groups"><section className="jellyfin-user-group"><h4>Selected <span>7</span></h4><div className="jellyfin-user-grid"><label><input type="checkbox" defaultChecked /> Alice</label><label><input type="checkbox" defaultChecked /> Bob</label></div></section><section className="jellyfin-user-group"><h4>Not selected <span>15</span></h4><div className="jellyfin-user-grid"><label><input type="checkbox" /> Guest</label></div></section></div>
+                  <div className="jellyfin-user-selection">
+                    <div className="jellyfin-user-selection-toolbar">
+                      <label className="jellyfin-user-search"><span className="sr-only">Search playback users</span><Search aria-hidden="true" /><input type="search" placeholder="Search users…" /></label>
+                      <div className="jellyfin-user-bulk-actions" role="group" aria-label="Playback user bulk selection"><button type="button" className="secondary small jellyfin-user-bulk-button">Select all</button><button type="button" className="secondary small jellyfin-user-bulk-button">Select none</button></div>
+                    </div>
+                    <div className="jellyfin-user-groups">
+                      <section className="jellyfin-user-group" aria-labelledby="catalog-jellyfin-selected-users"><div className="jellyfin-user-group-heading"><h4 id="catalog-jellyfin-selected-users">Selected</h4><span className="badge">7</span></div><div className="jellyfin-user-list"><label><input type="checkbox" defaultChecked /> Alice</label><label><input type="checkbox" defaultChecked /> Bob</label></div></section>
+                      <section className="jellyfin-user-group" aria-labelledby="catalog-jellyfin-unselected-users"><div className="jellyfin-user-group-heading"><h4 id="catalog-jellyfin-unselected-users">Not selected</h4><span className="badge">15</span></div><div className="jellyfin-user-list"><label><input type="checkbox" /> Guest</label></div></section>
+                    </div>
+                  </div>
                 </div>
               </VariantCard>
               <VariantCard title="Collapsed MediaLyze library settings with active scan" source={`${settings} > Libraries`} classes={["library-settings-card", "is-collapsed", "library-settings-chevron", "library-scan-progress"]} wide>

@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ Enhancements
 
+* Refine the Jellyfin playback-user selector into a compact, alphabetically sorted grouped checklist with clearer selection counts and responsive bulk actions
 * Add the aggregated playback-provider play count as an optional integer column in the library Analyzed files panel
 * Add per-user Jellyfin play-count statistics for linked libraries and make non-zero play counts available as a metric-comparison axis
 * Add the distinct number of Jellyfin users who played each asset as a library metric-comparison axis
