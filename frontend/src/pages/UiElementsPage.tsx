@@ -1858,11 +1858,19 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-timeline-axis", "playback-history-timestamp", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
+              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-streaming-availability-tooltip", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-data-summary", "playback-history-timeline-axis", "playback-history-availability-boundary", "playback-history-availability-note", "playback-history-timestamp", "playback-history-undated", "playback-history-undated-list", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
                 <div className="file-detail-overview">
                   <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
                   <div className="meta-tags file-detail-overview-badges"><span className="badge">HEVC</span><span className="badge">UHD</span><div className="jellyfin-overview-badge-group is-separated"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div></div>
                   <div className="file-detail-jellyfin-overview"><div className="jellyfin-overview-details"><div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Production year</span><strong className="format-details-value">2016</strong></div></div></div><p className="jellyfin-overview">Jellyfin catalog metadata is shown alongside the technical analysis.</p></div></div>
+                  <div className="panel-title-row">
+                    <h2>Streaming</h2>
+                    <TooltipTrigger
+                      className="file-detail-streaming-availability-tooltip"
+                      ariaLabel="Explain individual playback availability"
+                      content="Jellyfin retains individual playback starts for a limited history. The exact synchronized boundary is marked on the timeline."
+                    />
+                  </div>
                   <div className="jellyfin-file-panel jellyfin-streaming-panel">
                     <JellyfinStreamingDetails
                       durationSeconds={7198}
@@ -1879,6 +1887,7 @@ export function UiElementsPage() {
                         { jellyfin_activity_id: 98, jellyfin_user_id: "catalog-mads", user_name: "Mads", played_at: "2026-07-22T11:16:41Z" },
                         { jellyfin_activity_id: 97, jellyfin_user_id: "catalog-sara", user_name: "Sara", played_at: "2026-07-19T14:44:02Z" },
                       ]}
+                      individualPlaybackHistoryStartAt="2026-07-19T14:44:02Z"
                       showAllPlaybacksWhenUnstacked
                     />
                   </div>

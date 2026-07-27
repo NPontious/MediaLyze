@@ -455,6 +455,7 @@ export type JellyfinFileOverlay = {
     user_name: string;
     played_at: string;
   }>;
+  individual_playback_history_start_at: string | null;
 };
 
 export const DEFAULT_QUALITY_PROFILE: QualityProfile = {

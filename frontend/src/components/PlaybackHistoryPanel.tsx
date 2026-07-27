@@ -17,6 +17,7 @@ import {
   groupPlaybackEntries,
   type PlaybackDisplayEntry,
   type PlaybackHistoryEntry,
+  type PlaybackUndatedEntry,
 } from "../lib/playback-history";
 import {
   HistoryRangeToggle,
@@ -25,11 +26,12 @@ import {
 import { SlidingTogglePill } from "./SlidingTogglePill";
 import { TooltipTrigger } from "./TooltipTrigger";
 
-export type { PlaybackHistoryEntry } from "../lib/playback-history";
+export type { PlaybackHistoryEntry, PlaybackUndatedEntry } from "../lib/playback-history";
 
 const USER_COLORS = ["#f05f2a", "#277a65", "#4f78c7", "#9a5cc2", "#9aaf1a", "#d48b20"];
 const PAGE_SIZE = 8;
 const RANGE_STORAGE_KEY = "medialyze-file-streaming-range-selection";
+const EMPTY_UNDATED_ENTRIES: PlaybackUndatedEntry[] = [];
 
 type PlaybackDisplayMode = "individual" | "grouped";
 
@@ -72,12 +74,20 @@ function readRangeSelection(): HistoryRangeSelection {
   }
 }
 
-function rangeBounds(entries: PlaybackHistoryEntry[], selection: HistoryRangeSelection): [number, number] | null {
+function rangeBounds(
+  entries: PlaybackHistoryEntry[],
+  selection: HistoryRangeSelection,
+  individualPlaybackHistoryStartAt?: string | null,
+): [number, number] | null {
   const timestamps = entries
     .map((entry) => Date.parse(entry.lastPlayedAt))
     .filter(Number.isFinite);
   if (!timestamps.length) return null;
-  const earliest = Math.min(...timestamps);
+  const individualHistoryStart = Date.parse(individualPlaybackHistoryStartAt ?? "");
+  const earliest = Math.min(
+    ...timestamps,
+    ...(Number.isFinite(individualHistoryStart) ? [individualHistoryStart] : []),
+  );
   const latest = Math.max(...timestamps);
   if (selection.mode === "all") {
     return earliest === latest
@@ -116,13 +126,17 @@ function csvCell(value: string | number): string {
 
 export function PlaybackHistoryPanel({
   entries: sourceEntries,
+  undatedEntries: sourceUndatedEntries = EMPTY_UNDATED_ENTRIES,
   durationSeconds,
   individualEventsAvailable = true,
+  individualPlaybackHistoryStartAt,
   showAllWhenUnstacked = false,
 }: {
   entries: PlaybackHistoryEntry[];
+  undatedEntries?: PlaybackUndatedEntry[];
   durationSeconds?: number | null;
   individualEventsAvailable?: boolean;
+  individualPlaybackHistoryStartAt?: string | null;
   showAllWhenUnstacked?: boolean;
 }) {
   const { t, i18n } = useTranslation();
@@ -134,21 +148,39 @@ export function PlaybackHistoryPanel({
         .sort((left, right) => Date.parse(right.lastPlayedAt) - Date.parse(left.lastPlayedAt)),
     [sourceEntries],
   );
-  const users = useMemo(
-    () => Array.from(new Map(entries.map((entry) => [`${entry.provider}:${entry.userId}`, entry])).values()),
-    [entries],
+  const undatedEntries = useMemo(
+    () => sourceUndatedEntries.filter((entry) => entry.playCount > 0),
+    [sourceUndatedEntries],
   );
-  const providers = useMemo(() => [...new Set(entries.map((entry) => entry.provider))], [entries]);
+  const users = useMemo(
+    () => Array.from(
+      new Map(
+        [...entries, ...undatedEntries].map((entry) => [
+          `${entry.provider}:${entry.userId}`,
+          entry,
+        ]),
+      ).values(),
+    ),
+    [entries, undatedEntries],
+  );
+  const providers = useMemo(
+    () => [...new Set([...entries, ...undatedEntries].map((entry) => entry.provider))],
+    [entries, undatedEntries],
+  );
   const [rangeSelection, setRangeSelection] = useState<HistoryRangeSelection>(readRangeSelection);
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(
-    () => new Set(entries.map((entry) => `${entry.provider}:${entry.userId}`)),
+    () => new Set(
+      [...entries, ...undatedEntries].map((entry) => `${entry.provider}:${entry.userId}`),
+    ),
   );
   const [selectedProvider, setSelectedProvider] = useState("all");
   const [displayMode, setDisplayMode] = useState<PlaybackDisplayMode>("individual");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(entries[0]?.id ?? null);
   const [page, setPage] = useState(0);
-  const knownUserKeysRef = useRef(new Set(entries.map((entry) => `${entry.provider}:${entry.userId}`)));
+  const knownUserKeysRef = useRef(
+    new Set([...entries, ...undatedEntries].map((entry) => `${entry.provider}:${entry.userId}`)),
+  );
 
   useEffect(() => {
     const nextUserKeys = new Set(users.map((user) => `${user.provider}:${user.userId}`));
@@ -162,7 +194,14 @@ export function PlaybackHistoryPanel({
     knownUserKeysRef.current = nextUserKeys;
   }, [users]);
 
-  const bounds = useMemo(() => rangeBounds(entries, rangeSelection), [entries, rangeSelection]);
+  const bounds = useMemo(
+    () => rangeBounds(entries, rangeSelection, individualPlaybackHistoryStartAt),
+    [entries, individualPlaybackHistoryStartAt, rangeSelection],
+  );
+  const individualHistoryStartTimestamp = useMemo(() => {
+    const timestamp = Date.parse(individualPlaybackHistoryStartAt ?? "");
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }, [individualPlaybackHistoryStartAt]);
   const filteredSourceEntries = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase(i18n.language);
     return entries.filter((entry) => {
@@ -178,6 +217,19 @@ export function PlaybackHistoryPanel({
       );
     });
   }, [bounds, entries, i18n.language, search, selectedProvider, selectedUsers]);
+  const filteredUndatedEntries = useMemo(() => {
+    const normalizedSearch = search.trim().toLocaleLowerCase(i18n.language);
+    return undatedEntries.filter((entry) => {
+      const userKey = `${entry.provider}:${entry.userId}`;
+      return (
+        selectedUsers.has(userKey)
+        && (selectedProvider === "all" || entry.provider === selectedProvider)
+        && (!normalizedSearch
+          || entry.userName.toLocaleLowerCase(i18n.language).includes(normalizedSearch)
+          || entry.provider.toLocaleLowerCase(i18n.language).includes(normalizedSearch))
+      );
+    });
+  }, [i18n.language, search, selectedProvider, selectedUsers, undatedEntries]);
   const filteredEntries = useMemo<PlaybackDisplayEntry[]>(
     () =>
       displayMode === "grouped"
@@ -201,8 +253,28 @@ export function PlaybackHistoryPanel({
   const selectedEntry = selectedId === null
     ? null
     : filteredEntries.find((entry) => entry.id === selectedId) ?? filteredEntries[0] ?? null;
-  const minimumDate = entries.length ? dateKey(new Date(Math.min(...entries.map((entry) => Date.parse(entry.lastPlayedAt))))) : null;
+  const minimumDate = entries.length
+    ? dateKey(new Date(Math.min(
+        ...entries.map((entry) => Date.parse(entry.lastPlayedAt)),
+        ...(individualHistoryStartTimestamp !== null ? [individualHistoryStartTimestamp] : []),
+      )))
+    : null;
   const maximumDate = entries.length ? dateKey(new Date(Math.max(...entries.map((entry) => Date.parse(entry.lastPlayedAt))))) : null;
+  const individualHistoryBoundaryPosition =
+    individualHistoryStartTimestamp !== null && bounds && bounds[1] > bounds[0]
+      ? ((individualHistoryStartTimestamp - bounds[0]) / (bounds[1] - bounds[0])) * 100
+      : null;
+  const individualHistoryBoundaryVisible =
+    individualHistoryBoundaryPosition !== null
+    && individualHistoryBoundaryPosition >= 0
+    && individualHistoryBoundaryPosition <= 100;
+  const timestampedPlaybackCount = entries.reduce((total, entry) => total + entry.playCount, 0);
+  const undatedPlaybackCount = undatedEntries.reduce((total, entry) => total + entry.playCount, 0);
+  const totalPlaybackCount = timestampedPlaybackCount + undatedPlaybackCount;
+  const filteredUndatedPlaybackCount = filteredUndatedEntries.reduce(
+    (total, entry) => total + entry.playCount,
+    0,
+  );
   const hasResumePosition = filteredEntries.some(
     (entry) => (entry.resumePositionSeconds ?? 0) > 0 && !entry.completed,
   );
@@ -262,6 +334,14 @@ export function PlaybackHistoryPanel({
             ]
           : []),
       ]),
+      ...filteredUndatedEntries.map((entry) => [
+        t("jellyfin.playbackHistory.unknownTimestamp"),
+        entry.userName,
+        entry.provider,
+        entry.playCount,
+        ...(hasCompletionState ? [""] : []),
+        ...(hasResumePosition ? [""] : []),
+      ]),
     ];
     const blob = new Blob([rows.map((row) => row.map(csvCell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -272,7 +352,7 @@ export function PlaybackHistoryPanel({
     URL.revokeObjectURL(url);
   }
 
-  if (!entries.length) {
+  if (!entries.length && !undatedEntries.length) {
     return <div className="notice">{t("jellyfin.noPlaybackData")}</div>;
   }
 
@@ -392,55 +472,88 @@ export function PlaybackHistoryPanel({
             : "jellyfin.playbackHistory.aggregateScopeNote",
         )}
       </p>
+      <p className="playback-history-data-summary">
+        {t("jellyfin.playbackHistory.coverageSummary", {
+          timestamped: timestampedPlaybackCount,
+          total: totalPlaybackCount,
+          undated: undatedPlaybackCount,
+        })}
+      </p>
 
       <div className={`playback-history-layout${selectedEntry ? " has-detail" : ""}`}>
         <div className="playback-history-main">
-          <section className="playback-history-timeline" aria-label={t("jellyfin.playbackHistory.timeline")}>
-            <div className="playback-history-timeline-axis" aria-hidden="true">
-              <span>{bounds ? formatTimelineLabel(bounds[0], i18n.language) : "—"}</span>
-              <span>{bounds ? formatTimelineLabel(bounds[1], i18n.language) : "—"}</span>
-            </div>
-            <div className="playback-history-timeline-track">
-              <span className="playback-history-timeline-line" />
-              {filteredEntries.map((entry) => {
-                const userIndex = users.findIndex(
-                  (user) => user.provider === entry.provider && user.userId === entry.userId,
-                );
-                const timestamp = Date.parse(entry.lastPlayedAt);
-                const position = bounds && bounds[1] > bounds[0]
-                  ? ((timestamp - bounds[0]) / (bounds[1] - bounds[0])) * 100
-                  : 50;
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={[
-                      "playback-history-timeline-event",
-                      entry.eventCount > 1 ? "is-cluster" : "",
-                      selectedEntry?.id === entry.id ? "is-selected" : "",
-                    ].filter(Boolean).join(" ")}
-                    data-event-count={entry.eventCount}
+          {entries.length ? (
+            <section className="playback-history-timeline" aria-label={t("jellyfin.playbackHistory.timeline")}>
+              <div className="playback-history-timeline-axis" aria-hidden="true">
+                <span>{bounds ? formatTimelineLabel(bounds[0], i18n.language) : "—"}</span>
+                <span>{bounds ? formatTimelineLabel(bounds[1], i18n.language) : "—"}</span>
+              </div>
+              <div className="playback-history-timeline-track">
+                <span className="playback-history-timeline-line" />
+                {individualHistoryBoundaryVisible ? (
+                  <span
+                    className="playback-history-availability-boundary"
                     style={{
-                      "--playback-event-position": `${Math.max(0, Math.min(100, position))}%`,
-                      "--playback-user-color": USER_COLORS[userIndex % USER_COLORS.length],
+                      "--playback-history-boundary-position": `${individualHistoryBoundaryPosition}%`,
                     } as CSSProperties}
-                    aria-label={
-                      entry.eventCount > 1
-                        ? t("jellyfin.playbackHistory.groupedEventLabel", {
-                            user: entry.userName,
-                            count: entry.eventCount,
-                            start: formatTimestamp(entry.firstPlayedAt, i18n.language),
-                            end: formatTimestamp(entry.lastPlayedAt, i18n.language),
-                          })
-                        : `${entry.userName}, ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`
-                    }
-                    title={`${entry.userName} · ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`}
-                    onClick={() => setSelectedId(entry.id)}
+                    aria-hidden="true"
                   />
-                );
-              })}
+                ) : null}
+                {filteredEntries.map((entry) => {
+                  const userIndex = users.findIndex(
+                    (user) => user.provider === entry.provider && user.userId === entry.userId,
+                  );
+                  const timestamp = Date.parse(entry.lastPlayedAt);
+                  const position = bounds && bounds[1] > bounds[0]
+                    ? ((timestamp - bounds[0]) / (bounds[1] - bounds[0])) * 100
+                    : 50;
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={[
+                        "playback-history-timeline-event",
+                        entry.eventCount > 1 ? "is-cluster" : "",
+                        selectedEntry?.id === entry.id ? "is-selected" : "",
+                      ].filter(Boolean).join(" ")}
+                      data-event-count={entry.eventCount}
+                      style={{
+                        "--playback-event-position": `${Math.max(0, Math.min(100, position))}%`,
+                        "--playback-user-color": USER_COLORS[userIndex % USER_COLORS.length],
+                      } as CSSProperties}
+                      aria-label={
+                        entry.eventCount > 1
+                          ? t("jellyfin.playbackHistory.groupedEventLabel", {
+                              user: entry.userName,
+                              count: entry.eventCount,
+                              start: formatTimestamp(entry.firstPlayedAt, i18n.language),
+                              end: formatTimestamp(entry.lastPlayedAt, i18n.language),
+                            })
+                          : `${entry.userName}, ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`
+                      }
+                      title={`${entry.userName} · ${formatTimestamp(entry.lastPlayedAt, i18n.language)}`}
+                      onClick={() => setSelectedId(entry.id)}
+                    />
+                  );
+                })}
+              </div>
+              {individualHistoryStartTimestamp !== null ? (
+                <p className="playback-history-availability-note">
+                  <span className="playback-history-availability-key" aria-hidden="true" />
+                  {t("jellyfin.playbackHistory.individualHistoryFrom", {
+                    date: formatTimestamp(
+                      individualPlaybackHistoryStartAt as string,
+                      i18n.language,
+                    ),
+                  })}
+                </p>
+              ) : null}
+            </section>
+          ) : (
+            <div className="notice playback-history-no-timestamps">
+              {t("jellyfin.playbackHistory.noTimestampedPlaybacks")}
             </div>
-          </section>
+          )}
 
           <div className="playback-history-table-toolbar">
             <label className="playback-history-search">
@@ -464,7 +577,7 @@ export function PlaybackHistoryPanel({
             <button
               type="button"
               className="secondary small playback-history-export-button"
-              disabled={!filteredEntries.length}
+              disabled={!filteredEntries.length && !filteredUndatedEntries.length}
               onClick={exportCsv}
             >
               {t("jellyfin.playbackHistory.export")}
@@ -534,7 +647,11 @@ export function PlaybackHistoryPanel({
                 </tbody>
               </table>
             </div>
-          ) : <div className="notice">{t("jellyfin.playbackHistory.noResults")}</div>}
+          ) : (
+            <div className="notice">
+              {t("jellyfin.playbackHistory.noTimestampedResults")}
+            </div>
+          )}
 
           {pageCount > 1 ? (
             <div className="playback-history-pagination">
@@ -558,6 +675,54 @@ export function PlaybackHistoryPanel({
                 <ChevronRight aria-hidden="true" />
               </button>
             </div>
+          ) : null}
+
+          {filteredUndatedEntries.length ? (
+            <section
+              className="playback-history-undated"
+              aria-labelledby="playback-history-undated-title"
+            >
+              <div className="playback-history-undated-header">
+                <div>
+                  <h3 id="playback-history-undated-title">
+                    {t("jellyfin.playbackHistory.unknownTimeTitle")}
+                  </h3>
+                  <p>{t("jellyfin.playbackHistory.unknownTimeDescription")}</p>
+                </div>
+                <span>
+                  {t("jellyfin.playbackHistory.unknownPlayCount", {
+                    count: filteredUndatedPlaybackCount,
+                  })}
+                </span>
+              </div>
+              <ul className="playback-history-undated-list">
+                {filteredUndatedEntries.map((entry) => {
+                  const userIndex = users.findIndex(
+                    (user) => user.provider === entry.provider && user.userId === entry.userId,
+                  );
+                  return (
+                    <li key={entry.id}>
+                      <span
+                        className="playback-history-table-dot"
+                        style={{
+                          "--playback-user-color": USER_COLORS[userIndex % USER_COLORS.length],
+                        } as CSSProperties}
+                      />
+                      <strong>{entry.userName}</strong>
+                      <span className="playback-history-provider">
+                        <Server aria-hidden="true" />
+                        {entry.provider}
+                      </span>
+                      <span className="playback-history-undated-count">
+                        {t("jellyfin.playbackHistory.unknownPlayCount", {
+                          count: entry.playCount,
+                        })}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
           ) : null}
         </div>
 

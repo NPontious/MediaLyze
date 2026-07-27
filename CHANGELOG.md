@@ -14,12 +14,14 @@ All notable changes to this project will be documented in this file.
 * Add per-user Jellyfin play-count statistics for linked libraries and make non-zero play counts available as a metric-comparison axis
 * Add the distinct number of Jellyfin users who played each asset as a library metric-comparison axis
 * Import individual playback starts from Jellyfin's retained activity log for the file-detail Streaming timeline, and add a feature flag that removes unstacked table pagination
+* Mark the earliest synchronized individual playback on the file-detail Streaming timeline and explain Jellyfin activity-history limits in the panel header
 * Group and search Settings navigation and persist every settings section in the URL for shareable browser-history-aware links
 * Split frontend routes and large chart, animation, icon, and framework dependencies into cacheable production chunks instead of one roughly 2.58 MB JavaScript bundle
 * Accelerate Docker and desktop publishing with native parallel AMD64/ARM64 image builds, persistent dependency and image-layer caches, and consolidated manually selectable dev/release workflows
 
 ### 🐛 Fixed
 
+* Preserve every Jellyfin per-user play count in the file-detail Streaming view when only some plays have individual activity timestamps, and list the unresolved remainder without a determinable time
 * Restore comfortable responsive search-field widths in the library Analyzed files panel and wrap the search toolbar before adjacent header controls collide
 * Keep the file-detail playback-stacking control available for every asset, place it in its own right-aligned labeled control with explanatory tooltips, and group only nearby events from the same user within a quarter runtime or a ten-minute fallback
 * Keep the file-detail playback-history range highlighter aligned with the Custom selection

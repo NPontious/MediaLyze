@@ -45,13 +45,25 @@ describe("PlaybackHistoryPanel", () => {
   afterEach(cleanup);
 
   it("renders only Jellyfin fields that have a real playback timestamp", () => {
-    const { container } = render(<JellyfinStreamingDetails userData={playbackData} durationSeconds={7200} />);
+    const { container } = render(
+      <JellyfinStreamingDetails
+        userData={playbackData}
+        individualPlaybackHistoryStartAt="2026-05-15T08:00:00Z"
+        durationSeconds={7200}
+      />,
+    );
 
     expect(screen.getAllByText("Frederik")).not.toHaveLength(0);
     expect(screen.getAllByText("Louise")).not.toHaveLength(0);
     expect(screen.queryByText("No timestamp")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
-    expect(screen.getByText(/Only Jellyfin's latest aggregate playback value/)).toBeInTheDocument();
+    expect(screen.getByText(/Jellyfin currently provides only the latest timestamp/)).toBeInTheDocument();
+    expect(screen.getByText("Timestamped: 2 of 5 · Without an individual timestamp: 3")).toBeInTheDocument();
+    const undatedRegion = screen.getByRole("region", {
+      name: "Playbacks without a determinable time",
+    });
+    expect(within(undatedRegion).getByText("2 playbacks")).toBeInTheDocument();
+    expect(within(undatedRegion).getByText("1 playback")).toBeInTheDocument();
     const groupedButton = screen.getByRole("button", { name: "Group nearby playback events" });
     expect(groupedButton).toBeEnabled();
     fireEvent.click(groupedButton);
@@ -73,6 +85,8 @@ describe("PlaybackHistoryPanel", () => {
     const timeline = container.querySelector(".playback-history-timeline");
     expect(timeline?.children[0]).toHaveClass("playback-history-timeline-axis");
     expect(timeline?.children[1]).toHaveClass("playback-history-timeline-track");
+    expect(container.querySelector(".playback-history-availability-boundary")).not.toBeNull();
+    expect(screen.getByText(/Individual playbacks available from/)).toBeInTheDocument();
 
     const table = screen.getByRole("table");
     expect(within(table).getByText("2m")).toBeInTheDocument();
@@ -90,7 +104,9 @@ describe("PlaybackHistoryPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Frederik✓" }));
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.getByText("No playback data matches the selected range and filters.")).toBeInTheDocument();
+    expect(
+      screen.getByText("No timestamped playback matches the selected range and filters."),
+    ).toBeInTheDocument();
   });
 
   it("groups only nearby events from the same provider and user within a quarter runtime", () => {
@@ -244,15 +260,105 @@ describe("PlaybackHistoryPanel", () => {
       <JellyfinStreamingDetails
         userData={playbackData}
         playbackEvents={playbackEvents}
+        individualPlaybackHistoryStartAt="2026-07-19T08:00:00Z"
         durationSeconds={7200}
       />,
     );
 
-    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(3);
-    expect(within(screen.getByRole("table")).getAllByText("1")).toHaveLength(3);
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(4);
+    expect(container.querySelector(".playback-history-availability-boundary")).not.toBeNull();
+    expect(screen.getByText(/Individual playbacks available from/)).toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getAllByText("1")).toHaveLength(4);
+    expect(screen.getByText("Timestamped: 4 of 5 · Without an individual timestamp: 1")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Playbacks without a determinable time" }))
+        .getByText("Louise"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Playback state")).not.toBeInTheDocument();
     expect(screen.queryByText("Resume position")).not.toBeInTheDocument();
     expect(screen.getByText(/Individual playback starts imported/)).toBeInTheDocument();
+  });
+
+  it("preserves every aggregate play and every user when only some events have timestamps", () => {
+    const userData = [
+      {
+        jellyfin_user_id: "user-1",
+        user_name: "Alice",
+        play_count: 20,
+        played: true,
+        playback_position_ticks: 0,
+        last_played_date: "2026-07-26T20:00:00Z",
+        is_favorite: false,
+      },
+      {
+        jellyfin_user_id: "user-2",
+        user_name: "Bob",
+        play_count: 10,
+        played: false,
+        playback_position_ticks: 0,
+        last_played_date: "2026-07-25T20:00:00Z",
+        is_favorite: false,
+      },
+      {
+        jellyfin_user_id: "user-3",
+        user_name: "Cara",
+        play_count: 8,
+        played: false,
+        playback_position_ticks: 0,
+        last_played_date: "2026-07-24T20:00:00Z",
+        is_favorite: false,
+      },
+      {
+        jellyfin_user_id: "user-4",
+        user_name: "Dani",
+        play_count: 5,
+        played: false,
+        playback_position_ticks: 0,
+        last_played_date: null,
+        is_favorite: false,
+      },
+    ];
+    const playbackEvents = [
+      {
+        jellyfin_activity_id: 201,
+        jellyfin_user_id: "user-1",
+        user_name: "Alice",
+        played_at: "2026-07-26T20:00:00Z",
+      },
+      {
+        jellyfin_activity_id: 202,
+        jellyfin_user_id: "user-2",
+        user_name: "Bob",
+        played_at: "2026-07-25T20:00:00Z",
+      },
+    ];
+
+    const { container } = render(
+      <JellyfinStreamingDetails
+        userData={userData}
+        playbackEvents={playbackEvents}
+        individualPlaybackHistoryStartAt="2026-07-20T08:00:00Z"
+      />,
+    );
+
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(3);
+    expect(
+      screen.getByText("Timestamped: 3 of 43 · Without an individual timestamp: 40"),
+    ).toBeInTheDocument();
+    const users = container.querySelector(".playback-history-user-list");
+    expect(users).not.toBeNull();
+    expect(within(users as HTMLElement).getByText("Alice")).toBeInTheDocument();
+    expect(within(users as HTMLElement).getByText("Bob")).toBeInTheDocument();
+    expect(within(users as HTMLElement).getByText("Cara")).toBeInTheDocument();
+    expect(within(users as HTMLElement).getByText("Dani")).toBeInTheDocument();
+
+    const undated = screen.getByRole("region", {
+      name: "Playbacks without a determinable time",
+    });
+    expect(within(undated).getByText("19 playbacks")).toBeInTheDocument();
+    expect(within(undated).getByText("9 playbacks")).toBeInTheDocument();
+    expect(within(undated).getByText("7 playbacks")).toBeInTheDocument();
+    expect(within(undated).getByText("5 playbacks")).toBeInTheDocument();
   });
 
   it("shows every unstacked row without pagination when the feature flag is enabled", () => {

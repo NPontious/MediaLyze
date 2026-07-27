@@ -3,7 +3,11 @@ import { type ReactNode, useMemo } from "react";
 
 import { api, type JellyfinFileOverlay, type JellyfinItem, type JellyfinItemDetail } from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
-import { PlaybackHistoryPanel, type PlaybackHistoryEntry } from "./PlaybackHistoryPanel";
+import {
+  PlaybackHistoryPanel,
+  type PlaybackHistoryEntry,
+  type PlaybackUndatedEntry,
+} from "./PlaybackHistoryPanel";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 type UserData = JellyfinFileOverlay["user_data"];
@@ -103,48 +107,94 @@ export function JellyfinOverviewDetails({
 export function JellyfinStreamingDetails({
   userData,
   playbackEvents = [],
+  individualPlaybackHistoryStartAt,
   durationSeconds,
   showAllPlaybacksWhenUnstacked = false,
 }: {
   userData: UserData;
   playbackEvents?: JellyfinFileOverlay["playback_events"];
+  individualPlaybackHistoryStartAt?: string | null;
   durationSeconds?: number | null;
   showAllPlaybacksWhenUnstacked?: boolean;
 }): ReactNode {
   const individualEventsAvailable = playbackEvents.length > 0;
-  const entries = useMemo<PlaybackHistoryEntry[]>(
-    () => individualEventsAvailable
-      ? playbackEvents.map((event) => ({
-          id: `jellyfin-activity:${event.jellyfin_activity_id}`,
+  const { entries, undatedEntries } = useMemo<{
+    entries: PlaybackHistoryEntry[];
+    undatedEntries: PlaybackUndatedEntry[];
+  }>(() => {
+    const timestampedEntries: PlaybackHistoryEntry[] = playbackEvents.map((event) => ({
+      id: `jellyfin-activity:${event.jellyfin_activity_id}`,
+      provider: "Jellyfin",
+      userId: event.jellyfin_user_id,
+      userName: event.user_name,
+      playCount: 1,
+      lastPlayedAt: event.played_at,
+    }));
+    const eventTimestampsByUser = new Map<string, number[]>();
+    playbackEvents.forEach((event) => {
+      const timestamps = eventTimestampsByUser.get(event.jellyfin_user_id) ?? [];
+      const timestamp = Date.parse(event.played_at);
+      if (Number.isFinite(timestamp)) timestamps.push(timestamp);
+      eventTimestampsByUser.set(event.jellyfin_user_id, timestamps);
+    });
+    const unknownTimestampEntries: PlaybackUndatedEntry[] = [];
+
+    userData.forEach((user) => {
+      if (user.play_count <= 0) return;
+      const importedTimestamps = eventTimestampsByUser.get(user.jellyfin_user_id) ?? [];
+      let timestampedCount = importedTimestamps.length;
+      const latestTimestamp = Date.parse(user.last_played_date ?? "");
+      const latestAlreadyImported = Number.isFinite(latestTimestamp)
+        && importedTimestamps.some((timestamp) => Math.abs(timestamp - latestTimestamp) < 1000);
+
+      if (
+        timestampedCount < user.play_count
+        && Number.isFinite(latestTimestamp)
+        && !latestAlreadyImported
+      ) {
+        timestampedEntries.push({
+          id: `jellyfin-latest:${user.jellyfin_user_id}`,
           provider: "Jellyfin",
-          userId: event.jellyfin_user_id,
-          userName: event.user_name,
+          userId: user.jellyfin_user_id,
+          userName: user.user_name,
           playCount: 1,
-          lastPlayedAt: event.played_at,
-        }))
-      : userData
-          .filter((user): user is UserData[number] & { last_played_date: string } =>
-            Boolean(user.last_played_date) && user.play_count > 0,
-          )
-          .map((user) => ({
-            id: `jellyfin:${user.jellyfin_user_id}`,
-            provider: "Jellyfin",
-            userId: user.jellyfin_user_id,
-            userName: user.user_name,
-            playCount: user.play_count,
-            completed: user.played,
-            resumePositionSeconds: user.playback_position_ticks / 10_000_000,
-            lastPlayedAt: user.last_played_date,
-          })),
-    [individualEventsAvailable, playbackEvents, userData],
-  );
+          ...(!individualEventsAvailable
+            ? {
+                completed: user.played,
+                resumePositionSeconds: user.playback_position_ticks / 10_000_000,
+              }
+            : {}),
+          lastPlayedAt: user.last_played_date as string,
+        });
+        timestampedCount += 1;
+      }
+
+      const unknownTimestampCount = Math.max(0, user.play_count - timestampedCount);
+      if (unknownTimestampCount > 0) {
+        unknownTimestampEntries.push({
+          id: `jellyfin-undated:${user.jellyfin_user_id}`,
+          provider: "Jellyfin",
+          userId: user.jellyfin_user_id,
+          userName: user.user_name,
+          playCount: unknownTimestampCount,
+        });
+      }
+    });
+
+    return {
+      entries: timestampedEntries,
+      undatedEntries: unknownTimestampEntries,
+    };
+  }, [individualEventsAvailable, playbackEvents, userData]);
 
   return (
     <div className="jellyfin-file-panel jellyfin-streaming-panel">
       <PlaybackHistoryPanel
         entries={entries}
+        undatedEntries={undatedEntries}
         durationSeconds={durationSeconds}
         individualEventsAvailable={individualEventsAvailable}
+        individualPlaybackHistoryStartAt={individualPlaybackHistoryStartAt}
         showAllWhenUnstacked={showAllPlaybacksWhenUnstacked}
       />
     </div>

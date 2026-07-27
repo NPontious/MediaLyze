@@ -291,6 +291,7 @@ class JellyfinFileOverlayRead(BaseModel):
     item: JellyfinItemRead | None = None
     user_data: list[JellyfinUserItemDataRead] = Field(default_factory=list)
     playback_events: list[JellyfinPlaybackEventRead] = Field(default_factory=list)
+    individual_playback_history_start_at: datetime | None = None
 
 
 class JellyfinUnmatchedRead(BaseModel):

@@ -527,6 +527,7 @@ describe("FileDetailPage", () => {
           played_at: "2026-07-10T08:00:00Z",
         },
       ],
+      individual_playback_history_start_at: "2026-07-10T08:00:00Z",
     };
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
@@ -551,6 +552,19 @@ describe("FileDetailPage", () => {
     expect(playbackTable).toBeInTheDocument();
     expect(within(playbackTable).getAllByText("1")).toHaveLength(3);
     expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(3);
+    expect(
+      screen.getByText("Timestamped: 3 of 3 · Without an individual timestamp: 0"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".playback-history-availability-boundary")).not.toBeNull();
+    expect(screen.getByText(/Individual playbacks available from/)).toBeInTheDocument();
+    const availabilityHelp = screen.getByRole("button", {
+      name: "Explain individual playback availability",
+    });
+    expect(availabilityHelp).toHaveTextContent("?");
+    fireEvent.click(availabilityHelp);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /separate playbacks only from the earliest event it has synchronized/,
+    );
     expect(screen.getByText(/Individual playback starts imported/)).toBeInTheDocument();
     expect(within(playbackTable).queryByText("Playback state")).not.toBeInTheDocument();
     expect(screen.queryByText("Matched by path")).not.toBeInTheDocument();
@@ -570,6 +584,7 @@ describe("FileDetailPage", () => {
       item: null,
       user_data: [],
       playback_events: [],
+      individual_playback_history_start_at: null,
     });
 
     renderPage(file.id);

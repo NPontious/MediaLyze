@@ -1216,6 +1216,11 @@ def test_sync_persists_individual_playback_events_and_exposes_them_for_a_file(
     payload = _client(db).get(f"/api/files/{media.id}/jellyfin").json()
     assert [event["jellyfin_activity_id"] for event in payload["playback_events"]] == [102, 101, 103]
     assert {event["user_name"] for event in payload["playback_events"]} == {"Alice", "Bob"}
+    assert [(row["user_name"], row["play_count"]) for row in payload["user_data"]] == [
+        ("Alice", 2),
+        ("Bob", 2),
+    ]
+    assert payload["individual_playback_history_start_at"].startswith("2026-07-10T08:00:00")
 
 
 def test_sync_fetches_enabled_user_data_concurrently(

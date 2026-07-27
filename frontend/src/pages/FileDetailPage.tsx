@@ -1891,10 +1891,21 @@ export function FileDetailPage() {
       title: t("jellyfin.streaming"),
       loading: !jellyfinOverlay && !jellyfinError,
       error: jellyfinError,
+      titleAddon: (
+        <TooltipTrigger
+          className="file-detail-streaming-availability-tooltip"
+          ariaLabel={t("jellyfin.playbackHistory.availabilityHelpAria")}
+          content={t("jellyfin.playbackHistory.availabilityHelp")}
+          preserveLineBreaks
+        />
+      ),
       body: (
         <JellyfinStreamingDetails
           userData={jellyfinOverlay?.user_data ?? []}
           playbackEvents={jellyfinOverlay?.playback_events ?? []}
+          individualPlaybackHistoryStartAt={
+            jellyfinOverlay?.individual_playback_history_start_at ?? null
+          }
           durationSeconds={file?.duration}
           showAllPlaybacksWhenUnstacked={showAllPlaybacksWhenUnstacked}
         />

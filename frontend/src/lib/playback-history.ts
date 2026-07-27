@@ -9,6 +9,14 @@ export type PlaybackHistoryEntry = {
   lastPlayedAt: string;
 };
 
+export type PlaybackUndatedEntry = {
+  id: string;
+  provider: string;
+  userId: string;
+  userName: string;
+  playCount: number;
+};
+
 export type PlaybackDisplayEntry = PlaybackHistoryEntry & {
   eventCount: number;
   firstPlayedAt: string;

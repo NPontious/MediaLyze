@@ -2143,6 +2143,11 @@ def file_jellyfin_overlay(
         )
         .order_by(JellyfinPlaybackEvent.played_at.desc())
     ).all()
+    individual_playback_history_start_at = db.scalar(
+        select(func.min(JellyfinPlaybackEvent.played_at))
+        .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinPlaybackEvent.jellyfin_user_id)
+        .where(JellyfinUser.enabled_for_sync.is_(True))
+    )
     return JellyfinFileOverlayRead(
         match=JellyfinMatchRead(
             id=match.id,
@@ -2175,6 +2180,7 @@ def file_jellyfin_overlay(
             )
             for event, user_name in playback_event_rows
         ],
+        individual_playback_history_start_at=individual_playback_history_start_at,
     )
 
 
