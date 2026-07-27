@@ -1617,7 +1617,7 @@ export function UiElementsPage() {
                   </label>
                 </div>
               </VariantCard>
-              <VariantCard title="Structured search" source={`${libraryDetail} > Analyzed files`} classes={["metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
+              <VariantCard title="Structured search" source={`${libraryDetail} > Analyzed files`} classes={["async-panel-header-status", "metadata-search-fields", "metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
                 <div className="stack">
                   <div className="library-layout-panel-analyzed-files">
                     <div className="panel-header">

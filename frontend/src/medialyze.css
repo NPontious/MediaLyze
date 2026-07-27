@@ -1733,6 +1733,32 @@
   margin-bottom: 0;
 }
 
+.library-layout-panel-analyzed-files .panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+.library-layout-panel-analyzed-files .async-panel .panel-header > :first-child {
+  flex: 1 1 24rem;
+}
+
+.library-layout-panel-analyzed-files .async-panel-header-status {
+  flex: 1 1 30rem;
+  width: min(100%, 56rem);
+  max-width: 56rem;
+}
+
+.library-layout-panel-analyzed-files .panel-header .data-table-search-layout,
+.library-layout-panel-analyzed-files .metadata-search-fields {
+  --search-control-width: 56rem;
+  width: min(100%, var(--search-control-width));
+}
+
+.library-layout-panel-analyzed-files .panel-header .data-table-search-layout {
+  flex: 1 1 30rem;
+}
+
 .library-layout-panel-analyzed-files .panel-header .data-table-search-layout .search-filter-picker-button,
 .library-layout-panel-analyzed-files .panel-header .data-table-search-layout .metadata-search-icon-button {
   width: 40px;

@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 ### 🐛 Fixed
 
+* Restore comfortable responsive search-field widths in the library Analyzed files panel and wrap the search toolbar before adjacent header controls collide
 * Keep the file-detail playback-history range highlighter aligned with the Custom selection
 * Vertically center file-detail playback-history timestamps with the rest of their table rows and remove the short separator beneath the timestamp cell
 * Keep the file-detail Streaming date picker inside the content area, add runtime-aware playback grouping, and compact its export action and playback rows
