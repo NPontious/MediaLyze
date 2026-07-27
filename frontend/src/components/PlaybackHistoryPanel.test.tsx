@@ -45,7 +45,7 @@ describe("PlaybackHistoryPanel", () => {
   afterEach(cleanup);
 
   it("renders only Jellyfin fields that have a real playback timestamp", () => {
-    render(<JellyfinStreamingDetails userData={playbackData} durationSeconds={7200} />);
+    const { container } = render(<JellyfinStreamingDetails userData={playbackData} durationSeconds={7200} />);
 
     expect(screen.getAllByText("Frederik")).not.toHaveLength(0);
     expect(screen.getAllByText("Louise")).not.toHaveLength(0);
@@ -55,6 +55,20 @@ describe("PlaybackHistoryPanel", () => {
     expect(
       screen.getByRole("button", { name: "Individual event timestamps are required for grouping" }),
     ).toBeDisabled();
+
+    const rangeToggle = screen.getByRole("group", { name: "History range" });
+    const displayToggle = screen.getByRole("group", { name: "Timeline display" });
+    expect(rangeToggle.parentElement).toBe(displayToggle.parentElement);
+    expect(rangeToggle.nextElementSibling).toBe(displayToggle);
+    expect(displayToggle).toHaveClass("library-history-range-toggle");
+    expect(within(displayToggle).getAllByRole("button")[0]).toHaveClass("library-history-range-button");
+
+    expect(screen.queryByText("Range start")).not.toBeInTheDocument();
+    expect(screen.queryByText("Visible data")).not.toBeInTheDocument();
+    expect(screen.queryByText("Range end")).not.toBeInTheDocument();
+    const timeline = container.querySelector(".playback-history-timeline");
+    expect(timeline?.children[0]).toHaveClass("playback-history-timeline-axis");
+    expect(timeline?.children[1]).toHaveClass("playback-history-timeline-track");
 
     const table = screen.getByRole("table");
     expect(within(table).getByText("2m")).toBeInTheDocument();
@@ -75,7 +89,7 @@ describe("PlaybackHistoryPanel", () => {
     expect(screen.getByText("No playback data matches the selected range and filters.")).toBeInTheDocument();
   });
 
-  it("groups only nearby events from the same provider and user using the media runtime", () => {
+  it("groups only nearby events from the same provider and user within a quarter runtime", () => {
     const entries: PlaybackHistoryEntry[] = [
       {
         id: "frederik-1",
@@ -95,7 +109,7 @@ describe("PlaybackHistoryPanel", () => {
         playCount: 1,
         completed: true,
         resumePositionSeconds: 0,
-        lastPlayedAt: "2026-07-20T11:30:00Z",
+        lastPlayedAt: "2026-07-20T10:20:00Z",
       },
       {
         id: "frederik-3",
@@ -105,7 +119,7 @@ describe("PlaybackHistoryPanel", () => {
         playCount: 1,
         completed: true,
         resumePositionSeconds: 0,
-        lastPlayedAt: "2026-07-22T11:30:00Z",
+        lastPlayedAt: "2026-07-20T11:00:00Z",
       },
       {
         id: "louise-1",
@@ -127,11 +141,11 @@ describe("PlaybackHistoryPanel", () => {
       eventCount: 2,
       playCount: 2,
       firstPlayedAt: "2026-07-20T10:00:00Z",
-      lastPlayedAt: "2026-07-20T11:30:00Z",
+      lastPlayedAt: "2026-07-20T10:20:00Z",
     });
   });
 
-  it("uses a five-hour grouping fallback when the runtime is unavailable", () => {
+  it("uses a ten-minute grouping fallback when the runtime is unavailable", () => {
     const makeEntry = (id: string, lastPlayedAt: string): PlaybackHistoryEntry => ({
       id,
       provider: "Jellyfin",
@@ -145,8 +159,8 @@ describe("PlaybackHistoryPanel", () => {
     const grouped = groupPlaybackEntries(
       [
         makeEntry("event-1", "2026-07-20T10:00:00Z"),
-        makeEntry("event-2", "2026-07-20T14:00:00Z"),
-        makeEntry("event-3", "2026-07-20T20:00:00Z"),
+        makeEntry("event-2", "2026-07-20T10:09:00Z"),
+        makeEntry("event-3", "2026-07-20T10:20:00Z"),
       ],
       null,
     );
@@ -174,7 +188,7 @@ describe("PlaybackHistoryPanel", () => {
         playCount: 1,
         completed: true,
         resumePositionSeconds: 0,
-        lastPlayedAt: "2026-07-20T11:00:00Z",
+        lastPlayedAt: "2026-07-20T10:20:00Z",
       },
       {
         id: "event-3",

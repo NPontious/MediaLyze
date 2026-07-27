@@ -255,15 +255,66 @@ export function PlaybackHistoryPanel({
       <div className="playback-history-controls">
         <div className="playback-history-control-block">
           <span className="playback-history-control-label">{t("jellyfin.playbackHistory.range")}</span>
-          <HistoryRangeToggle
-            selection={rangeSelection}
-            onChange={updateRangeSelection}
-            minimumDate={minimumDate}
-            maximumDate={maximumDate}
-            defaultStartDate={bounds ? dateKey(new Date(bounds[0])) : minimumDate}
-            defaultEndDate={bounds ? dateKey(new Date(bounds[1])) : maximumDate}
-            ariaLabel={t("jellyfin.playbackHistory.range")}
-          />
+          <div className="playback-history-range-actions">
+            <HistoryRangeToggle
+              selection={rangeSelection}
+              onChange={updateRangeSelection}
+              minimumDate={minimumDate}
+              maximumDate={maximumDate}
+              defaultStartDate={bounds ? dateKey(new Date(bounds[0])) : minimumDate}
+              defaultEndDate={bounds ? dateKey(new Date(bounds[1])) : maximumDate}
+              ariaLabel={t("jellyfin.playbackHistory.range")}
+            />
+            <div
+              className="library-history-range-toggle playback-history-display-toggle"
+              role="group"
+              aria-label={t("jellyfin.playbackHistory.displayMode")}
+            >
+              <SlidingTogglePill
+                activeKey={displayMode}
+                className="nav-active-pill library-history-range-pill"
+              />
+              <button
+                type="button"
+                data-toggle-key="individual"
+                className={`library-history-range-button${displayMode === "individual" ? " active" : ""}`}
+                aria-label={t(
+                  individualEventsAvailable
+                    ? "jellyfin.playbackHistory.showIndividual"
+                    : "jellyfin.playbackHistory.availableTimestamps",
+                )}
+                title={t(
+                  individualEventsAvailable
+                    ? "jellyfin.playbackHistory.showIndividual"
+                    : "jellyfin.playbackHistory.availableTimestamps",
+                )}
+                aria-pressed={displayMode === "individual"}
+                onClick={() => setDisplayMode("individual")}
+              >
+                <List aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                data-toggle-key="grouped"
+                className={`library-history-range-button${displayMode === "grouped" ? " active" : ""}`}
+                aria-label={t(
+                  individualEventsAvailable
+                    ? "jellyfin.playbackHistory.groupNearby"
+                    : "jellyfin.playbackHistory.groupUnavailable",
+                )}
+                title={t(
+                  individualEventsAvailable
+                    ? "jellyfin.playbackHistory.groupNearby"
+                    : "jellyfin.playbackHistory.groupUnavailable",
+                )}
+                aria-pressed={displayMode === "grouped"}
+                disabled={!individualEventsAvailable}
+                onClick={() => setDisplayMode("grouped")}
+              >
+                <Layers3 aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         </div>
         {providers.length > 1 ? (
           <label className="playback-history-provider-filter">
@@ -306,75 +357,9 @@ export function PlaybackHistoryPanel({
       <div className={`playback-history-layout${selectedEntry ? " has-detail" : ""}`}>
         <div className="playback-history-main">
           <section className="playback-history-timeline" aria-label={t("jellyfin.playbackHistory.timeline")}>
-            <div className="playback-history-timeline-summary">
-              <div>
-                <span>{t("jellyfin.playbackHistory.firstVisible")}</span>
-                <strong>{bounds ? formatTimelineLabel(bounds[0], i18n.language) : "—"}</strong>
-              </div>
-              <div className="playback-history-timeline-count">
-                <span>{t("jellyfin.playbackHistory.visibleRange")}</span>
-                <strong>
-                  {t(
-                    displayMode === "grouped"
-                      ? "jellyfin.playbackHistory.groupCount"
-                      : "jellyfin.playbackHistory.latestCount",
-                    { count: filteredEntries.length },
-                  )}
-                </strong>
-                <div
-                  className="playback-history-display-toggle"
-                  role="group"
-                  aria-label={t("jellyfin.playbackHistory.displayMode")}
-                >
-                  <SlidingTogglePill
-                    activeKey={displayMode}
-                    className="nav-active-pill playback-history-display-pill"
-                  />
-                  <button
-                    type="button"
-                    data-toggle-key="individual"
-                    className={displayMode === "individual" ? "active" : ""}
-                    aria-label={t(
-                      individualEventsAvailable
-                        ? "jellyfin.playbackHistory.showIndividual"
-                        : "jellyfin.playbackHistory.availableTimestamps",
-                    )}
-                    title={t(
-                      individualEventsAvailable
-                        ? "jellyfin.playbackHistory.showIndividual"
-                        : "jellyfin.playbackHistory.availableTimestamps",
-                    )}
-                    aria-pressed={displayMode === "individual"}
-                    onClick={() => setDisplayMode("individual")}
-                  >
-                    <List aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    data-toggle-key="grouped"
-                    className={displayMode === "grouped" ? "active" : ""}
-                    aria-label={t(
-                      individualEventsAvailable
-                        ? "jellyfin.playbackHistory.groupNearby"
-                        : "jellyfin.playbackHistory.groupUnavailable",
-                    )}
-                    title={t(
-                      individualEventsAvailable
-                        ? "jellyfin.playbackHistory.groupNearby"
-                        : "jellyfin.playbackHistory.groupUnavailable",
-                    )}
-                    aria-pressed={displayMode === "grouped"}
-                    disabled={!individualEventsAvailable}
-                    onClick={() => setDisplayMode("grouped")}
-                  >
-                    <Layers3 aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <div>
-                <span>{t("jellyfin.playbackHistory.latestVisible")}</span>
-                <strong>{bounds ? formatTimelineLabel(bounds[1], i18n.language) : "—"}</strong>
-              </div>
+            <div className="playback-history-timeline-axis" aria-hidden="true">
+              <span>{bounds ? formatTimelineLabel(bounds[0], i18n.language) : "—"}</span>
+              <span>{bounds ? formatTimelineLabel(bounds[1], i18n.language) : "—"}</span>
             </div>
             <div className="playback-history-timeline-track">
               <span className="playback-history-timeline-line" />
@@ -415,10 +400,6 @@ export function PlaybackHistoryPanel({
                   />
                 );
               })}
-            </div>
-            <div className="playback-history-timeline-axis" aria-hidden="true">
-              <span>{bounds ? formatTimelineLabel(bounds[0], i18n.language) : "—"}</span>
-              <span>{bounds ? formatTimelineLabel(bounds[1], i18n.language) : "—"}</span>
             </div>
           </section>
 

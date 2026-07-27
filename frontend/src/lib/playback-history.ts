@@ -14,11 +14,11 @@ export type PlaybackDisplayEntry = PlaybackHistoryEntry & {
   firstPlayedAt: string;
 };
 
-const FALLBACK_GROUPING_GAP_MS = 5 * 60 * 60 * 1000;
+const FALLBACK_GROUPING_GAP_MS = 10 * 60 * 1000;
 
 function groupingGapMs(durationSeconds?: number | null): number {
   return durationSeconds && Number.isFinite(durationSeconds) && durationSeconds > 0
-    ? durationSeconds * 1000
+    ? (durationSeconds * 1000) / 4
     : FALLBACK_GROUPING_GAP_MS;
 }
 
