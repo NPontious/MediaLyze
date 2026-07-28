@@ -8,7 +8,48 @@
     "libraries": "Settings",
     "homeAria": "Home",
     "compareAria": "Compare files",
-    "settingsAria": "Settings"
+    "settingsAria": "Settings",
+    "storageMapAria": "Storage map"
+  },
+  "storageMap": {
+    "eyebrow": "Library storage",
+    "title": "Storage Map",
+    "subtitle": "Every folder and file at a glance. Tile area corresponds to actual storage use.",
+    "library": "Library",
+    "folders": "Folders",
+    "noFolders": "No subfolders",
+    "colorBy": "Color",
+    "sortBy": "Order",
+    "up": "Up one level",
+    "areaHint": "Area = storage used",
+    "loading": "Loading storage map…",
+    "error": "The storage map could not be loaded.",
+    "errorTitle": "Unable to load storage map",
+    "retry": "Try again",
+    "emptyTitle": "No analyzed files here",
+    "emptyBody": "This folder does not contain any analyzed media yet.",
+    "noLibrariesTitle": "No libraries available",
+    "noLibrariesBody": "Create and scan a library in Settings to explore its storage map.",
+    "tilesVisible": "All {{count}} tiles visible",
+    "items": "{{count}} items",
+    "files": "{{count}} files",
+    "unknown": "Unknown",
+    "treemapAria": "Storage use by folder and file",
+    "breadcrumbAria": "Current storage map folder",
+    "folderAria": "Open folder {{name}}, {{size}}",
+    "fileAria": "Open file details for {{name}}, {{size}}",
+    "modes": {
+      "codec": "Video codec",
+      "resolution": "Resolution",
+      "hdr": "Dynamic range",
+      "quality": "Quality score",
+      "size": "File size"
+    },
+    "sorts": {
+      "size": "Size",
+      "name": "Name",
+      "quality": "Quality score"
+    }
   },
   "scanBanner": {
     "running": "Scan running...",

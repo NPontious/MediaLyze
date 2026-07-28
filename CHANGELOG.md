@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### ✨ New
+
+- add a Storage Map main navigation view with MediaLyze-native summary cards, a viewport-filling size-proportional folder/file treemap, wrapped adaptive labels, folder drill-down with a contextual overlay navigation control, file-detail navigation, metadata-based coloring, consistently inset select chevrons, and a Jellyfin/file-name switch for linked libraries
+
+### 🔒 Security
+
+- update the Electron packaging toolchain, React Router, Vite, PostCSS, and transitive YAML tooling to resolve current Dependabot advisories
+
+### ⚡ Performance
+
+- accelerate library file browsing with debounced requests, smaller pages, cached background counts, compact denormalized table rows, SQLite FTS5 trigram search, index-friendly path sorting, and compressed API responses
+- bound statistics, history, comparison, file-list, and Storage Map caches with automatic TTL/LRU cleanup; reduce comparison queries and responses to the selected axes and renderer; and lazy-load raw ffprobe payloads only when their detail panel is opened
+
 ## v0.17.0
 
 >2026-07-27

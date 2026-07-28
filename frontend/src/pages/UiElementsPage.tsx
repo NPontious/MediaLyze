@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowUp,
   ArrowUpRight,
   AudioLines,
   CalendarDays,
@@ -35,6 +36,7 @@ import {
   ListFilter,
   LoaderCircle,
   Lock,
+  Map,
   PanelBottomClose,
   PanelLeftClose,
   PanelRightClose,
@@ -1177,6 +1179,11 @@ export function UiElementsPage() {
                         <Settings aria-hidden="true" className="nav-icon" />
                       </span>
                     </a>
+                    <a href="/storage-map" className="icon-nav-button" aria-label="Storage map" onClick={preventCatalogNavigation}>
+                      <span className="nav-link-content">
+                        <Map aria-hidden="true" className="nav-icon" />
+                      </span>
+                    </a>
                   </div>
                   <div className="media-nav-libraries ui-elements-library-nav">
                     <a href="/libraries/1" className="library-nav-link active" onClick={preventCatalogNavigation}>
@@ -1838,6 +1845,97 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[9]}>
             <VariantGroup title="Library and file detail variants">
+              <VariantCard title="Storage map explorer" source="StorageMapPage" classes={["storage-map-explorer", "storage-map-toolbar", "storage-map-treemap", "storage-map-tile"]} wide>
+                <div className="storage-map-panel">
+                  <div className="storage-map-header">
+                    <div className="storage-map-title-block">
+                      <h2>Storage Map</h2>
+                      <p className="subtitle">Every folder and file at a glance. Tile area corresponds to actual storage use.</p>
+                    </div>
+                    <div className="card-grid grid storage-map-header-cards">
+                      <StatCard label="Storage" value="12.8 TB" tone="blue" />
+                      <StatCard label="Files" value="1,842" tone="teal" />
+                    </div>
+                  </div>
+                  <div className="storage-map-explorer" style={{ minHeight: 340 }}>
+                    <div className="storage-map-content">
+                      <div className="storage-map-breadcrumb-row">
+                        <nav className="storage-map-breadcrumbs" aria-label="Current storage map folder">
+                          <span><button type="button">Movies 4K</button></span>
+                          <span><ChevronRight aria-hidden="true" /><button type="button">Feature Films</button></span>
+                        </nav>
+                      </div>
+                      <div className="storage-map-toolbar">
+                        <label className="storage-map-field storage-map-library-field">
+                          <span>Library</span>
+                          <span className="storage-map-select-wrap">
+                            <select defaultValue="movies">
+                              <option value="movies">Movies 4K</option>
+                            </select>
+                            <ChevronDown aria-hidden="true" />
+                          </span>
+                        </label>
+                        <label className="storage-map-field">
+                          <span>Color</span>
+                          <span className="storage-map-select-wrap">
+                            <select defaultValue="codec">
+                              <option value="codec">Video codec</option>
+                            </select>
+                            <ChevronDown aria-hidden="true" />
+                          </span>
+                        </label>
+                        <label className="storage-map-field">
+                          <span>Order</span>
+                          <span className="storage-map-select-wrap">
+                            <select defaultValue="size">
+                              <option value="size">Size</option>
+                            </select>
+                            <ChevronDown aria-hidden="true" />
+                          </span>
+                        </label>
+                        <div className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle" role="group" aria-label="Displayed file name">
+                          <SlidingTogglePill activeKey="jellyfin" className="nav-active-pill distribution-chart-mode-pill" />
+                          <button type="button" data-toggle-key="file" className="distribution-chart-mode-button analyzed-file-name-source-button" aria-label="Show file names">
+                            <span className="distribution-chart-mode-button-content"><FileText aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                          </button>
+                          <button type="button" data-toggle-key="jellyfin" className="distribution-chart-mode-button analyzed-file-name-source-button active" aria-label="Show Jellyfin names">
+                            <span className="distribution-chart-mode-button-content"><JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                          </button>
+                        </div>
+                        <span className="storage-map-area-hint"><Info aria-hidden="true" />Area = storage used</span>
+                      </div>
+                      <div className="storage-map-stage has-up-overlay" style={{ minHeight: 250 }}>
+                        <TooltipTrigger
+                          ariaLabel="Up one level"
+                          content="Up one level"
+                          className="secondary icon-only-button storage-map-up-button storage-map-up-overlay"
+                          pinOnClick={false}
+                        >
+                          <ArrowUp aria-hidden="true" />
+                        </TooltipTrigger>
+                        <div className="storage-map-treemap">
+                          <button type="button" className="storage-map-tile storage-map-tile-folder" style={{ left: 0, top: 0, width: "62%", height: "100%", background: "#1b998b" }}>
+                            <span className="storage-map-tile-copy" aria-hidden="true">
+                              <span className="storage-map-tile-name"><Folder aria-hidden="true" /><strong>Feature Films</strong></span>
+                              <span className="storage-map-tile-meta">HEVC</span>
+                              <span className="storage-map-tile-size">4.2 TB</span>
+                            </span>
+                          </button>
+                          <button type="button" className="storage-map-tile storage-map-tile-file" style={{ left: "62%", top: 0, width: "38%", height: "68%", background: "#4f6fcf" }}>
+                            <span className="storage-map-tile-copy" aria-hidden="true">
+                              <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>Free Solo.mkv</strong></span>
+                              <span className="storage-map-tile-meta">H.264</span>
+                              <span className="storage-map-tile-size">287 GB</span>
+                            </span>
+                          </button>
+                          <button type="button" className="storage-map-tile storage-map-tile-file labels-hidden" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "#ff6b3d" }} />
+                        </div>
+                      </div>
+                      <div className="storage-map-footer"><span><i aria-hidden="true" />All 426 tiles visible</span><span>Video codec</span></div>
+                    </div>
+                  </div>
+                </div>
+              </VariantCard>
               <VariantCard title="File detail navigation and badges" source={`${fileDetail} > Overview`} classes={["file-detail-layout", "file-detail-navigation-panel", "file-detail-badge-tooltip-trigger"]} wide>
                 <FileDetailNavigationFixture />
               </VariantCard>

@@ -2,7 +2,7 @@ import "../i18n";
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
 import { api, type AppSettings } from "../lib/api";
@@ -69,6 +69,7 @@ function renderShell(initialEntries = ["/"]) {
             <Route element={<AppShell />}>
               <Route path="/" element={<div>Dashboard</div>} />
               <Route path="/settings" element={<div>Settings page</div>} />
+              <Route path="/storage-map" element={<div>Storage map page</div>} />
               <Route path="/ui-elements" element={<div>UI elements page</div>} />
             </Route>
           </Routes>
@@ -100,6 +101,25 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("shows the storage map as the fourth primary navigation item", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+
+    renderShell();
+
+    const primaryNavigation = await screen.findByRole("navigation", { name: "Primary" });
+    const primaryLinks = Array.from(primaryNavigation.querySelectorAll<HTMLAnchorElement>(".media-nav-icons > a"));
+    expect(primaryLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "/",
+      "/files/compare",
+      "/settings",
+      "/storage-map",
+    ]);
+
+    fireEvent.click(screen.getByRole("link", { name: "Storage map" }));
+
+    expect(await screen.findByText("Storage map page")).toBeInTheDocument();
+  });
+
   it("links the MediaLyze brand back to the dashboard", async () => {
     window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
 

@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediaLyze · Library Space Map Explorer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #181714;
+      --bg-2: #211f1b;
+      --panel: rgba(38, 35, 31, .92);
+      --panel-strong: #2c2924;
+      --surface: rgba(255,255,255,.045);
+      --surface-hover: rgba(255,255,255,.075);
+      --ink: #f0ece4;
+      --muted: #9e9990;
+      --faint: #716d66;
+      --line: rgba(240,236,228,.10);
+      --line-strong: rgba(240,236,228,.18);
+      --accent: #ff6b3d;
+      --accent-soft: rgba(255,107,61,.14);
+      --teal: #32b7a7;
+      --teal-soft: rgba(50,183,167,.14);
+      --shadow: 0 22px 60px rgba(0,0,0,.32);
+      --radius: 18px;
+      --control-radius: 8px;
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f2efe9;
+      --bg-2: #e8e0d5;
+      --panel: rgba(255,255,255,.88);
+      --panel-strong: #fffdfa;
+      --surface: rgba(31,28,22,.045);
+      --surface-hover: rgba(31,28,22,.075);
+      --ink: #1f1c16;
+      --muted: #716d65;
+      --faint: #969086;
+      --line: rgba(31,28,22,.10);
+      --line-strong: rgba(31,28,22,.17);
+      --shadow: 0 22px 60px rgba(31,28,22,.11);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      font-family: "Space Grotesk", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 6% -10%, rgba(255,107,61,.10), transparent 30rem),
+        radial-gradient(circle at 96% 12%, rgba(50,183,167,.08), transparent 32rem),
+        linear-gradient(130deg, var(--bg), var(--bg-2));
+      -webkit-font-smoothing: antialiased;
+    }
+    button, select { font: inherit; }
+    button, select { color: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+    h1, h2, h3, p { margin: 0; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+
+    .app {
+      width: min(1540px, 100%);
+      margin: 0 auto;
+      padding: 12px clamp(10px, 2vw, 28px) 56px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+    .app-header {
+      position: sticky;
+      top: 10px;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 64px;
+      padding: 10px 18px;
+    }
+    .brand { display: flex; align-items: baseline; gap: 9px; }
+    .brand strong { font-size: 1.25rem; letter-spacing: -.04em; }
+    .version {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: .68rem;
+      font-weight: 800;
+    }
+    .header-nav { display: flex; gap: 4px; margin-left: auto; }
+    .header-nav span, .header-nav button {
+      padding: 8px 11px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 700;
+    }
+    .header-nav .active { color: var(--ink); background: var(--surface); }
+    .theme-toggle {
+      min-width: 38px;
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--surface);
+      font-size: .72rem;
+      font-weight: 800;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: end;
+      padding: 38px 6px 24px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-size: .7rem;
+      font-weight: 850;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    .intro h1 {
+      max-width: 850px;
+      margin-top: 8px;
+      font-size: clamp(2rem, 5vw, 4.3rem);
+      line-height: .98;
+      letter-spacing: -.065em;
+    }
+    .intro p {
+      max-width: 780px;
+      margin-top: 14px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .data-badge {
+      display: grid;
+      gap: 4px;
+      min-width: 190px;
+      padding: 14px;
+      border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--line));
+      border-radius: 12px;
+      background: var(--teal-soft);
+    }
+    .data-badge b { font-size: 1.25rem; }
+    .data-badge span { color: var(--muted); font-size: .76rem; }
+
+    .concept-tabs {
+      position: sticky;
+      top: 84px;
+      z-index: 80;
+      display: flex;
+      gap: 7px;
+      margin: 0 0 16px;
+      padding: 8px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+      box-shadow: 0 12px 28px rgba(0,0,0,.18);
+      backdrop-filter: blur(16px);
+    }
+    .concept-tabs,
+    .decision { display: none; }
+    .concept-tab {
+      flex: 1 0 max-content;
+      min-height: 38px;
+      padding: 8px 14px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 750;
+    }
+    .concept-tab.active { background: var(--ink); color: var(--bg); }
+
+    .concept { display: none; }
+    .concept.active { display: block; animation: reveal .25s ease-out; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(5px); } }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .concept.active { animation: none; }
+    }
+    .concept-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 17px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .concept-heading h2 { font-size: 1.18rem; letter-spacing: -.025em; }
+    .concept-heading p { max-width: 680px; margin-top: 5px; color: var(--muted); font-size: .82rem; line-height: 1.45; }
+    .recommendation {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: .66rem;
+      font-weight: 850;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .control {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 34px;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: var(--control-radius);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: .72rem;
+      font-weight: 700;
+    }
+    .control select {
+      padding: 0 17px 0 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-weight: 750;
+    }
+    .ghost-button {
+      min-height: 34px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--control-radius);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: .72rem;
+      font-weight: 750;
+    }
+    .ghost-button:hover { color: var(--ink); background: var(--surface-hover); }
+    .crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+    .crumb {
+      padding: 5px 7px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: .76rem;
+      font-weight: 700;
+    }
+    .crumb:hover { color: var(--ink); background: var(--surface); }
+    .crumb.current { color: var(--ink); pointer-events: none; }
+    .crumb-sep { color: var(--faint); font-size: .68rem; }
+    .summary {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: .74rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .summary b { color: var(--ink); }
+
+    .treemap {
+      position: relative;
+      min-height: 540px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--bg) 62%, #0e1111);
+      isolation: isolate;
+    }
+    .tile {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-width: 0;
+      padding: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.30);
+      border-radius: 0;
+      color: #fff;
+      text-align: left;
+      text-shadow: 0 1px 3px rgba(0,0,0,.68);
+      transition: filter .16s ease, transform .16s ease, opacity .16s ease;
+    }
+    .tile:hover, .tile:focus-visible {
+      z-index: 5;
+      filter: brightness(1.17) saturate(1.08);
+      transform: none;
+    }
+    .tile.is-hovered {
+      z-index: 5;
+      filter: brightness(1.17) saturate(1.08);
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,.8);
+    }
+    .tile.folder { cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,.10); }
+    .tile-name {
+      display: block;
+      overflow: hidden;
+      font-size: clamp(.65rem, 1vw, .88rem);
+      font-weight: 800;
+      line-height: 1.12;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tile-kind {
+      display: block;
+      margin-top: 3px;
+      overflow: hidden;
+      font-size: .59rem;
+      font-weight: 750;
+      opacity: .78;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tile-size {
+      font-size: .68rem;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+    .tile.is-selected { z-index: 6; box-shadow: inset 0 0 0 3px #fff, 0 0 0 2px rgba(0,0,0,.45); }
+    .tile.tiny { padding: 0; border-radius: 0; }
+    .tile.tiny > * { display: none; }
+    .tile.labels-hidden > * { display: none; }
+
+    .legend { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .68rem; font-weight: 650; }
+    .swatch { width: 9px; height: 9px; border-radius: 3px; background: var(--swatch); }
+
+    /* 01 · Explorer */
+    .explorer-shell { display: grid; grid-template-columns: 232px minmax(0,1fr); min-height: 760px; }
+    .folder-rail {
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+    }
+    .folder-rail h3 {
+      padding: 6px 7px 10px;
+      color: var(--muted);
+      font-size: .68rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .tree-list { display: grid; gap: 3px; }
+    .tree-button {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) auto;
+      gap: 8px;
+      width: 100%;
+      padding: 8px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      font-size: .75rem;
+    }
+    .tree-button span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tree-button span:last-child { font-variant-numeric: tabular-nums; }
+    .tree-button:hover, .tree-button.active { background: var(--surface); color: var(--ink); }
+    .explorer-main { min-width: 0; }
+    .explorer-bar { display: grid; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--line); }
+    .explorer-bar-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .explorer-legend { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 15px; border-top: 1px solid var(--line); }
+    .explorer .treemap { min-height: 650px; }
+    .render-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: .68rem;
+      font-weight: 700;
+    }
+    .render-status::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--teal);
+      box-shadow: 0 0 0 3px var(--teal-soft);
+      content: "";
+    }
+
+    .file-detail-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 400;
+      display: none;
+      overflow-y: auto;
+      padding: 20px;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(16px);
+    }
+    .file-detail-overlay.open { display: block; }
+    .file-detail-page {
+      width: min(1180px, 100%);
+      min-height: calc(100vh - 40px);
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+    }
+    .detail-topbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      border-radius: var(--radius) var(--radius) 0 0;
+      background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
+      backdrop-filter: blur(14px);
+    }
+    .detail-back {
+      min-height: 36px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      font-size: .75rem;
+      font-weight: 800;
+    }
+    .detail-path {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: .72rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .detail-content { display: grid; gap: 22px; padding: clamp(20px, 4vw, 42px); }
+    .detail-heading { display: grid; gap: 8px; }
+    .detail-heading .eyebrow { color: var(--teal); }
+    .detail-heading h2 { font-size: clamp(1.65rem, 4vw, 3rem); letter-spacing: -.05em; }
+    .detail-heading p { color: var(--muted); font-size: .82rem; }
+    .detail-score-row { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+    .detail-score {
+      display: grid;
+      gap: 5px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+    .detail-score span { color: var(--muted); font-size: .67rem; font-weight: 750; text-transform: uppercase; letter-spacing: .05em; }
+    .detail-score b { font-size: 1.05rem; }
+    .detail-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .detail-panel {
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+    .detail-panel h3 { margin-bottom: 14px; font-size: .86rem; }
+    .detail-rows { display: grid; gap: 0; }
+    .detail-row { display: grid; grid-template-columns: minmax(110px,.7fr) 1fr; gap: 14px; padding: 9px 0; border-top: 1px solid var(--line); font-size: .76rem; }
+    .detail-row span:first-child { color: var(--muted); }
+    .detail-row span:last-child { text-align: right; font-weight: 700; overflow-wrap: anywhere; }
+
+    /* 02 · Cinema */
+    .cinema {
+      position: relative;
+      min-height: 730px;
+      overflow: hidden;
+      background: #0d0f0f;
+    }
+    .cinema .concept-heading {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 15;
+      border: 0; color: white;
+      background: linear-gradient(#0a0c0dd9, transparent);
+    }
+    .cinema .concept-heading p { color: rgba(255,255,255,.65); }
+    .cinema .treemap { min-height: 730px; }
+    .cinema .tile { border-radius: 2px; border-color: rgba(0,0,0,.32); }
+    .cinema-overlay {
+      position: absolute; left: 20px; right: 20px; bottom: 18px; z-index: 15;
+      display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 16px; align-items: end;
+      color: white; pointer-events: none;
+    }
+    .cinema-overlay > * { pointer-events: auto; }
+    .cinema-path {
+      width: fit-content;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 999px;
+      background: rgba(15,16,16,.72);
+      backdrop-filter: blur(13px);
+    }
+    .cinema .crumb { color: rgba(255,255,255,.72); }
+    .cinema .crumb.current { color: white; }
+    .lens-dock {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 14px;
+      background: rgba(15,16,16,.78);
+      backdrop-filter: blur(13px);
+    }
+    .lens-dock .control { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.08); color: rgba(255,255,255,.58); }
+    .lens-dock .control select { color: white; }
+
+    /* 03 · Studio */
+    .studio-shell { display: grid; grid-template-columns: minmax(0,1fr) 290px; min-height: 682px; }
+    .studio-main { min-width: 0; border-right: 1px solid var(--line); }
+    .studio-bar { display: grid; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--line); }
+    .studio .treemap { min-height: 565px; }
+    .inspector { display: flex; flex-direction: column; min-width: 0; }
+    .inspector-head { padding: 16px; border-bottom: 1px solid var(--line); }
+    .inspector-head span { color: var(--muted); font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .inspector-head h3 { margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .inspector-preview {
+      display: grid;
+      place-items: center;
+      aspect-ratio: 16/10;
+      margin: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, color-mix(in srgb,var(--selected-color,#777) 45%,#171717), #121313);
+      color: rgba(255,255,255,.72);
+      font-size: .72rem;
+      font-weight: 750;
+    }
+    .inspector-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px 16px; }
+    .fact { min-width: 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .fact span { display: block; color: var(--muted); font-size: .65rem; }
+    .fact b { display: block; margin-top: 3px; overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+    .inspector-action {
+      margin: auto 16px 16px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      font-size: .74rem;
+      font-weight: 800;
+    }
+
+    /* 04 · Compare */
+    .compare-toolbar { display: flex; justify-content: space-between; gap: 14px; padding: 13px 15px; border-bottom: 1px solid var(--line); }
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; min-height: 610px; }
+    .compare-pane { min-width: 0; }
+    .compare-pane + .compare-pane { border-left: 1px solid var(--line); }
+    .pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 9px 13px; border-bottom: 1px solid var(--line); }
+    .pane-head strong { font-size: .78rem; }
+    .pane-head span { color: var(--muted); font-size: .68rem; }
+    .compare .treemap { min-height: 512px; }
+    .compare-footer { display: flex; justify-content: space-between; gap: 14px; padding: 11px 14px; border-top: 1px solid var(--line); }
+
+    /* 05 · Lens */
+    .lens-shell { padding: 14px; }
+    .lens-hero {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) auto;
+      gap: 24px;
+      padding: 8px 6px 20px;
+    }
+    .lens-title h3 { margin-top: 5px; font-size: 1.65rem; letter-spacing: -.04em; }
+    .lens-title p { margin-top: 7px; color: var(--muted); font-size: .8rem; }
+    .metric-strip { display: flex; align-items: end; gap: 22px; }
+    .metric { display: grid; gap: 2px; }
+    .metric span { color: var(--muted); font-size: .64rem; text-transform: uppercase; letter-spacing: .06em; }
+    .metric b { font-size: 1rem; font-variant-numeric: tabular-nums; }
+    .lens .treemap { min-height: 505px; border: 1px solid var(--line); border-radius: 14px; }
+    .lens .tile { border: 2px solid color-mix(in srgb, var(--bg) 72%, transparent); border-radius: 11px; }
+    .lens-footer {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 13px 4px 2px;
+    }
+
+    .tooltip {
+      position: fixed;
+      z-index: 500;
+      display: none;
+      width: min(280px, calc(100vw - 24px));
+      padding: 11px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+      pointer-events: none;
+    }
+    .tooltip.visible { display: block; }
+    .tooltip strong { display: block; overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+    .tooltip-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin-top: 8px; font-size: .7rem; }
+    .tooltip-grid span:nth-child(odd) { color: var(--muted); }
+    .tooltip-grid span:nth-child(even) { text-align: right; font-weight: 700; }
+
+    .decision {
+      display: none;
+      grid-template-columns: repeat(5, minmax(0,1fr));
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .decision button {
+      min-height: 54px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      color: var(--muted);
+      text-align: left;
+      font-size: .72rem;
+    }
+    .decision button:hover { border-color: var(--accent); color: var(--ink); }
+    .decision b { display: block; margin-bottom: 2px; color: var(--ink); }
+
+    @media (max-width: 980px) {
+      .explorer-shell { grid-template-columns: 190px minmax(0,1fr); }
+      .studio-shell { grid-template-columns: minmax(0,1fr) 240px; }
+      .decision { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .header-nav span { display: none; }
+    }
+    @media (max-width: 760px) {
+      .app { padding-inline: 8px; }
+      .app-header { top: 6px; min-height: 56px; padding: 8px 12px; }
+      .header-nav { display: none; }
+      .intro { grid-template-columns: 1fr; padding-top: 28px; }
+      .data-badge { min-width: 0; }
+      .concept-tabs { top: 70px; }
+      .concept-heading { flex-direction: column; }
+      .recommendation { align-self: flex-start; }
+      .explorer-shell, .studio-shell, .compare-grid { grid-template-columns: 1fr; }
+      .folder-rail { display: none; }
+      .studio-main, .compare-pane + .compare-pane { border: 0; }
+      .inspector { border-top: 1px solid var(--line); }
+      .compare-pane + .compare-pane { border-top: 1px solid var(--line); }
+      .compare .treemap { min-height: 390px; }
+      .cinema-overlay { grid-template-columns: 1fr; }
+      .lens-dock { width: fit-content; max-width: 100%; overflow-x: auto; }
+      .lens-hero, .lens-footer { grid-template-columns: 1fr; }
+      .metric-strip { flex-wrap: wrap; }
+      .treemap, .studio .treemap, .lens .treemap { min-height: 460px; }
+      .detail-score-row, .detail-panels { grid-template-columns: 1fr 1fr; }
+      .file-detail-overlay { padding: 7px; }
+      .file-detail-page { min-height: calc(100vh - 14px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header panel">
+      <div class="brand"><strong>MediaLyze</strong><span class="version">CONCEPT</span></div>
+      <nav class="header-nav" aria-label="Hauptnavigation">
+        <span>Dashboard</span><span class="active">Libraries</span><span>Movies</span><span>Settings</span>
+      </nav>
+      <button class="theme-toggle" id="theme-toggle" aria-label="Farbschema wechseln" title="Farbschema wechseln">L/D</button>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div>
+          <div class="eyebrow">Feature exploration · Library Space Map</div>
+          <h1>Library Space Map</h1>
+          <p>Die gesamte Library auf einen Blick: Jeder Ordner und jedes einzelne Asset erhält eine Fläche entsprechend seinem Speicherverbrauch. Ordner lassen sich öffnen und wieder verlassen; ein Klick auf eine Datei führt direkt in ihre technische Detailansicht.</p>
+        </div>
+        <div class="data-badge"><b>12,84 TB</b><span>Mock-Library „Movies 4K“ · 1.842 Assets</span></div>
+      </section>
+
+      <nav class="concept-tabs" aria-label="Konzeptvarianten">
+        <button class="concept-tab active" data-concept="explorer">01 · Explorer</button>
+        <button class="concept-tab" data-concept="cinema">02 · Focus Canvas</button>
+        <button class="concept-tab" data-concept="studio">03 · Analysis Studio</button>
+        <button class="concept-tab" data-concept="compare">04 · Compare</button>
+        <button class="concept-tab" data-concept="lens">05 · Library Lens</button>
+      </nav>
+
+      <section class="concept panel explorer active" id="concept-explorer">
+        <div class="concept-heading">
+          <div><h2>Storage Explorer</h2><p>Dichte Treemap für große Libraries – ohne Sammelkacheln oder künstliche Begrenzung. Kleine Assets bleiben als Pixelkacheln sichtbar und erhalten Details beim Hover.</p></div>
+          <span class="recommendation">426 Einzelassets im Demo-Ordner</span>
+        </div>
+        <div class="explorer-shell">
+          <aside class="folder-rail">
+            <h3>Ordner</h3>
+            <div class="tree-list" data-tree></div>
+          </aside>
+          <div class="explorer-main">
+            <div class="explorer-bar">
+              <div class="explorer-bar-top"><div class="crumbs" data-crumbs></div><div class="summary" data-summary></div></div>
+              <div class="toolbar">
+                <label class="control">Farbe <select data-color><option value="codec">Video-Codec</option><option value="resolution">Auflösung</option><option value="size">Dateigröße</option><option value="hdr">Dynamic Range</option><option value="quality">Quality Score</option></select></label>
+                <label class="control">Reihenfolge <select data-sort><option value="size">Größe</option><option value="name">Name</option><option value="quality">Quality Score</option></select></label>
+                <button class="ghost-button" data-up>Eine Ebene hoch</button>
+              </div>
+            </div>
+            <div class="treemap" data-map aria-label="Speicherbelegung der Library"></div>
+            <div class="explorer-legend"><div class="legend" data-legend></div><span class="render-status" data-visible-count></span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="concept panel cinema" id="concept-cinema">
+        <div class="concept-heading">
+          <div><h2>02 · Focus Canvas</h2><p>Maximal viel Fläche, minimale UI. Gut für schnelles visuelles Erkennen großer Ausreißer und für große Displays.</p></div>
+          <span class="recommendation">Stärkstes Wow-Gefühl</span>
+        </div>
+        <div class="treemap" data-map aria-label="Fokussierte Speicherkarte"></div>
+        <div class="cinema-overlay">
+          <div class="cinema-path"><div class="crumbs" data-crumbs></div></div>
+          <div class="lens-dock">
+            <label class="control">Einfärben <select data-color><option value="size">Größe</option><option value="codec">Codec</option><option value="resolution">Auflösung</option><option value="hdr">HDR</option><option value="quality">Qualität</option></select></label>
+            <label class="control">Ordnen <select data-sort><option value="size">Größe</option><option value="name">Name</option><option value="quality">Qualität</option></select></label>
+            <button class="ghost-button" data-up>Zurück</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="concept panel studio" id="concept-studio">
+        <div class="concept-heading">
+          <div><h2>03 · Analysis Studio</h2><p>Canvas und persistenter Inspector arbeiten zusammen. Ideal, wenn die Ansicht nicht nur Überblick, sondern echte technische Analyse leisten soll.</p></div>
+          <span class="recommendation">Meiste Analysetiefe</span>
+        </div>
+        <div class="studio-shell">
+          <div class="studio-main">
+            <div class="studio-bar">
+              <div class="explorer-bar-top"><div class="crumbs" data-crumbs></div><div class="summary" data-summary></div></div>
+              <div class="toolbar">
+                <label class="control">Farbe <select data-color><option value="resolution">Auflösung</option><option value="codec">Video-Codec</option><option value="size">Größe</option><option value="hdr">Dynamic Range</option><option value="quality">Quality Score</option></select></label>
+                <label class="control">Sortieren <select data-sort><option value="size">Größe</option><option value="quality">Qualität</option><option value="name">Name</option></select></label>
+                <button class="ghost-button" data-up>Nach oben</button>
+              </div>
+            </div>
+            <div class="treemap" data-map aria-label="Speicherkarte mit Inspector"></div>
+            <div class="explorer-legend"><div class="legend" data-legend></div></div>
+          </div>
+          <aside class="inspector" data-inspector></aside>
+        </div>
+      </section>
+
+      <section class="concept panel compare" id="concept-compare">
+        <div class="concept-heading">
+          <div><h2>04 · Compare</h2><p>Zwei synchronisierte Farblinsen auf derselben Flächenstruktur. Macht Zusammenhänge wie „groß und ineffizient“ oder „4K ohne HDR“ sichtbar.</p></div>
+          <span class="recommendation">Beste Erkenntnisdichte</span>
+        </div>
+        <div class="compare-toolbar"><div class="crumbs" data-crumbs></div><div class="summary" data-summary></div></div>
+        <div class="compare-grid">
+          <div class="compare-pane">
+            <div class="pane-head"><strong>Technik</strong><label class="control">Farbe <select data-color data-pane="a"><option value="codec">Video-Codec</option><option value="resolution">Auflösung</option><option value="hdr">Dynamic Range</option><option value="size">Größe</option></select></label></div>
+            <div class="treemap" data-map data-pane="a" aria-label="Technische Speicherkarte"></div>
+            <div class="explorer-legend"><div class="legend" data-legend data-pane="a"></div></div>
+          </div>
+          <div class="compare-pane">
+            <div class="pane-head"><strong>Qualität / Größe</strong><label class="control">Farbe <select data-color data-pane="b"><option value="quality">Quality Score</option><option value="size">Dateigröße</option><option value="resolution">Auflösung</option><option value="codec">Video-Codec</option></select></label></div>
+            <div class="treemap" data-map data-pane="b" aria-label="Qualitative Speicherkarte"></div>
+            <div class="explorer-legend"><div class="legend" data-legend data-pane="b"></div></div>
+          </div>
+        </div>
+        <div class="compare-footer">
+          <div class="toolbar"><label class="control">Reihenfolge <select data-sort><option value="size">Größe</option><option value="quality">Qualität</option><option value="name">Name</option></select></label><button class="ghost-button" data-up>Eine Ebene hoch</button></div>
+          <span class="summary">Hover und Drill-down sind synchron</span>
+        </div>
+      </section>
+
+      <section class="concept panel lens" id="concept-lens">
+        <div class="concept-heading">
+          <div><h2>05 · Library Lens</h2><p>Ruhige, kuratierte Ansicht mit wenigen Kennzahlen und großzügiger Typografie. Eignet sich als neues Top-Level-Panel auf der Library-Seite.</p></div>
+          <span class="recommendation">Beste Einbettung</span>
+        </div>
+        <div class="lens-shell">
+          <div class="lens-hero">
+            <div class="lens-title"><div class="crumbs" data-crumbs></div><h3 data-lens-title>Movies 4K</h3><p>Speicherbelegung nach Ordnern und Assets</p></div>
+            <div class="metric-strip"><div class="metric"><span>Belegt</span><b data-total>12,84 TB</b></div><div class="metric"><span>Assets</span><b data-count>1.842</b></div><div class="metric"><span>Ø Quality</span><b>86</b></div></div>
+          </div>
+          <div class="treemap" data-map aria-label="Reduzierte Library-Speicherkarte"></div>
+          <div class="lens-footer">
+            <div class="legend" data-legend></div>
+            <div class="toolbar">
+              <label class="control">Linse <select data-color><option value="hdr">Dynamic Range</option><option value="codec">Video-Codec</option><option value="resolution">Auflösung</option><option value="size">Größe</option><option value="quality">Quality Score</option></select></label>
+              <label class="control">Ordnung <select data-sort><option value="size">Größe</option><option value="name">Name</option><option value="quality">Qualität</option></select></label>
+              <button class="ghost-button" data-up>Zurück</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="decision" aria-label="Variantenwahl">
+        <button data-jump="explorer"><b>01 · Explorer</b>vertraut + umsetzungsnah</button>
+        <button data-jump="cinema"><b>02 · Focus Canvas</b>immersiv + maximal</button>
+        <button data-jump="studio"><b>03 · Analysis Studio</b>detailreich + technisch</button>
+        <button data-jump="compare"><b>04 · Compare</b>Zusammenhänge erkennen</button>
+        <button data-jump="lens"><b>05 · Library Lens</b>ruhig + integriert</button>
+      </div>
+    </main>
+  </div>
+
+  <div class="tooltip" id="tooltip" role="tooltip"></div>
+  <div class="file-detail-overlay" id="file-detail" aria-hidden="true">
+    <article class="file-detail-page" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <div class="detail-topbar">
+        <button class="detail-back" id="detail-back">Zurück zur Space Map</button>
+        <span class="detail-path" id="detail-path"></span>
+      </div>
+      <div class="detail-content" id="detail-content"></div>
+    </article>
+  </div>
+
+  <script>
+    const root = {
+      id: "root", name: "Movies 4K", type: "folder", size: 12.84, assets: 1842, children: [
+        { id: "film", name: "Feature Films", type: "folder", size: 4.28, assets: 426, children: [
+          { id: "dune2", name: "Dune Part Two.mkv", type: "file", size: 1.18, codec: "HEVC", resolution: "4K", hdr: "Dolby Vision", quality: 96, container: "MKV" },
+          { id: "oppen", name: "Oppenheimer.mkv", type: "file", size: .93, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 94, container: "MKV" },
+          { id: "blade", name: "Blade Runner 2049.mkv", type: "file", size: .71, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 92, container: "MKV" },
+          { id: "batman", name: "The Batman.mkv", type: "file", size: .58, codec: "AV1", resolution: "4K", hdr: "HDR10+", quality: 91, container: "MKV" },
+          { id: "arrival", name: "Arrival.mkv", type: "file", size: .47, codec: "HEVC", resolution: "4K", hdr: "SDR", quality: 83, container: "MKV" },
+          { id: "film-other", name: "Weitere 421 Assets", type: "file", size: .41, codec: "Mixed", resolution: "Mixed", hdr: "Mixed", quality: 82, container: "Mixed" }
+        ]},
+        { id: "series", name: "Series", type: "folder", size: 3.45, assets: 718, children: [
+          { id: "andor", name: "Andor", type: "folder", size: 1.08, assets: 24, children: [
+            { id: "andor-s1", name: "Season 01", type: "folder", size: .63, assets: 12, codec: "HEVC", resolution: "4K", hdr: "Dolby Vision", quality: 94 },
+            { id: "andor-s2", name: "Season 02", type: "folder", size: .45, assets: 12, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 92 }
+          ]},
+          { id: "expanse", name: "The Expanse", type: "folder", size: .86, assets: 62, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 89 },
+          { id: "last", name: "The Last of Us", type: "folder", size: .71, assets: 18, codec: "AV1", resolution: "4K", hdr: "Dolby Vision", quality: 95 },
+          { id: "dark", name: "Dark", type: "folder", size: .44, assets: 26, codec: "HEVC", resolution: "1080p", hdr: "SDR", quality: 84 },
+          { id: "series-other", name: "Weitere Serien", type: "folder", size: .36, assets: 588, codec: "Mixed", resolution: "Mixed", hdr: "Mixed", quality: 79 }
+        ]},
+        { id: "docs", name: "Documentaries", type: "folder", size: 1.87, assets: 214, children: [
+          { id: "planet", name: "Planet Earth III", type: "folder", size: .72, assets: 8, codec: "HEVC", resolution: "4K", hdr: "HLG", quality: 93 },
+          { id: "apollo", name: "Apollo 11.mkv", type: "file", size: .41, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 91, container: "MKV" },
+          { id: "free", name: "Free Solo.mkv", type: "file", size: .28, codec: "H.264", resolution: "1080p", hdr: "SDR", quality: 78, container: "MKV" },
+          { id: "docs-other", name: "Weitere 204 Assets", type: "file", size: .46, codec: "Mixed", resolution: "Mixed", hdr: "Mixed", quality: 81, container: "Mixed" }
+        ]},
+        { id: "animation", name: "Animation", type: "folder", size: 1.31, assets: 246, children: [
+          { id: "spider", name: "Across the Spider-Verse.mkv", type: "file", size: .42, codec: "AV1", resolution: "4K", hdr: "Dolby Vision", quality: 97, container: "MKV" },
+          { id: "ghibli", name: "Studio Ghibli", type: "folder", size: .38, assets: 23, codec: "HEVC", resolution: "1080p", hdr: "SDR", quality: 86 },
+          { id: "pixar", name: "Pixar", type: "folder", size: .31, assets: 31, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 90 },
+          { id: "animation-other", name: "Weitere 191 Assets", type: "file", size: .20, codec: "Mixed", resolution: "Mixed", hdr: "Mixed", quality: 80, container: "Mixed" }
+        ]},
+        { id: "concerts", name: "Concerts", type: "folder", size: .98, assets: 74, children: [
+          { id: "hans", name: "Hans Zimmer Live.mkv", type: "file", size: .39, codec: "HEVC", resolution: "4K", hdr: "HDR10", quality: 88, container: "MKV" },
+          { id: "taylor", name: "The Eras Tour.mkv", type: "file", size: .31, codec: "AV1", resolution: "4K", hdr: "HDR10+", quality: 91, container: "MKV" },
+          { id: "concert-other", name: "Weitere 72 Assets", type: "file", size: .28, codec: "H.264", resolution: "1080p", hdr: "SDR", quality: 76, container: "Mixed" }
+        ]},
+        { id: "incoming", name: "_Incoming", type: "folder", size: .95, assets: 164, children: [
+          { id: "untagged1", name: "untagged_remux_084.mkv", type: "file", size: .36, codec: "H.264", resolution: "4K", hdr: "SDR", quality: 58, container: "MKV" },
+          { id: "untagged2", name: "encode-final-v3.mp4", type: "file", size: .24, codec: "H.264", resolution: "1080p", hdr: "SDR", quality: 54, container: "MP4" },
+          { id: "incoming-other", name: "Weitere 162 Assets", type: "file", size: .35, codec: "Mixed", resolution: "Mixed", hdr: "Mixed", quality: 61, container: "Mixed" }
+        ]}
+      ]
+    };
+
+    const generatedTitles = [
+      "A Quiet Horizon", "Northern Lights", "The Long Way Home", "Signal Lost", "Glass Cities",
+      "After Midnight", "Parallel Lines", "Red Valley", "The Last Archive", "Ocean of Stars",
+      "Static Bloom", "Hidden Frequency", "Winter Station", "Golden Hour", "Beyond the Frame",
+      "Nocturne", "The Fifth Season", "Paper Kingdom", "Echo Point", "Aperture"
+    ];
+    const codecs = ["HEVC", "HEVC", "HEVC", "AV1", "H.264"];
+    const resolutions = ["4K", "4K", "4K", "1080p", "1080p"];
+    const hdrTypes = ["HDR10", "Dolby Vision", "HDR10+", "SDR", "HLG"];
+    const containers = ["MKV", "MKV", "MKV", "MP4"];
+
+    function makeAssets(prefix, count, totalSize, seedMeta = {}) {
+      const weights = Array.from({length: count}, (_, index) => 0.45 + ((index * 37 + prefix.length * 11) % 100) / 70);
+      const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+      return weights.map((weight, index) => {
+        const codec = seedMeta.codec && seedMeta.codec !== "Mixed" ? seedMeta.codec : codecs[(index + prefix.length) % codecs.length];
+        const resolution = seedMeta.resolution && seedMeta.resolution !== "Mixed" ? seedMeta.resolution : resolutions[(index * 3 + prefix.length) % resolutions.length];
+        const hdr = seedMeta.hdr && seedMeta.hdr !== "Mixed" ? seedMeta.hdr : hdrTypes[(index * 7 + prefix.length) % hdrTypes.length];
+        const episodeLike = /season|series|andor|expanse|dark|last/i.test(prefix);
+        const name = episodeLike
+          ? `${prefix} · E${String(index + 1).padStart(3, "0")}.mkv`
+          : `${generatedTitles[index % generatedTitles.length]} ${String(index + 1).padStart(3, "0")}.${containers[index % containers.length].toLowerCase()}`;
+        return {
+          id: `${prefix.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index + 1}`,
+          name,
+          type: "file",
+          size: totalSize * weight / totalWeight,
+          codec,
+          resolution,
+          hdr,
+          quality: seedMeta.quality ? Math.max(45, Math.min(99, seedMeta.quality + ((index * 13) % 11) - 5)) : 58 + ((index * 17 + prefix.length) % 41),
+          container: containers[index % containers.length],
+          duration: 5100 + ((index * 937) % 6400),
+          bitrate: 18 + ((index * 7) % 68),
+          audio: ["E-AC-3 Atmos", "DTS-HD MA", "TrueHD Atmos", "AAC 5.1"][index % 4]
+        };
+      });
+    }
+
+    function hydrateFolder(folder) {
+      if (!folder.children) return;
+      const expanded = [];
+      folder.children.forEach(child => {
+        const bulkCount = child.type === "file" && child.name.startsWith("Weitere ")
+          ? Number((child.name.match(/\d+/) || [0])[0])
+          : 0;
+        if (bulkCount > 1) {
+          expanded.push(...makeAssets(folder.name, bulkCount, child.size, child));
+          return;
+        }
+        if (child.type === "folder" && !child.children && child.assets > 1) {
+          child.children = makeAssets(child.name, child.assets, child.size, child);
+        }
+        hydrateFolder(child);
+        expanded.push(child);
+      });
+      folder.children = expanded;
+    }
+    hydrateFolder(root);
+
+    const palettes = {
+      codec: { "HEVC":"#2c988b", "AV1":"#ff6b3d", "H.264":"#5b78c7", "Mixed":"#77736c", "Folder":"#887a66" },
+      resolution: { "4K":"#d95f3d", "1080p":"#2e9d8e", "720p":"#5b78c7", "Mixed":"#77736c", "Folder":"#887a66" },
+      hdr: { "Dolby Vision":"#8b5cc7", "HDR10+":"#df5b77", "HDR10":"#d77b35", "HLG":"#3c9aa7", "SDR":"#61717c", "Mixed":"#77736c", "Folder":"#887a66" }
+    };
+    const state = { path: [root], selected: null, sort: "size", colors: { default: "codec", cinema: "size", studio: "resolution", compareA: "codec", compareB: "quality", lens: "hdr" } };
+    const colorKeys = { explorer: "default", cinema: "cinema", studio: "studio", lens: "lens" };
+    const tooltip = document.getElementById("tooltip");
+    const fileDetail = document.getElementById("file-detail");
+    const detailContent = document.getElementById("detail-content");
+    const detailPath = document.getElementById("detail-path");
+
+    function current() { return state.path[state.path.length - 1]; }
+    function formatSize(tb) { return tb >= 1 ? tb.toLocaleString("de-DE", {maximumFractionDigits:2}) + " TB" : Math.round(tb * 1024) + " GB"; }
+    function aggregate(node, key) {
+      if (node[key] != null) return node[key];
+      const leaves = [];
+      (function collect(n){ if (n.children) n.children.forEach(collect); else leaves.push(n); })(node);
+      if (!leaves.length) return key === "quality" ? 82 : "Folder";
+      if (key === "quality") return Math.round(leaves.reduce((a,n)=>a+(n.quality||80),0)/leaves.length);
+      const counts = {};
+      leaves.forEach(n => counts[n[key] || "Mixed"] = (counts[n[key] || "Mixed"] || 0) + n.size);
+      return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    }
+    function colorFor(node, mode) {
+      if (mode === "size") {
+        const max = Math.max(...current().children.map(n => n.size));
+        const t = Math.max(.1, Math.min(1, node.size / max));
+        return `hsl(${28 - t*20} ${62 + t*18}% ${44 + t*7}%)`;
+      }
+      if (mode === "quality") {
+        const q = aggregate(node, "quality");
+        const hue = 8 + Math.max(0, Math.min(100, q)) * 1.45;
+        return `hsl(${hue} 54% 42%)`;
+      }
+      const value = aggregate(node, mode);
+      return (palettes[mode] && palettes[mode][value]) || "#77736c";
+    }
+    function labelFor(node, mode) {
+      if (mode === "size") return formatSize(node.size);
+      if (mode === "quality") return "Score " + aggregate(node, "quality");
+      return aggregate(node, mode);
+    }
+    function sortNodes(nodes) {
+      return [...nodes].sort((a,b) => state.sort === "name" ? a.name.localeCompare(b.name) : state.sort === "quality" ? aggregate(b,"quality") - aggregate(a,"quality") : b.size - a.size);
+    }
+    function layout(nodes, x, y, w, h, depth=0) {
+      if (!nodes.length) return [];
+      if (nodes.length === 1) return [{node:nodes[0], x, y, w, h}];
+      const total = nodes.reduce((a,n)=>a+n.size,0);
+      let accum = 0, split = 1;
+      for (; split < nodes.length; split++) { accum += nodes[split-1].size; if (accum >= total/2) break; }
+      const a = nodes.slice(0,split), b = nodes.slice(split);
+      const ratio = a.reduce((s,n)=>s+n.size,0)/total;
+      const vertical = depth % 2 === 0 ? w >= h*.9 : w > h*1.3;
+      if (vertical) {
+        const aw = w*ratio;
+        return [...layout(a,x,y,aw,h,depth+1), ...layout(b,x+aw,y,w-aw,h,depth+1)];
+      }
+      const ah = h*ratio;
+      return [...layout(a,x,y,w,ah,depth+1), ...layout(b,x,y+ah,w,h-ah,depth+1)];
+    }
+    function legendEntries(mode) {
+      if (mode === "size") return [["Klein","#7b563d"],["Mittel","#a75434"],["Groß","#d64722"]];
+      if (mode === "quality") return [["< 70","#9e4939"],["70–89","#668b45"],["90+","#2e9d73"]];
+      const values = [...new Set(current().children.map(n=>aggregate(n,mode)))].slice(0,6);
+      return values.map(v=>[v,(palettes[mode]&&palettes[mode][v])||"#77736c"]);
+    }
+    function renderLegend(el, mode) {
+      if (!el) return;
+      el.innerHTML = legendEntries(mode).map(([label,color])=>`<span class="legend-item"><i class="swatch" style="--swatch:${color}"></i>${label}</span>`).join("");
+    }
+    function formatDuration(seconds) {
+      const hours = Math.floor((seconds || 7200) / 3600);
+      const minutes = Math.round(((seconds || 7200) % 3600) / 60);
+      return `${hours} h ${minutes} min`;
+    }
+    function openFileDetail(node) {
+      state.selected = node;
+      detailPath.textContent = [...state.path.map(item => item.name), node.name].join(" / ");
+      detailContent.innerHTML = `
+        <div class="detail-heading">
+          <span class="eyebrow">Analysierte Mediendatei</span>
+          <h2 id="detail-title">${node.name}</h2>
+          <p>${detailPath.textContent}</p>
+        </div>
+        <div class="detail-score-row">
+          <div class="detail-score"><span>Quality Score</span><b>${node.quality}</b></div>
+          <div class="detail-score"><span>Dateigröße</span><b>${formatSize(node.size)}</b></div>
+          <div class="detail-score"><span>Laufzeit</span><b>${formatDuration(node.duration)}</b></div>
+          <div class="detail-score"><span>Bitrate</span><b>${node.bitrate || 48} Mb/s</b></div>
+        </div>
+        <div class="detail-panels">
+          <section class="detail-panel">
+            <h3>Format</h3>
+            <div class="detail-rows">
+              <div class="detail-row"><span>Container</span><span>${node.container || "MKV"}</span></div>
+              <div class="detail-row"><span>Dateigröße</span><span>${formatSize(node.size)}</span></div>
+              <div class="detail-row"><span>Dauer</span><span>${formatDuration(node.duration)}</span></div>
+              <div class="detail-row"><span>Pfad</span><span>/media/${detailPath.textContent}</span></div>
+            </div>
+          </section>
+          <section class="detail-panel">
+            <h3>Video Stream</h3>
+            <div class="detail-rows">
+              <div class="detail-row"><span>Codec</span><span>${node.codec}</span></div>
+              <div class="detail-row"><span>Auflösung</span><span>${node.resolution === "4K" ? "3840 × 2160" : "1920 × 1080"}</span></div>
+              <div class="detail-row"><span>Dynamic Range</span><span>${node.hdr}</span></div>
+              <div class="detail-row"><span>Bitrate</span><span>${node.bitrate || 48} Mb/s</span></div>
+            </div>
+          </section>
+          <section class="detail-panel">
+            <h3>Audio Stream</h3>
+            <div class="detail-rows">
+              <div class="detail-row"><span>Format</span><span>${node.audio || "TrueHD Atmos"}</span></div>
+              <div class="detail-row"><span>Kanäle</span><span>7.1</span></div>
+              <div class="detail-row"><span>Sprache</span><span>Deutsch · Englisch</span></div>
+            </div>
+          </section>
+          <section class="detail-panel">
+            <h3>Quality Score</h3>
+            <div class="detail-rows">
+              <div class="detail-row"><span>Resolution</span><span>${Math.min(25, Math.round(node.quality * .25))} / 25</span></div>
+              <div class="detail-row"><span>Video Codec</span><span>${Math.min(20, Math.round(node.quality * .20))} / 20</span></div>
+              <div class="detail-row"><span>Dynamic Range</span><span>${Math.min(15, Math.round(node.quality * .15))} / 15</span></div>
+              <div class="detail-row"><span>Gesamt</span><span>${node.quality} / 100</span></div>
+            </div>
+          </section>
+        </div>`;
+      fileDetail.classList.add("open");
+      fileDetail.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      document.getElementById("detail-back").focus();
+    }
+    function closeFileDetail() {
+      fileDetail.classList.remove("open");
+      fileDetail.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+    }
+    function openNode(node) {
+      if (!node.children) { openFileDetail(node); return; }
+      state.path.push(node); state.selected = null; renderAll();
+    }
+    function jumpTo(index) { state.path = state.path.slice(0,index+1); state.selected = null; renderAll(); }
+    function renderCrumbs(el) {
+      if (!el) return;
+      el.innerHTML = state.path.map((node,i)=>`${i?'<span class="crumb-sep">›</span>':''}<button class="crumb ${i===state.path.length-1?'current':''}" data-crumb-index="${i}">${node.name}</button>`).join("");
+      el.querySelectorAll("[data-crumb-index]").forEach(b=>b.addEventListener("click",()=>jumpTo(+b.dataset.crumbIndex)));
+    }
+    function showTooltip(e,node,mode) {
+      tooltip.innerHTML = `<strong>${node.name}</strong><div class="tooltip-grid"><span>Größe</span><span>${formatSize(node.size)}</span><span>Typ</span><span>${node.children?"Ordner":(node.container||"Asset")}</span><span>${mode==="quality"?"Quality Score":mode==="size"?"Einfärbung":mode}</span><span>${labelFor(node,mode)}</span><span>Codec</span><span>${aggregate(node,"codec")}</span><span>Auflösung</span><span>${aggregate(node,"resolution")}</span></div>`;
+      tooltip.classList.add("visible"); moveTooltip(e);
+    }
+    function moveTooltip(e) {
+      const x = Math.min(innerWidth - 294, e.clientX + 14);
+      const y = Math.min(innerHeight - tooltip.offsetHeight - 14, e.clientY + 14);
+      tooltip.style.left = Math.max(8,x)+"px"; tooltip.style.top = Math.max(8,y)+"px";
+    }
+    function hideClippedTileLabels(el) {
+      el.querySelectorAll(".tile:not(.tiny)").forEach(tile => {
+        const name = tile.querySelector(".tile-name");
+        const kind = tile.querySelector(".tile-kind");
+        const size = tile.querySelector(".tile-size");
+        const top = tile.firstElementChild;
+        const style = getComputedStyle(tile);
+        const availableHeight = tile.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+        const requiredHeight = (top?.scrollHeight || 0) + (size?.scrollHeight || 0) + 4;
+        const horizontallyClipped = [name, kind, size].some(label =>
+          label && (label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1)
+        );
+        tile.classList.toggle("labels-hidden", horizontallyClipped || requiredHeight > availableHeight);
+      });
+    }
+    function renderMap(el, mode) {
+      if (!el) return;
+      const nodes = sortNodes(current().children || []);
+      const rects = layout(nodes,0,0,100,100);
+      el.innerHTML = "";
+      rects.forEach(({node,x,y,w,h}) => {
+        const gap = 0;
+        const button = document.createElement("button");
+        button.className = `tile ${node.children?"folder":"file"} ${w*h<2.5?"tiny":""} ${state.selected?.id===node.id?"is-selected":""}`;
+        button.style.left = `calc(${x}% + ${gap/2}px)`; button.style.top = `calc(${y}% + ${gap/2}px)`;
+        button.style.width = `calc(${w}% - ${gap}px)`; button.style.height = `calc(${h}% - ${gap}px)`;
+        button.style.background = colorFor(node,mode);
+        button.dataset.nodeId = node.id;
+        button.setAttribute("aria-label", `${node.children?"Ordner":"Datei"} ${node.name}, ${formatSize(node.size)}, ${labelFor(node,mode)}`);
+        button.innerHTML = `<span><span class="tile-name">${node.name}</span><span class="tile-kind">${node.children?"ORDNER · "+(node.assets||node.children.length)+" ASSETS":labelFor(node,mode)}</span></span><span class="tile-size">${formatSize(node.size)}</span>`;
+        button.addEventListener("click",()=>openNode(node));
+        button.addEventListener("mouseenter",e=>{
+          document.querySelectorAll(`[data-node-id="${node.id}"]`).forEach(tile=>tile.classList.add("is-hovered"));
+          showTooltip(e,node,mode);
+        });
+        button.addEventListener("mousemove",moveTooltip);
+        button.addEventListener("mouseleave",()=>{
+          document.querySelectorAll(`[data-node-id="${node.id}"]`).forEach(tile=>tile.classList.remove("is-hovered"));
+          tooltip.classList.remove("visible");
+        });
+        el.appendChild(button);
+      });
+      hideClippedTileLabels(el);
+    }
+    function renderInspector(el) {
+      if (!el) return;
+      const node = state.selected || (current().children||[])[0] || current();
+      const color = colorFor(node,state.colors.studio);
+      el.style.setProperty("--selected-color",color);
+      el.innerHTML = `<div class="inspector-head"><span>${node.children?"Ordner":"Asset"} ausgewählt</span><h3 title="${node.name}">${node.name}</h3></div><div class="inspector-preview">${node.children?"Ordner-Aggregat":"Technische Vorschau"}</div><div class="inspector-grid"><div class="fact"><span>Größe</span><b>${formatSize(node.size)}</b></div><div class="fact"><span>Quality</span><b>${aggregate(node,"quality")}</b></div><div class="fact"><span>Codec</span><b>${aggregate(node,"codec")}</b></div><div class="fact"><span>Auflösung</span><b>${aggregate(node,"resolution")}</b></div><div class="fact"><span>Dynamic Range</span><b>${aggregate(node,"hdr")}</b></div><div class="fact"><span>Assets</span><b>${node.assets||1}</b></div></div><button class="inspector-action">${node.children?"Ordner öffnen":"Dateidetails öffnen"}</button>`;
+      el.querySelector("button").addEventListener("click",()=>node.children&&openNode(node));
+    }
+    function renderTree() {
+      document.querySelectorAll("[data-tree]").forEach(el => {
+        el.innerHTML = root.children.map(n=>`<button class="tree-button ${state.path.some(p=>p.id===n.id)?'active':''}" data-tree-id="${n.id}"><span>${n.name}</span><span>${formatSize(n.size)}</span></button>`).join("");
+        el.querySelectorAll("[data-tree-id]").forEach(b=>b.addEventListener("click",()=>{state.path=[root,root.children.find(n=>n.id===b.dataset.treeId)];state.selected=null;renderAll();}));
+      });
+    }
+    function modeFor(el) {
+      const concept = el.closest(".concept");
+      if (concept.id === "concept-compare") return el.dataset.pane === "b" ? state.colors.compareB : state.colors.compareA;
+      return state.colors[colorKeys[concept.id.replace("concept-","")]];
+    }
+    function renderAll() {
+      document.querySelectorAll(".concept.active [data-map]").forEach(el=>renderMap(el,modeFor(el)));
+      document.querySelectorAll(".concept.active [data-crumbs]").forEach(renderCrumbs);
+      document.querySelectorAll(".concept.active [data-legend]").forEach(el=>renderLegend(el,modeFor(el)));
+      document.querySelectorAll(".concept.active [data-summary]").forEach(el=>el.innerHTML=`<span><b>${formatSize(current().size)}</b> belegt</span><span>${current().children?.length || current().assets || 1} Elemente</span>`);
+      document.querySelectorAll("[data-visible-count]").forEach(el=>el.textContent=`Alle ${(current().children?.length || 1).toLocaleString("de-DE")} Kacheln sichtbar`);
+      document.querySelectorAll("[data-up]").forEach(b=>b.disabled=state.path.length===1);
+      document.querySelectorAll("[data-total]").forEach(el=>el.textContent=formatSize(current().size));
+      document.querySelectorAll("[data-count]").forEach(el=>el.textContent=(current().assets||current().children?.length||1).toLocaleString("de-DE"));
+      document.querySelectorAll("[data-lens-title]").forEach(el=>el.textContent=current().name);
+      renderTree(); renderInspector(document.querySelector("[data-inspector]"));
+    }
+
+    document.querySelectorAll(".concept-tab,[data-jump]").forEach(button=>button.addEventListener("click",()=>{
+      const id = button.dataset.concept || button.dataset.jump;
+      document.querySelectorAll(".concept-tab").forEach(b=>b.classList.toggle("active",b.dataset.concept===id));
+      document.querySelectorAll(".concept").forEach(c=>c.classList.toggle("active",c.id===`concept-${id}`));
+      document.querySelector(".concept-tabs").scrollIntoView({block:"start"});
+      requestAnimationFrame(renderAll);
+    }));
+    document.querySelectorAll("[data-color]").forEach(select=>select.addEventListener("change",()=>{
+      const concept = select.closest(".concept").id.replace("concept-","");
+      const key = concept==="compare" ? (select.dataset.pane==="b"?"compareB":"compareA") : colorKeys[concept];
+      state.colors[key]=select.value; renderAll();
+    }));
+    document.querySelectorAll("[data-sort]").forEach(select=>select.addEventListener("change",()=>{state.sort=select.value;document.querySelectorAll("[data-sort]").forEach(s=>s.value=state.sort);renderAll();}));
+    document.querySelectorAll("[data-up]").forEach(button=>button.addEventListener("click",()=>{if(state.path.length>1){state.path.pop();state.selected=null;renderAll();}}));
+    document.getElementById("detail-back").addEventListener("click", closeFileDetail);
+    fileDetail.addEventListener("click", event => { if (event.target === fileDetail) closeFileDetail(); });
+    document.addEventListener("keydown", event => { if (event.key === "Escape" && fileDetail.classList.contains("open")) closeFileDetail(); });
+    document.getElementById("theme-toggle").addEventListener("click",()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==="dark"?"light":"dark";});
+    window.addEventListener("scroll",()=>tooltip.classList.remove("visible"),{passive:true});
+    renderAll();
+  </script>
+</body>
+</html>

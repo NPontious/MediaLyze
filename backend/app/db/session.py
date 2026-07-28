@@ -112,6 +112,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "duration_seconds": "ALTER TABLE media_files ADD COLUMN duration_seconds FLOAT",
         "bitrate": "ALTER TABLE media_files ADD COLUMN bitrate INTEGER",
         "audio_bitrate": "ALTER TABLE media_files ADD COLUMN audio_bitrate INTEGER",
+        "max_audio_bit_depth": "ALTER TABLE media_files ADD COLUMN max_audio_bit_depth INTEGER",
         "primary_video_codec": "ALTER TABLE media_files ADD COLUMN primary_video_codec VARCHAR(64)",
         "primary_video_width": "ALTER TABLE media_files ADD COLUMN primary_video_width INTEGER",
         "primary_video_height": "ALTER TABLE media_files ADD COLUMN primary_video_height INTEGER",
@@ -260,6 +261,14 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_duration_seconds ON media_files (library_id, duration_seconds)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_bitrate ON media_files (library_id, bitrate)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_audio_bitrate ON media_files (library_id, audio_bitrate)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_files_library_max_audio_bit_depth "
+        "ON media_files (library_id, max_audio_bit_depth)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_files_library_relative_path_nocase "
+        "ON media_files (library_id, relative_path COLLATE NOCASE)"
+    ),
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_primary_video_codec ON media_files (library_id, primary_video_codec)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_audio_artist ON media_files (library_id, audio_artist)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_audio_album ON media_files (library_id, audio_album)",
@@ -384,6 +393,12 @@ def _backfill_media_file_search_fields(connection) -> None:
                     ELSE NULL
                   END
                 )
+              ),
+              max_audio_bit_depth = (
+                SELECT MAX(bit_depth)
+                FROM audio_streams
+                WHERE media_file_id = media_files.id
+                  AND bit_depth > 0
               ),
               primary_video_codec = (
                 SELECT codec FROM video_streams
@@ -894,6 +909,30 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
                 text("UPDATE libraries SET show_on_dashboard = 1 WHERE show_on_dashboard IS NULL")
             )
         _backfill_media_file_search_fields(connection)
+        if _sqlite_has_table(connection, "media_files"):
+            connection.execute(
+                text(
+                    """
+                    UPDATE media_files
+                    SET max_audio_bit_depth = (
+                      SELECT MAX(bit_depth)
+                      FROM audio_streams
+                      WHERE media_file_id = media_files.id
+                        AND bit_depth > 0
+                    )
+                    WHERE max_audio_bit_depth IS NULL
+                      AND EXISTS (
+                        SELECT 1
+                        FROM audio_streams
+                        WHERE media_file_id = media_files.id
+                          AND bit_depth > 0
+                      )
+                    """
+                )
+            )
+        from backend.app.services.media_search_index import ensure_media_file_search_index
+
+        ensure_media_file_search_index(connection)
 
 
 def init_db(engine: Engine | None = None) -> None:

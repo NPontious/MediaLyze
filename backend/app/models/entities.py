@@ -579,6 +579,7 @@ class MediaFile(Base):
         Index("ix_media_files_library_duration_seconds", "library_id", "duration_seconds"),
         Index("ix_media_files_library_bitrate", "library_id", "bitrate"),
         Index("ix_media_files_library_audio_bitrate", "library_id", "audio_bitrate"),
+        Index("ix_media_files_library_max_audio_bit_depth", "library_id", "max_audio_bit_depth"),
         Index("ix_media_files_library_primary_video_codec", "library_id", "primary_video_codec"),
         Index("ix_media_files_library_resolution_pixels", "library_id", "primary_video_resolution_pixels"),
         Index("ix_media_files_library_primary_video_hdr_type", "library_id", "primary_video_hdr_type"),
@@ -618,6 +619,7 @@ class MediaFile(Base):
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     bitrate: Mapped[int | None] = mapped_column(Integer, nullable=True)
     audio_bitrate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_audio_bit_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     primary_video_codec: Mapped[str | None] = mapped_column(String(64), nullable=True)
     primary_video_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     primary_video_height: Mapped[int | None] = mapped_column(Integer, nullable=True)

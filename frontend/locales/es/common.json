@@ -8,7 +8,48 @@
     "libraries": "Configuración",
     "homeAria": "Inicio",
     "compareAria": "Comparar archivos",
-    "settingsAria": "Configuración"
+    "settingsAria": "Configuración",
+    "storageMapAria": "Mapa de almacenamiento"
+  },
+  "storageMap": {
+    "eyebrow": "Almacenamiento de la biblioteca",
+    "title": "Mapa de almacenamiento",
+    "subtitle": "Todas las carpetas y archivos de un vistazo. El área de cada mosaico corresponde al espacio utilizado.",
+    "library": "Biblioteca",
+    "folders": "Carpetas",
+    "noFolders": "Sin subcarpetas",
+    "colorBy": "Color",
+    "sortBy": "Orden",
+    "up": "Subir un nivel",
+    "areaHint": "Área = espacio utilizado",
+    "loading": "Cargando mapa de almacenamiento…",
+    "error": "No se ha podido cargar el mapa de almacenamiento.",
+    "errorTitle": "Mapa de almacenamiento no disponible",
+    "retry": "Intentar de nuevo",
+    "emptyTitle": "No hay archivos analizados",
+    "emptyBody": "Esta carpeta todavía no contiene medios analizados.",
+    "noLibrariesTitle": "No hay bibliotecas disponibles",
+    "noLibrariesBody": "Crea y escanea una biblioteca en Configuración para explorar su mapa de almacenamiento.",
+    "tilesVisible": "Los {{count}} mosaicos están visibles",
+    "items": "{{count}} elementos",
+    "files": "{{count}} archivos",
+    "unknown": "Desconocido",
+    "treemapAria": "Uso de almacenamiento por carpeta y archivo",
+    "breadcrumbAria": "Carpeta actual del mapa de almacenamiento",
+    "folderAria": "Abrir carpeta {{name}}, {{size}}",
+    "fileAria": "Abrir detalles de {{name}}, {{size}}",
+    "modes": {
+      "codec": "Códec de vídeo",
+      "resolution": "Resolución",
+      "hdr": "Rango dinámico",
+      "quality": "Puntuación de calidad",
+      "size": "Tamaño de archivo"
+    },
+    "sorts": {
+      "size": "Tamaño",
+      "name": "Nombre",
+      "quality": "Puntuación de calidad"
+    }
   },
   "scanBanner": {
     "running": "Escaneo en curso...",

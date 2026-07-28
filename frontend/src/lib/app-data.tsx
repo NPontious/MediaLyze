@@ -13,6 +13,7 @@ import i18n, { getStoredInterfaceLanguage } from "../i18n";
 import { api, type AppSettings, type DashboardResponse, type JellyfinLibrary, type LibrarySummary } from "./api";
 import { defaultPatternRecognitionSettings } from "./pattern-recognition";
 import { DEFAULT_RESOLUTION_CATEGORIES, normalizeResolutionCategories } from "./resolution-categories";
+import { readSessionCache, writeSessionCache, type SessionCacheOptions } from "./session-cache";
 
 type AppDataContextValue = {
   appSettings: AppSettings;
@@ -83,23 +84,13 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   },
 };
 const DASHBOARD_SESSION_STORAGE_PREFIX = "medialyze-dashboard-cache:";
-
-function readSessionJson<T>(key: string): T | null {
-  try {
-    const value = window.sessionStorage.getItem(key);
-    return value ? (JSON.parse(value) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeSessionJson(key: string, value: unknown): void {
-  try {
-    window.sessionStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Ignore quota and disabled-storage failures; the network path still works.
-  }
-}
+const DASHBOARD_SESSION_CACHE_OPTIONS: SessionCacheOptions = {
+  prefix: DASHBOARD_SESSION_STORAGE_PREFIX,
+  ttlMs: 5 * 60 * 1000,
+  maxEntries: 8,
+  maxTotalBytes: 6 * 1024 * 1024,
+  maxEntryBytes: 2 * 1024 * 1024,
+};
 
 function dashboardSessionStorageKey(panelKey: string | null): string {
   return `${DASHBOARD_SESSION_STORAGE_PREFIX}${panelKey ?? "all"}`;
@@ -200,10 +191,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [appSettings, setAppSettingsState] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [appSettingsLoaded, setAppSettingsLoaded] = useState(false);
   const [dashboard, setDashboardState] = useState<DashboardResponse | null>(() =>
-    readSessionJson<DashboardResponse>(dashboardSessionStorageKey(null)),
+    readSessionCache<DashboardResponse>(
+      dashboardSessionStorageKey(null),
+      DASHBOARD_SESSION_CACHE_OPTIONS,
+    ),
   );
   const [dashboardLoaded, setDashboardLoaded] = useState(() =>
-    readSessionJson<DashboardResponse>(dashboardSessionStorageKey(null)) !== null,
+    readSessionCache<DashboardResponse>(
+      dashboardSessionStorageKey(null),
+      DASHBOARD_SESSION_CACHE_OPTIONS,
+    ) !== null,
   );
   const [libraries, setLibrariesState] = useState<LibrarySummary[]>([]);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
@@ -285,7 +282,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const loadDashboard = useEffectEvent(async (force = false, panels?: readonly string[] | null) => {
     const panelKey = panels?.length ? [...new Set(panels)].sort().join(",") : null;
-    const sessionCachedDashboard = readSessionJson<DashboardResponse>(dashboardSessionStorageKey(panelKey));
+    const sessionCachedDashboard = readSessionCache<DashboardResponse>(
+      dashboardSessionStorageKey(panelKey),
+      DASHBOARD_SESSION_CACHE_OPTIONS,
+    );
     if (!force) {
       if (
         dashboardRequestRef.current &&
@@ -313,7 +313,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setDashboardState(payload);
         setDashboardLoaded(true);
         dashboardPanelKeyRef.current = panelKey;
-        writeSessionJson(dashboardSessionStorageKey(panelKey), payload);
+        writeSessionCache(dashboardSessionStorageKey(panelKey), payload, DASHBOARD_SESSION_CACHE_OPTIONS);
         return payload;
       })
       .finally(() => {

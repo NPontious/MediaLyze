@@ -2,7 +2,7 @@ import "../i18n";
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 
 import { api, DEFAULT_QUALITY_PROFILE, type AppSettings, type LibrarySummary, type MediaFileDetail } from "../lib/api";
 import { AppDataProvider } from "../lib/app-data";

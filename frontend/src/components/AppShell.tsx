@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Bug, ChevronDown, ChevronRight, Download, GitCompare, House, Settings, X } from "lucide-react";
+import { Bug, ChevronDown, ChevronRight, Download, GitCompare, House, Map, Settings, X } from "lucide-react";
 import { FilePlusCorner, FileXCorner, File, FileDiff, FileExclamationPoint, FileSearchCorner, FileCheckCorner } from "lucide-react";
 import { AnimatePresence, motion, useAnimation, type Transition } from "motion/react";
 
@@ -454,6 +454,27 @@ export function AppShell() {
                     ) : null}
                     <span className="nav-link-content" onClick={handleSettingsIconClick}>
                       <Settings aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
+              <NavLink
+                to="/storage-map"
+                end
+                aria-label={t("nav.storageMapAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <Map aria-hidden="true" className="nav-icon" />
                     </span>
                   </>
                 )}

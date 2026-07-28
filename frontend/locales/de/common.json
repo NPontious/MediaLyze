@@ -8,7 +8,48 @@
     "libraries": "Einstellungen",
     "homeAria": "Startseite",
     "compareAria": "Dateien vergleichen",
-    "settingsAria": "Einstellungen"
+    "settingsAria": "Einstellungen",
+    "storageMapAria": "Speicherkarte"
+  },
+  "storageMap": {
+    "eyebrow": "Bibliotheksspeicher",
+    "title": "Speicherkarte",
+    "subtitle": "Alle Ordner und Dateien auf einen Blick. Die Kachelfläche entspricht dem tatsächlichen Speicherverbrauch.",
+    "library": "Bibliothek",
+    "folders": "Ordner",
+    "noFolders": "Keine Unterordner",
+    "colorBy": "Farbe",
+    "sortBy": "Reihenfolge",
+    "up": "Eine Ebene hoch",
+    "areaHint": "Fläche = Speicherverbrauch",
+    "loading": "Speicherkarte wird geladen…",
+    "error": "Die Speicherkarte konnte nicht geladen werden.",
+    "errorTitle": "Speicherkarte nicht verfügbar",
+    "retry": "Erneut versuchen",
+    "emptyTitle": "Keine analysierten Dateien",
+    "emptyBody": "Dieser Ordner enthält noch keine analysierten Medien.",
+    "noLibrariesTitle": "Keine Bibliotheken vorhanden",
+    "noLibrariesBody": "Erstelle und scanne unter Einstellungen eine Bibliothek, um ihre Speicherkarte zu erkunden.",
+    "tilesVisible": "Alle {{count}} Kacheln sichtbar",
+    "items": "{{count}} Elemente",
+    "files": "{{count}} Dateien",
+    "unknown": "Unbekannt",
+    "treemapAria": "Speicherverbrauch nach Ordner und Datei",
+    "breadcrumbAria": "Aktueller Ordner der Speicherkarte",
+    "folderAria": "Ordner {{name}} öffnen, {{size}}",
+    "fileAria": "Dateidetails für {{name}} öffnen, {{size}}",
+    "modes": {
+      "codec": "Video-Codec",
+      "resolution": "Auflösung",
+      "hdr": "Dynamikumfang",
+      "quality": "Qualitätswert",
+      "size": "Dateigröße"
+    },
+    "sorts": {
+      "size": "Größe",
+      "name": "Name",
+      "quality": "Qualitätswert"
+    }
   },
   "scanBanner": {
     "running": "Scan läuft...",

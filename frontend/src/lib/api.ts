@@ -746,6 +746,38 @@ export type LibraryStatistics = {
   numeric_distributions: Partial<Record<NumericDistributionMetricId, NumericDistribution>>;
 };
 
+export type StorageMapBreadcrumb = {
+  name: string;
+  path: string;
+};
+
+export type StorageMapNode = {
+  kind: "folder" | "file";
+  name: string;
+  path: string;
+  size_bytes: number;
+  file_count: number;
+  file_id: number | null;
+  extension: string | null;
+  jellyfin_title: string | null;
+  video_codec: string | null;
+  resolution: string | null;
+  resolution_category_id: string | null;
+  resolution_category_label: string | null;
+  hdr_type: string | null;
+  quality_score: number | null;
+};
+
+export type LibraryStorageMap = {
+  library_id: number;
+  library_name: string;
+  path: string;
+  total_size_bytes: number;
+  file_count: number;
+  breadcrumbs: StorageMapBreadcrumb[];
+  items: StorageMapNode[];
+};
+
 export type MediaFileRow = {
   id: number;
   library_id: number;
@@ -1038,6 +1070,11 @@ export type MediaFileDetail = MediaFileRow &
     bit_rate: number | null;
     probe_score: number | null;
   } | null;
+  raw_ffprobe_json: Record<string, unknown> | null;
+};
+
+export type MediaFileRawProbe = {
+  id: number;
   raw_ffprobe_json: Record<string, unknown> | null;
 };
 
@@ -1696,10 +1733,15 @@ export const api = {
   dashboardHistory: (signal?: AbortSignal) =>
     request<DashboardHistoryResponse>("/dashboard/history", { signal }),
   dashboardComparison: (
-    params: { xField: ComparisonFieldId; yField: ComparisonFieldId; signal?: AbortSignal },
+    params: {
+      xField: ComparisonFieldId;
+      yField: ComparisonFieldId;
+      renderer?: ComparisonRendererId;
+      signal?: AbortSignal;
+    },
   ) =>
     request<ComparisonResponse>(
-      `/dashboard/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}`,
+      `/dashboard/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}${params.renderer ? `&renderer=${encodeURIComponent(params.renderer)}` : ""}`,
       { signal: params.signal },
     ),
   activeScanJobs: () => request<ScanJob[]>("/scan-jobs/active"),
@@ -1737,6 +1779,20 @@ export const api = {
     request<LibrarySummary>(`/libraries/${id}/summary`, { signal }),
   libraryStatistics: (id: string | number, signal?: AbortSignal, panels?: readonly string[] | null) =>
     request<LibraryStatistics>(`/libraries/${id}/statistics${buildPanelQuery(panels)}`, { signal }),
+  libraryStorageMap: (
+    id: string | number,
+    params?: { path?: string; signal?: AbortSignal },
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (params?.path) {
+      searchParams.set("path", params.path);
+    }
+    const query = searchParams.toString();
+    return request<LibraryStorageMap>(
+      `/libraries/${id}/storage-map${query ? `?${query}` : ""}`,
+      { signal: params?.signal },
+    );
+  },
   libraryHistory: (id: string | number, signal?: AbortSignal) =>
     request<LibraryHistoryResponse>(`/libraries/${id}/history`, { signal }),
   librarySeries: (id: string | number, signal?: AbortSignal) =>
@@ -1754,10 +1810,15 @@ export const api = {
     ),
   libraryComparison: (
     id: string | number,
-    params: { xField: ComparisonFieldId; yField: ComparisonFieldId; signal?: AbortSignal },
+    params: {
+      xField: ComparisonFieldId;
+      yField: ComparisonFieldId;
+      renderer?: ComparisonRendererId;
+      signal?: AbortSignal;
+    },
   ) =>
     request<ComparisonResponse>(
-      `/libraries/${id}/statistics/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}`,
+      `/libraries/${id}/statistics/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}${params.renderer ? `&renderer=${encodeURIComponent(params.renderer)}` : ""}`,
       { signal: params.signal },
     ),
   libraryDuplicates: (
@@ -1865,7 +1926,15 @@ export const api = {
   },
   fileMediaUrl: (id: string | number, options: { download?: boolean } = {}) => `${API_PREFIX}${buildFileMediaPath(id, options)}`,
   libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
-  file: (id: string | number) => request<MediaFileDetail>(`/files/${id}`),
+  file: (
+    id: string | number,
+    options: { includeRawFfprobe?: boolean } = {},
+  ) =>
+    request<MediaFileDetail>(
+      `/files/${id}${options.includeRawFfprobe === false ? "?include_raw_ffprobe=false" : ""}`,
+    ),
+  fileRawFfprobe: (id: string | number, signal?: AbortSignal) =>
+    request<MediaFileRawProbe>(`/files/${id}/raw-ffprobe`, { signal }),
   fileJellyfin: (id: string | number) => request<JellyfinFileOverlay>(`/files/${id}/jellyfin`),
   jellyfinImageUrl: (itemId: string | number, imageType: "Primary" | "Backdrop" | "Thumb" = "Primary") =>
     `${API_PREFIX}/jellyfin/images/${itemId}/${imageType}`,

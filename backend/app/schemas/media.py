@@ -225,6 +225,11 @@ class MediaFileStreamDetails(BaseModel):
     chapters: list[MediaChapterRead] = Field(default_factory=list)
 
 
+class MediaFileRawProbeRead(BaseModel):
+    id: int
+    raw_ffprobe_json: dict[str, Any] | None
+
+
 class MediaFileTablePage(BaseModel):
     total: int | None
     offset: int

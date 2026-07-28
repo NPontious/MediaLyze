@@ -25,7 +25,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { ArrowUpRightIcon, type ArrowUpRightIconHandle } from "../components/ArrowUpRightIcon";
@@ -1626,6 +1626,11 @@ export function FileDetailPage() {
   const [audioStreamPrimaryMode, setAudioStreamPrimaryMode] = useState<AudioStreamPrimaryMode>(() =>
     readStoredAudioStreamPrimaryMode(),
   );
+  const [rawProbeState, setRawProbeState] = useState<{
+    fileId: string;
+    status: "idle" | "loading" | "loaded" | "error";
+    error: string | null;
+  }>(() => ({ fileId, status: "idle", error: null }));
   const [rawJsonCopied, setRawJsonCopied] = useState(false);
   const rawJsonCopyResetTimeoutRef = useRef<number | null>(null);
   const previewReportIconRef = useRef<ArrowUpRightIconHandle>(null);
@@ -1647,10 +1652,14 @@ export function FileDetailPage() {
   }, [file?.library_id, location.key, navigate]);
 
   useEffect(() => {
+    setRawProbeState({ fileId, status: "idle", error: null });
     api
-      .file(fileId)
+      .file(fileId, { includeRawFfprobe: false })
       .then((payload) => {
         setFile(payload);
+        if (payload.raw_ffprobe_json !== null) {
+          setRawProbeState({ fileId, status: "loaded", error: null });
+        }
         setError(null);
       })
       .catch((reason: Error) => setError(reason.message));
@@ -1699,6 +1708,43 @@ export function FileDetailPage() {
       })
       .finally(() => setCompatibilityLoading(false));
   }, [fileId]);
+
+  const currentRawProbeState =
+    rawProbeState.fileId === fileId
+      ? rawProbeState
+      : { fileId, status: "idle" as const, error: null };
+
+  useEffect(() => {
+    if (activePanelId !== "rawJson" || !file || currentRawProbeState.status !== "idle") {
+      return;
+    }
+    const controller = new AbortController();
+    setRawProbeState({ fileId, status: "loading", error: null });
+    api
+      .fileRawFfprobe(fileId, controller.signal)
+      .then((payload) => {
+        setFile((current) =>
+          current && current.id === payload.id
+            ? { ...current, raw_ffprobe_json: payload.raw_ffprobe_json }
+            : current,
+        );
+        setRawProbeState({ fileId, status: "loaded", error: null });
+      })
+      .catch((reason: Error) => {
+        if (reason.name === "AbortError") {
+          return;
+        }
+        setRawProbeState({ fileId, status: "error", error: reason.message });
+      });
+    return () => {
+      controller.abort();
+      setRawProbeState((current) =>
+        current.fileId === fileId && current.status === "loading"
+          ? { fileId, status: "idle", error: null }
+          : current,
+      );
+    };
+  }, [activePanelId, file?.id, fileId]);
 
   useEffect(() => {
     const hardwareIds = hardwareProfiles
@@ -1982,8 +2028,8 @@ export function FileDetailPage() {
     },
     rawJson: {
       title: t("fileDetail.rawJson"),
-      loading: !file && !error,
-      error,
+      loading: (!file && !error) || currentRawProbeState.status === "loading",
+      error: currentRawProbeState.error ?? error,
       actions: (
         <button
           type="button"
@@ -1991,7 +2037,7 @@ export function FileDetailPage() {
           aria-label={rawJsonCopyLabel}
           data-tooltip={rawJsonCopyLabel}
           title={rawJsonCopyLabel}
-          disabled={!canCopyRawJson || !file}
+          disabled={!canCopyRawJson || currentRawProbeState.status !== "loaded"}
           onClick={() => void copyRawJson()}
         >
           <CopyIcon aria-hidden="true" className="nav-icon" size={20} />

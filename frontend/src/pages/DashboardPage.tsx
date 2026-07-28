@@ -8,7 +8,7 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { ComparisonChartPanel } from "../components/ComparisonChartPanel";
@@ -55,6 +55,7 @@ import {
 } from "../lib/statistic-comparisons";
 import { useScanJobs } from "../lib/scan-jobs";
 import { isLibraryHistoryMetricId, type LibraryHistoryMetricId } from "../lib/history-metrics";
+import { readSessionCache, writeSessionCache, type SessionCacheOptions } from "../lib/session-cache";
 
 const DASHBOARD_LAYOUT_KEY = "main";
 const DASHBOARD_HISTORY_PANEL_COLLAPSE_STORAGE_KEY = "medialyze-dashboard-history-collapsed";
@@ -62,23 +63,24 @@ const DASHBOARD_HISTORY_SELECTED_METRIC_STORAGE_KEY = "medialyze-dashboard-histo
 const DASHBOARD_HISTORY_RANGE_STORAGE_KEY = "medialyze-dashboard-history-range-selection";
 const DASHBOARD_HISTORY_CACHE_STORAGE_KEY = "medialyze-dashboard-history-cache";
 const DEFAULT_HISTORY_METRIC: LibraryHistoryMetricId = "resolution_mix";
-const dashboardComparisonCache = new LruCache<string, ComparisonResponse>(24);
+const dashboardComparisonCache = new LruCache<string, ComparisonResponse>(24, { ttlMs: 5 * 60 * 1000 });
+const DASHBOARD_HISTORY_CACHE_OPTIONS: SessionCacheOptions = {
+  prefix: DASHBOARD_HISTORY_CACHE_STORAGE_KEY,
+  ttlMs: 5 * 60 * 1000,
+  maxEntries: 1,
+  maxTotalBytes: 2 * 1024 * 1024,
+  maxEntryBytes: 2 * 1024 * 1024,
+};
 
 function readDashboardHistoryCache(): DashboardHistoryResponse | null {
-  try {
-    const value = window.sessionStorage.getItem(DASHBOARD_HISTORY_CACHE_STORAGE_KEY);
-    return value ? (JSON.parse(value) as DashboardHistoryResponse) : null;
-  } catch {
-    return null;
-  }
+  return readSessionCache<DashboardHistoryResponse>(
+    DASHBOARD_HISTORY_CACHE_STORAGE_KEY,
+    DASHBOARD_HISTORY_CACHE_OPTIONS,
+  );
 }
 
 function writeDashboardHistoryCache(payload: DashboardHistoryResponse): void {
-  try {
-    window.sessionStorage.setItem(DASHBOARD_HISTORY_CACHE_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Ignore disabled or full storage; live loading remains available.
-  }
+  writeSessionCache(DASHBOARD_HISTORY_CACHE_STORAGE_KEY, payload, DASHBOARD_HISTORY_CACHE_OPTIONS);
 }
 type DashboardLayoutPanelDefinition =
   | {
@@ -135,7 +137,7 @@ function formatDashboardDistributionLabel(
 }
 
 function buildComparisonQueryKey(selection: ComparisonSelection, dashboardLibraryScopeKey: string): string {
-  return `${dashboardLibraryScopeKey}:${selection.xField}:${selection.yField}`;
+  return `${dashboardLibraryScopeKey}:${selection.xField}:${selection.yField}:${selection.renderer}`;
 }
 
 function readDashboardHistoryPanelCollapsedPreference(): boolean {
@@ -276,7 +278,7 @@ export function DashboardPage() {
             effectiveDashboardLibraryType,
             { showMusicQualityScore },
           );
-          return `${item.instanceId}:${selection.xField}:${selection.yField}`;
+          return `${item.instanceId}:${selection.xField}:${selection.yField}:${selection.renderer}`;
         })
         .join("|"),
     [comparisonPanels, effectiveDashboardLibraryType, showMusicQualityScore],
@@ -412,6 +414,7 @@ export function DashboardPage() {
       api.dashboardComparison({
         xField: selection.xField,
         yField: selection.yField,
+        renderer: selection.renderer,
         signal: controller.signal,
       })
         .then((payload) => {

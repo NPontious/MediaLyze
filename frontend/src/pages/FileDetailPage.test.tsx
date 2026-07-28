@@ -2,7 +2,7 @@ import "../i18n";
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
 import {
@@ -1431,6 +1431,30 @@ describe("FileDetailPage", () => {
     fireEvent.click(copyButton);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(file.raw_ffprobe_json, null, 2)));
     expect(screen.getByRole("button", { name: "Copied raw ffprobe JSON" })).toBeInTheDocument();
+  });
+
+  it("loads the large raw ffprobe payload only when its panel is opened", async () => {
+    const completeFile = createFileDetail();
+    const compactFile = { ...completeFile, raw_ffprobe_json: null };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    const fileSpy = vi.spyOn(api, "file").mockResolvedValue(compactFile);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    const rawSpy = vi.spyOn(api, "fileRawFfprobe").mockResolvedValue({
+      id: completeFile.id,
+      raw_ffprobe_json: completeFile.raw_ffprobe_json,
+    });
+
+    renderPage(completeFile.id);
+
+    await screen.findByRole("heading", { name: "Overview" });
+    expect(fileSpy).toHaveBeenCalledWith(String(completeFile.id), { includeRawFfprobe: false });
+    expect(rawSpy).not.toHaveBeenCalled();
+
+    await selectFileDetailPanel("Raw ffprobe JSON");
+    await waitFor(() =>
+      expect(rawSpy).toHaveBeenCalledWith(String(completeFile.id), expect.any(AbortSignal)),
+    );
+    expect(screen.getAllByText(/streams/).length).toBeGreaterThan(0);
   });
 
   it("copies raw JSON through the textarea fallback when the Clipboard API is unavailable", async () => {

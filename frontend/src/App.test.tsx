@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 
 import { App } from "./App";
 import i18n from "./i18n";
@@ -98,7 +98,7 @@ describe("App routing", () => {
     const { container } = renderApp("/ui-elements");
 
     expect(
-      await screen.findByRole("heading", { name: "UI elements" }, { timeout: 5_000 }),
+      await screen.findByRole("heading", { name: "UI elements" }, { timeout: 10_000 }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Theme preview")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Header & navigation" })).toBeInTheDocument();

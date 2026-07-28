@@ -596,6 +596,14 @@ def _update_media_file_search_fields(media_file: MediaFile) -> None:
     primary_video = min(media_file.video_streams, key=lambda stream: stream.stream_index, default=None)
     media_file.duration_seconds = media_file.media_format.duration if media_file.media_format else None
     media_file.audio_bitrate = _audio_bitrate_from_streams_or_format(media_file)
+    media_file.max_audio_bit_depth = max(
+        (
+            stream.bit_depth
+            for stream in media_file.audio_streams
+            if stream.bit_depth is not None and stream.bit_depth > 0
+        ),
+        default=None,
+    )
     media_file.bitrate = (
         media_file.media_format.bit_rate if media_file.media_format and media_file.media_format.bit_rate else media_file.audio_bitrate
     )

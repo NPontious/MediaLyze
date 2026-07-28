@@ -12,7 +12,7 @@ from backend.app.api.deps import get_app_settings, get_db_session, get_scan_runt
 from backend.app.core.config import Settings
 from backend.app.schemas.app_settings import AppSettingsRead, AppSettingsUpdate
 from backend.app.schemas.browse import BrowseResponse
-from backend.app.schemas.comparison import ComparisonFieldId, ComparisonResponse
+from backend.app.schemas.comparison import ComparisonFieldId, ComparisonRendererId, ComparisonResponse
 from backend.app.schemas.compatibility import (
     CompatibilityEvaluateRequest,
     CompatibilityEvaluation,
@@ -62,6 +62,7 @@ from backend.app.schemas.media import (
     DashboardResponse,
     GroupedMediaTablePageRead,
     MediaFileDetail,
+    MediaFileRawProbeRead,
     MediaFileHistoryRead,
     MediaFileQualityScoreDetail,
     MediaFileSearchResponse,
@@ -80,6 +81,7 @@ from backend.app.schemas.scan import (
     ScanJobRead,
     ScanRequest,
 )
+from backend.app.schemas.storage_map import LibraryStorageMapRead
 from backend.app.schemas.update_status import UpdateStatusRead
 from backend.app.models.entities import (
     DuplicateDetectionMode,
@@ -155,6 +157,7 @@ from backend.app.services.media_service import (
     generate_library_files_csv_export,
     get_media_file_detail,
     get_media_file_history,
+    get_media_file_raw_ffprobe,
     get_media_file_source,
     get_media_file_quality_score_detail,
     get_media_file_stream_details,
@@ -184,6 +187,7 @@ from backend.app.services.scan_jobs import (
 from backend.app.services.stat_comparisons import get_dashboard_comparison, get_library_comparison
 from backend.app.services.stats import build_dashboard
 from backend.app.services.stats_cache import stats_cache
+from backend.app.services.storage_map import StorageMapPathError, get_library_storage_map
 from backend.app.services.telemetry import build_telemetry_payload, send_current_telemetry_snapshot
 from backend.app.services.update_status import get_or_check_update_status
 
@@ -361,11 +365,12 @@ def dashboard_history(db: Session = Depends(get_db_session)) -> DashboardHistory
 def dashboard_comparison(
     x_field: ComparisonFieldId = Query(...),
     y_field: ComparisonFieldId = Query(...),
+    renderer: ComparisonRendererId | None = Query(default=None),
     db: Session = Depends(get_db_session),
 ) -> ComparisonResponse:
     if x_field == y_field:
         raise HTTPException(status_code=400, detail="Comparison axes must use different fields")
-    return get_dashboard_comparison(db, x_field=x_field, y_field=y_field)
+    return get_dashboard_comparison(db, x_field=x_field, y_field=y_field, renderer=renderer)
 
 
 @router.get("/scan-jobs/active", response_model=list[ScanJobRead])
@@ -1273,11 +1278,18 @@ def library_statistics_comparison(
     library_id: int,
     x_field: ComparisonFieldId = Query(...),
     y_field: ComparisonFieldId = Query(...),
+    renderer: ComparisonRendererId | None = Query(default=None),
     db: Session = Depends(get_db_session),
 ) -> ComparisonResponse:
     if x_field == y_field:
         raise HTTPException(status_code=400, detail="Comparison axes must use different fields")
-    payload = get_library_comparison(db, library_id=library_id, x_field=x_field, y_field=y_field)
+    payload = get_library_comparison(
+        db,
+        library_id=library_id,
+        x_field=x_field,
+        y_field=y_field,
+        renderer=renderer,
+    )
     if payload is None:
         raise HTTPException(status_code=404, detail="Library not found")
     return payload
@@ -1548,7 +1560,7 @@ def library_delete(
 def library_files(
     library_id: int,
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=0, le=200),
     cursor: str | None = Query(default=None, max_length=512),
     include_total: bool = Query(default=True),
     search: str = Query(default="", max_length=200),
@@ -1708,6 +1720,21 @@ def library_files(
         )
     except SearchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/libraries/{library_id}/storage-map", response_model=LibraryStorageMapRead)
+def library_storage_map(
+    library_id: int,
+    path: str = Query(default="", max_length=2048),
+    db: Session = Depends(get_db_session),
+) -> LibraryStorageMapRead:
+    try:
+        result = get_library_storage_map(db, library_id, path=path)
+    except StorageMapPathError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return result
 
 
 @router.get("/libraries/{library_id}/files/grouped", response_model=GroupedMediaTablePageRead)
@@ -2100,11 +2127,26 @@ def file_search(
 
 
 @router.get("/files/{file_id}", response_model=MediaFileDetail)
-def file_detail(file_id: int, db: Session = Depends(get_db_session)) -> MediaFileDetail:
-    media_file = get_media_file_detail(db, file_id)
+def file_detail(
+    file_id: int,
+    include_raw_ffprobe: bool = Query(default=True),
+    db: Session = Depends(get_db_session),
+) -> MediaFileDetail:
+    media_file = get_media_file_detail(db, file_id, include_raw_ffprobe=include_raw_ffprobe)
     if not media_file:
         raise HTTPException(status_code=404, detail="Media file not found")
     return media_file
+
+
+@router.get("/files/{file_id}/raw-ffprobe", response_model=MediaFileRawProbeRead)
+def file_raw_ffprobe(
+    file_id: int,
+    db: Session = Depends(get_db_session),
+) -> MediaFileRawProbeRead:
+    payload = get_media_file_raw_ffprobe(db, file_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return payload
 
 
 @router.get("/files/{file_id}/jellyfin", response_model=JellyfinFileOverlayRead)

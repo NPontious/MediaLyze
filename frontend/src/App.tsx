@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router";
 
 import { AppShell } from "./components/AppShell";
 import { AppDataProvider } from "./lib/app-data";
@@ -14,6 +14,7 @@ const FileDetailPage = lazy(() => import("./pages/FileDetailPage").then((module)
 const LibrariesPage = lazy(() => import("./pages/LibrariesPage").then((module) => ({ default: module.LibrariesPage })));
 const LibraryDetailPage = lazy(() => import("./pages/LibraryDetailPage").then((module) => ({ default: module.LibraryDetailPage })));
 const SeriesDetailPage = lazy(() => import("./pages/SeriesDetailPage").then((module) => ({ default: module.SeriesDetailPage })));
+const StorageMapPage = lazy(() => import("./pages/StorageMapPage").then((module) => ({ default: module.StorageMapPage })));
 const UiElementsPage = lazy(() => import("./pages/UiElementsPage").then((module) => ({ default: module.UiElementsPage })));
 
 function DevOnlyRoute({ children }: { children: ReactNode }) {
@@ -42,6 +43,7 @@ export function App() {
                 <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
                 <Route path="/files/compare" element={<FileComparePage />} />
                 <Route path="/files/:fileId" element={<FileDetailPage />} />
+                <Route path="/storage-map" element={<StorageMapPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
             </Routes>
