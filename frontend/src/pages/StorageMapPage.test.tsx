@@ -55,6 +55,18 @@ function storageNode(overrides: Partial<StorageMapNode>): StorageMapNode {
     resolution_category_label: "4K UHD",
     hdr_type: "HDR10",
     quality_score: 90,
+    container: "mkv",
+    duration_seconds: 7200,
+    bitrate: 12_000_000,
+    audio_bitrate: 640_000,
+    audio_codec: "eac3",
+    audio_channels: 6,
+    frame_rate: 23.976,
+    bit_depth: 10,
+    audio_language: "eng",
+    subtitle_status: "internal",
+    subtitle_language: "eng",
+    analysis_status: "ready",
     ...overrides,
   };
 }
@@ -173,7 +185,17 @@ describe("StorageMapPage", () => {
     expect(screen.queryByText("Folders")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Up one level" })).not.toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: /Open folder Feature Films/i }));
+    const folderTile = await screen.findByRole("button", { name: /Open folder Feature Films/i });
+    expect(folderTile).not.toHaveAttribute("title");
+    fireEvent.mouseEnter(folderTile);
+    const folderTooltip = await screen.findByRole("tooltip");
+    expect(folderTooltip).toHaveTextContent("Feature Films");
+    expect(folderTooltip).toHaveTextContent("Video codec");
+    expect(folderTooltip).toHaveTextContent("Storage");
+    fireEvent.mouseLeave(folderTile);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+
+    fireEvent.click(folderTile);
 
     await waitFor(() => {
       expect(libraryStorageMap).toHaveBeenLastCalledWith(
@@ -185,14 +207,18 @@ describe("StorageMapPage", () => {
     const upButton = screen.getByRole("button", { name: "Up one level" });
     expect(upButton).toHaveTextContent("");
     fireEvent.focus(upButton);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Up one level");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     fireEvent.blur(upButton);
+    expect(document.querySelector(".storage-map-footer")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Show Jellyfin names" }));
 
     expect(
       await screen.findByRole("button", { name: /Open file details for Dune: Part Two/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Open file details for Dune: Part Two/i }),
+    ).not.toHaveAttribute("title");
     expect(
       screen.getByRole("button", { name: /Open file details for Unmatched\.mkv/i }),
     ).toBeInTheDocument();
@@ -223,5 +249,10 @@ describe("StorageMapPage", () => {
       .toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Displayed file name" }))
       .not.toBeInTheDocument();
+
+    const colorSelect = screen.getByRole("combobox", { name: "Color" });
+    expect(colorSelect.querySelectorAll("option")).toHaveLength(17);
+    fireEvent.change(colorSelect, { target: { value: "audio_codec" } });
+    expect(screen.getByText("Dolby Digital Plus")).toBeInTheDocument();
   });
 });

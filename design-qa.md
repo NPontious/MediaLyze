@@ -1,50 +1,65 @@
-# Storage Map viewport-fill design QA
+# Storage Map adaptive labels and rich tooltip design QA
 
-- Source visual truth: `prototypes/storage-map-select-chevron-desktop.png` (the previous fixed-height treemap state corresponding to the annotation).
-- Browser-rendered implementation: `prototypes/storage-map-viewport-fill-desktop.png`.
-- Mobile implementation: `prototypes/storage-map-viewport-fill-mobile.png`.
-- Full comparison: `prototypes/storage-map-viewport-fill-qa-comparison.png`.
-- Focused lower-page comparison: `prototypes/storage-map-viewport-fill-qa-focus-comparison.png`.
-- Desktop source and implementation: 1306 × 1204 pixels at a 1306 × 1204 CSS viewport, device pixel ratio 1.
-- Mobile implementation: 390 × 844 pixels at a 390 × 844 CSS viewport, device pixel ratio 1.
+- Source visual truth: `prototypes/storage-map-streamlined-chrome-desktop.png` for the existing Storage Map composition and `prototypes/storage-map-overlay-ui-catalog.png` for the previous small-tile label behavior.
+- Browser-rendered implementation: `prototypes/storage-map-adaptive-labels-desktop.png`.
+- Adaptive-label implementation fixture: `prototypes/storage-map-adaptive-faded-labels-ui-catalog.png`.
+- Rich-tooltip implementation fixture: `prototypes/storage-map-rich-tooltip-ui-catalog.png`.
+- Dark-theme color-regression implementation: `prototypes/storage-map-color-regression-fixed-desktop.png`.
+- Full comparison: `prototypes/storage-map-adaptive-labels-qa-comparison.png`.
+- Focused label comparison: `prototypes/storage-map-adaptive-labels-qa-focus-comparison.png`.
+- Focused tooltip comparison: `prototypes/storage-map-rich-tooltip-qa-comparison.png`.
+- Source and implementation: 1306 × 1204 pixels at a 1306 × 1204 CSS viewport, device pixel ratio 1.
 - Density normalization: none required.
-- State: Storage Map root, dark theme, library “Filme”, color “Video codec”, order “Size”.
+- State: dark theme; Storage Map root for the full view; representative compact tile and open hover card in the canonical `/ui-elements` fixture for focused interaction evidence.
 
 ## Full-view comparison evidence
 
-The side-by-side comparison shows that the treemap now consumes the previously unused lower panel area while preserving the existing header, toolbar, footer, tile proportions, and MediaLyze visual language. The app shell finishes at the normal 48 px bottom page gutter instead of leaving a large empty region inside the Storage Map panel.
+The combined full-view comparison confirms that the adaptive labels and custom hover card do not change the established MediaLyze composition, toolbar density, treemap proportions, tile colors, or viewport-filling behavior. The file tiles remain directly clickable and preserve the existing size-proportional layout.
 
 ## Focused comparison evidence
 
-The lower-page crop was needed to judge the annotated vertical-space issue. It confirms that the treemap footer remains directly beneath the tiles and moves with the viewport-filling stage, rather than stretching itself or leaving an empty panel region. The root view uses three grid rows; nested folder views retain four rows so the breadcrumb does not reduce or misplace the footer.
+The focused label comparison shows the former all-or-nothing behavior beside the revised compact tile: the long asset name is now retained, wraps when space allows, and fades at the right edge instead of leaving the tile blank. Metadata remains visible while a line fits; the least-important size label is removed first.
+
+The focused tooltip comparison shows the same tile at rest and with its custom hover card open. The card appears next to the tile, uses the MediaLyze panel surface, border, radius, shadow, typography, and semantic metric badge, and exposes the full name plus storage, file count, codec, resolution, HDR, and quality information without navigating away.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: all labels, filenames, metadata, and footer text retain their existing family, weight, line height, wrapping, and optical hierarchy.
-- Spacing and layout rhythm: the Storage Map page now takes the app shell's remaining grid row. At 1204 px viewport height the panel ends at 1156 px, respecting the existing 48 px page-bottom gutter; the treemap grows from 460 px to 862 px.
-- Colors and visual tokens: surfaces, borders, shadows, tile colors, and theme tokens are unchanged.
-- Image and asset fidelity: no imagery or icon assets changed.
-- Copy and content: no user-visible copy changed.
+- Fonts and typography: existing tile weights, sizes, and line heights are preserved. Names can wrap, compact tiles progressively reduce secondary lines, and the edge mask avoids a hard ellipsis while retaining readable leading text.
+- Spacing and layout rhythm: tile geometry and zero-gap treemap packing are unchanged. The hover card uses compact internal spacing and definition-list alignment consistent with existing MediaLyze panels.
+- Colors and visual tokens: tile colors continue to come from the active metric. The hover card uses the existing panel, border, muted-text, foreground, and accent tokens and remains legible on every tested tile color.
+- Image and asset fidelity: existing Lucide file/folder icons are reused; no raster or approximate replacement assets were introduced.
+- Copy and content: the card reuses existing localized labels and displays the full asset/folder name, active metric, storage, count where applicable, codec, resolution, HDR, and quality data. No new untranslated copy was added.
 
 ## Interaction and runtime evidence
 
-- Root view: stage height 862 px, footer height 35 px, no page overflow.
-- Nested-folder/error view: breadcrumb height 24 px, stage height 861.5 px, footer height 35 px, and the Up overlay remains available.
-- Mobile view: the existing 430 px functional minimum is preserved, horizontal overflow remains absent (`scrollWidth === 390`), and the page scrolls naturally when the stacked controls exceed the viewport.
-- Primary interactions checked: root rendering, nested-path rendering, and parent-folder navigation availability.
-- Browser console after the final implementation: no errors or warnings.
-- Focused Storage Map tests passed: 3 of 3.
+- A tile has no native `title`, so the delayed system tooltip is not used.
+- The custom hover card opens after 80 ms, closes on pointer leave, does not pin on click, and automatically flips above when there is insufficient space below.
+- File clicks still navigate to file details; folder clicks still descend into the selected folder.
+- Labels are hidden only below the final 42 × 28 px threshold, where a usable text line no longer fits.
+- At intermediate sizes, the tile changes from full name/metadata/size to name/metadata and finally name-only before hiding all copy.
+- Browser console after the final root-route reload: no errors or warnings.
+- Dark-theme color verification: the computed tile background now matches `--storage-map-tile-color`; the size mode produced four distinct computed colors for the four differently sized test files. The codec mode correctly produced one shared green because all four test files are H.265/HEVC.
+- Focused frontend tests passed: 5 of 5 across Storage Map and TooltipTrigger; the broader targeted pass passed 23 of 23 across Storage Map, TooltipTrigger, and App Shell.
 - Production frontend build passed.
 - `git diff --check` passed.
 
 ## Comparison history
 
-1. Earlier P2: the explorer had a capped 840 px minimum height while its content remained only 543 px tall, leaving 297 px unused inside the panel.
-   - Fix: make the Storage Map app shell a two-row viewport-height grid and stretch the page, panel, explorer, and content through the remaining row.
-   - Post-fix evidence: `prototypes/storage-map-viewport-fill-qa-comparison.png`.
-2. Earlier P2 found during the first implementation pass: hiding the root breadcrumb shifted the footer into the flexible grid row, stretching it to 437 px while the treemap remained 460 px tall.
-   - Fix: use a root-specific three-row grid (`toolbar / treemap / footer`) and retain the four-row layout when breadcrumbs are visible.
-   - Post-fix evidence: final browser measurements report rows `48px 862px 35px`; the footer remains 35 px.
+1. Earlier P2: labels were hidden as a complete block whenever all text did not fit, leaving usable medium-size tiles blank.
+   - Fix: replace JavaScript all-or-nothing measurement with CSS container-query tiers that preserve at least the name while one line fits.
+   - Post-fix evidence: `prototypes/storage-map-adaptive-labels-qa-focus-comparison.png`.
+2. Earlier P2: long names ended abruptly or forced the layout to suppress all copy.
+   - Fix: permit wrapping at usable sizes and apply a right-edge mask fade, while progressively hiding size and metadata before the name.
+   - Post-fix evidence: `prototypes/storage-map-adaptive-faded-labels-ui-catalog.png`.
+3. Earlier P2: the browser-native tooltip appeared slowly and exposed only a plain text string.
+   - Fix: use the shared tooltip primitive with an 80 ms hover delay and a structured MediaLyze metadata card.
+   - Post-fix evidence: `prototypes/storage-map-rich-tooltip-qa-comparison.png`.
+4. Earlier P2: a fixed below-tile card could be clipped near the viewport edge.
+   - Fix: add automatic above/below placement based on available viewport space.
+   - Post-fix evidence: interaction inspection and the focused tooltip comparison.
+5. Earlier P1 regression: converting each tile into the shared tooltip trigger allowed the later dark-theme `.tooltip-trigger` background rule to override every per-node color.
+   - Fix: scope the Storage Map background rule through the treemap and combined tile/tooltip classes so its specificity remains above the global dark-theme tooltip rule.
+   - Post-fix evidence: `prototypes/storage-map-color-regression-fixed-desktop.png` and computed-style checks across codec and size modes.
 
 ## Findings
 
@@ -52,6 +67,6 @@ No actionable P0, P1, or P2 findings remain.
 
 ## Follow-up polish
 
-No P3 follow-up is needed for this refinement.
+No P3 follow-up is required for this refinement.
 
 final result: passed

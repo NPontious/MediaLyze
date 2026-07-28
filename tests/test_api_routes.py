@@ -134,6 +134,50 @@ def test_update_status_returns_persisted_latest_release() -> None:
     assert payload["release_notes"][0]["version"] == "9.9.9"
 
 
+def test_desktop_update_reminder_routes_are_desktop_only_and_persist_marks() -> None:
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    with session_factory() as db:
+        db.add(
+            AppSetting(
+                key=UPDATE_STATUS_KEY,
+                value={
+                    "latest_version": "9.9.9",
+                    "checked_at": datetime.now(UTC).isoformat(),
+                    "release_notes": [],
+                },
+            )
+        )
+        db.commit()
+        client = _build_test_app(db)
+
+        assert client.get("/api/desktop/update-reminder").status_code == 404
+
+        desktop_settings = Settings()
+        desktop_settings.runtime_mode = "desktop"
+        desktop_settings.app_version = "0.17.0"
+        client.app.dependency_overrides[get_app_settings] = lambda: desktop_settings
+
+        empty_response = client.get("/api/desktop/update-reminder")
+        mark_response = client.post(
+            "/api/desktop/update-reminder/mark",
+            json={"version": "9.9.9"},
+        )
+        loaded_response = client.get("/api/desktop/update-reminder")
+
+    assert empty_response.status_code == 200
+    assert empty_response.json() == {"version": None, "reminded_at": None}
+    assert mark_response.status_code == 200
+    assert mark_response.json()["version"] == "9.9.9"
+    assert loaded_response.json() == mark_response.json()
+
+
 def test_quality_profiles_route_seeds_defaults_and_protects_default_delete() -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -1691,7 +1735,16 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
             primary_video_codec="av1",
             primary_video_width=1920,
             primary_video_height=1080,
-            primary_video_hdr_type="sdr",
+            primary_video_hdr_type=None,
+            duration_seconds=5400,
+            bitrate=8_000_000,
+            audio_bitrate=640_000,
+            min_audio_codec="eac3",
+            audio_channels=6,
+            min_audio_language="deu",
+            has_external_subtitles=True,
+            min_subtitle_language="deu",
+            scan_status=ScanStatus.ready,
         )
         db.add_all(
             [
@@ -1709,6 +1762,17 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
             ]
         )
         db.flush()
+        db.add(
+            VideoStream(
+                media_file_id=small.id,
+                stream_index=0,
+                codec="av1",
+                width=1920,
+                height=1080,
+                frame_rate=23.976,
+                bit_depth=10,
+            )
+        )
         jellyfin_item = JellyfinItem(
             jellyfin_item_id="jf-dune",
             item_type="Movie",
@@ -1744,6 +1808,7 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
     ]
     assert root_payload["items"][0]["file_count"] == 2
     assert root_payload["items"][0]["video_codec"] == "hevc"
+    assert root_payload["items"][1]["hdr_type"] is None
 
     assert folder_response.status_code == 200
     folder_payload = folder_response.json()
@@ -1754,6 +1819,19 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
     assert folder_payload["items"][0]["resolution_category_id"] == "4k"
     assert folder_payload["items"][0]["jellyfin_title"] == "Dune: Part Two"
     assert folder_payload["items"][1]["jellyfin_title"] is None
+    assert folder_payload["items"][1]["hdr_type"] == "SDR"
+    assert folder_payload["items"][1]["container"] == "mkv"
+    assert folder_payload["items"][1]["duration_seconds"] == 5400
+    assert folder_payload["items"][1]["bitrate"] == 8_000_000
+    assert folder_payload["items"][1]["audio_bitrate"] == 640_000
+    assert folder_payload["items"][1]["audio_codec"] == "eac3"
+    assert folder_payload["items"][1]["audio_channels"] == 6
+    assert folder_payload["items"][1]["frame_rate"] == 23.976
+    assert folder_payload["items"][1]["bit_depth"] == 10
+    assert folder_payload["items"][1]["audio_language"] == "deu"
+    assert folder_payload["items"][1]["subtitle_status"] == "external"
+    assert folder_payload["items"][1]["subtitle_language"] == "deu"
+    assert folder_payload["items"][1]["analysis_status"] == "ready"
     assert missing_response.status_code == 404
 
 

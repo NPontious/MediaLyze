@@ -6,7 +6,19 @@ const appVersion = process.env.VITE_APP_VERSION ?? process.env.APP_VERSION ?? "d
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "medialyze-build-version",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "build-version.json",
+          source: JSON.stringify({ version: appVersion }),
+        });
+      },
+    },
+  ],
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },

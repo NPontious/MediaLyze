@@ -3,13 +3,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   RELEASE_NOTES_SEEN_VERSION_STORAGE_KEY,
   RELEASE_NOTES_SEEN_APP_VERSION_STORAGE_KEY,
+  UPDATE_REMINDER_INTERVAL_MS,
+  UPDATE_REMINDER_STORAGE_KEY,
   isFirstOpenAfterUpdate,
   getSeenReleaseVersion,
   isDevelopmentVersion,
+  isUpdateReminderDue,
+  markBrowserUpdateReminder,
   markReleaseNotesSeen,
   mergeReleaseNotes,
   parseAllReleaseNotes,
   parseReleaseNotes,
+  readBrowserUpdateReminder,
   shouldShowReleaseNotes,
 } from "./release-notes";
 
@@ -138,5 +143,31 @@ describe("release notes", () => {
       { version: "1.2.3", date: null, sections: [{ title: "Remote", items: ["remote current"] }] },
       { version: "1.2.2", date: null, sections: [{ title: "Local", items: ["older"] }] },
     ]);
+  });
+
+  it("stores automatic update reminders for 72 hours regardless of a newer version", () => {
+    const now = Date.parse("2026-07-28T12:00:00Z");
+
+    expect(readBrowserUpdateReminder(now)).toEqual({ available: true, reminder: null });
+    expect(markBrowserUpdateReminder("1.2.3", now)).toBe(true);
+
+    const stored = readBrowserUpdateReminder(now + 1000);
+    expect(stored.reminder?.version).toBe("1.2.3");
+    expect(isUpdateReminderDue(stored.reminder?.remindedAt ?? null, now + UPDATE_REMINDER_INTERVAL_MS - 1)).toBe(false);
+    expect(isUpdateReminderDue(stored.reminder?.remindedAt ?? null, now + UPDATE_REMINDER_INTERVAL_MS)).toBe(true);
+  });
+
+  it("removes corrupt and future update reminder values", () => {
+    const now = Date.parse("2026-07-28T12:00:00Z");
+    window.localStorage.setItem(UPDATE_REMINDER_STORAGE_KEY, "{broken");
+    expect(readBrowserUpdateReminder(now)).toEqual({ available: true, reminder: null });
+    expect(window.localStorage.getItem(UPDATE_REMINDER_STORAGE_KEY)).toBeNull();
+
+    window.localStorage.setItem(
+      UPDATE_REMINDER_STORAGE_KEY,
+      JSON.stringify({ version: "1.2.3", remindedAt: "2027-07-28T12:00:00Z" }),
+    );
+    expect(readBrowserUpdateReminder(now)).toEqual({ available: true, reminder: null });
+    expect(window.localStorage.getItem(UPDATE_REMINDER_STORAGE_KEY)).toBeNull();
   });
 });

@@ -15,6 +15,18 @@ export type ReleaseNotes = {
 
 export const RELEASE_NOTES_SEEN_VERSION_STORAGE_KEY = "medialyze-release-notes-seen-version";
 export const RELEASE_NOTES_SEEN_APP_VERSION_STORAGE_KEY = "medialyze-release-notes-seen-app-version";
+export const UPDATE_REMINDER_STORAGE_KEY = "medialyze-update-reminder-v1";
+export const UPDATE_REMINDER_INTERVAL_MS = 72 * 60 * 60 * 1000;
+
+export type UpdateReminder = {
+  version: string;
+  remindedAt: string;
+};
+
+export type BrowserUpdateReminderState = {
+  available: boolean;
+  reminder: UpdateReminder | null;
+};
 
 export function normalizeReleaseVersion(version: string): string {
   return version.trim().replace(/^v/i, "");
@@ -23,6 +35,80 @@ export function normalizeReleaseVersion(version: string): string {
 export function isDevelopmentVersion(version: string): boolean {
   const normalizedVersion = normalizeReleaseVersion(version);
   return normalizedVersion === "dev" || /(?:^|-)dev[0-9a-z.+-]*$/i.test(normalizedVersion);
+}
+
+function canUseLocalStorage(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const probeKey = `${UPDATE_REMINDER_STORAGE_KEY}-probe`;
+  try {
+    window.localStorage.setItem(probeKey, "1");
+    window.localStorage.removeItem(probeKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function readBrowserUpdateReminder(now = Date.now()): BrowserUpdateReminderState {
+  if (!canUseLocalStorage()) {
+    return { available: false, reminder: null };
+  }
+  try {
+    const stored = window.localStorage.getItem(UPDATE_REMINDER_STORAGE_KEY);
+    if (!stored) {
+      return { available: true, reminder: null };
+    }
+    const parsed = JSON.parse(stored) as Partial<UpdateReminder>;
+    const remindedAtMs = typeof parsed.remindedAt === "string" ? Date.parse(parsed.remindedAt) : Number.NaN;
+    const version = typeof parsed.version === "string" ? normalizeReleaseVersion(parsed.version) : "";
+    if (
+      !/^\d+\.\d+\.\d+$/.test(version)
+      || !Number.isFinite(remindedAtMs)
+      || remindedAtMs > now
+    ) {
+      window.localStorage.removeItem(UPDATE_REMINDER_STORAGE_KEY);
+      return { available: true, reminder: null };
+    }
+    return {
+      available: true,
+      reminder: { version, remindedAt: new Date(remindedAtMs).toISOString() },
+    };
+  } catch {
+    try {
+      window.localStorage.removeItem(UPDATE_REMINDER_STORAGE_KEY);
+    } catch {
+      return { available: false, reminder: null };
+    }
+    return { available: true, reminder: null };
+  }
+}
+
+export function isUpdateReminderDue(remindedAt: string | null, now = Date.now()): boolean {
+  if (!remindedAt) {
+    return true;
+  }
+  const remindedAtMs = Date.parse(remindedAt);
+  return Number.isFinite(remindedAtMs) && remindedAtMs <= now && now - remindedAtMs >= UPDATE_REMINDER_INTERVAL_MS;
+}
+
+export function markBrowserUpdateReminder(version: string, now = Date.now()): boolean {
+  if (!canUseLocalStorage()) {
+    return false;
+  }
+  try {
+    window.localStorage.setItem(
+      UPDATE_REMINDER_STORAGE_KEY,
+      JSON.stringify({
+        version: normalizeReleaseVersion(version),
+        remindedAt: new Date(now).toISOString(),
+      } satisfies UpdateReminder),
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function cleanMarkdownText(value: string): string {

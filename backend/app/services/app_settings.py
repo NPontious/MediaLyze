@@ -161,7 +161,14 @@ def _deserialize_pattern_recognition(payload: Any) -> PatternRecognitionSettings
 def _deserialize_feature_flags(payload: Any, settings: Settings) -> FeatureFlagsRead:
     candidate = payload if isinstance(payload, dict) else {}
     defaults = _default_feature_flags(settings)
+    if "hide_automatic_update_reminders" in candidate:
+        hide_automatic_update_reminders = bool(candidate["hide_automatic_update_reminders"])
+    elif "show_automatic_update_reminders" in candidate:
+        hide_automatic_update_reminders = not bool(candidate["show_automatic_update_reminders"])
+    else:
+        hide_automatic_update_reminders = defaults.hide_automatic_update_reminders
     return FeatureFlagsRead(
+        hide_automatic_update_reminders=hide_automatic_update_reminders,
         show_analyzed_files_csv_export=bool(
             candidate.get("show_analyzed_files_csv_export", defaults.show_analyzed_files_csv_export)
         ),

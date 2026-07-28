@@ -40,6 +40,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       ...overrideScanPerformance,
     },
     feature_flags: {
+      hide_automatic_update_reminders: false,
       show_analyzed_files_csv_export: false,
       show_full_width_app_shell: false,
       hide_quality_score_meter: false,
@@ -427,15 +428,29 @@ describe("AppShell", () => {
     const downloadLatestInstaller = vi.fn().mockResolvedValue({ ok: true });
     window.medialyzeDesktop = {
       isDesktop: () => true,
+      getRuntimeInfo: () => ({ platform: "darwin", arch: "arm64" }),
       selectLibraryPaths: vi.fn(),
       downloadLatestInstaller,
+      cancelInstallerDownload: vi.fn(),
     };
     vi.mocked(api.updateStatus).mockResolvedValue({
       current_version: "0.8.3",
       latest_version: "0.9.0",
+      latest_release_url: "https://github.com/frederikemmer/MediaLyze/releases/tag/v0.9.0",
       update_available: true,
+      automatic_reminder_eligible: true,
       checked_at: "2026-05-15T00:00:00Z",
       release_notes: [],
+      desktop_assets: [
+        {
+          platform: "darwin",
+          arch: "arm64",
+          filename: "MediaLyze-arm64.dmg",
+          download_url: "https://github.com/frederikemmer/MediaLyze/releases/download/v0.9.0/MediaLyze-arm64.dmg",
+          size_bytes: 123,
+          sha256: null,
+        },
+      ],
     });
 
     renderShell();
@@ -446,6 +461,114 @@ describe("AppShell", () => {
 
     await waitFor(() => expect(downloadLatestInstaller).toHaveBeenCalledWith("0.9.0"));
     expect(screen.getByRole("button", { name: "Downloaded" })).toBeInTheDocument();
+  });
+
+  it("automatically opens a newer stable release and stores the browser reminder", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      latest_release_url: "https://github.com/frederikemmer/MediaLyze/releases/tag/v0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: "2026-07-28T00:00:00Z",
+      release_notes: [
+        {
+          version: "0.9.0",
+          date: "2026-07-28",
+          sections: [{ title: "New", items: ["automatic update"] }],
+        },
+      ],
+      desktop_assets: [],
+    });
+
+    renderShell();
+
+    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    expect(await screen.findByText("automatic update")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.localStorage.getItem("medialyze-update-reminder-v1")).toContain('"version":"0.9.0"'),
+    );
+  });
+
+  it("does not automatically reopen within 72 hours or when the feature flag is disabled", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    window.localStorage.setItem(
+      "medialyze-update-reminder-v1",
+      JSON.stringify({ version: "0.8.4", remindedAt: new Date().toISOString() }),
+    );
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: new Date().toISOString(),
+      release_notes: [],
+      desktop_assets: [],
+    });
+
+    const firstRender = renderShell();
+    await waitFor(() => expect(api.updateStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Release history" })).not.toBeInTheDocument();
+    firstRender.unmount();
+
+    window.localStorage.removeItem("medialyze-update-reminder-v1");
+    vi.mocked(api.appSettings).mockResolvedValue(
+      createAppSettings({ feature_flags: { hide_automatic_update_reminders: true } }),
+    );
+    renderShell();
+    await waitFor(() => expect(api.updateStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Release history" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the passive update indicator when browser reminder storage is unavailable", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("storage blocked");
+    });
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: new Date().toISOString(),
+      release_notes: [],
+      desktop_assets: [],
+    });
+
+    renderShell();
+
+    expect(await screen.findByText("Update available: v0.9.0")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Release history" })).not.toBeInTheDocument();
+  });
+
+  it("uses the installation-wide desktop reminder APIs instead of browser storage", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    window.medialyzeDesktop = {
+      isDesktop: () => true,
+      getRuntimeInfo: () => ({ platform: "linux", arch: "x64" }),
+      selectLibraryPaths: vi.fn(),
+    };
+    vi.spyOn(api, "desktopUpdateReminder").mockResolvedValue({ version: null, reminded_at: null });
+    const markReminder = vi.spyOn(api, "markDesktopUpdateReminder").mockResolvedValue({
+      version: "0.9.0",
+      reminded_at: new Date().toISOString(),
+    });
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: new Date().toISOString(),
+      release_notes: [],
+      desktop_assets: [],
+    });
+
+    renderShell();
+
+    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    await waitFor(() => expect(markReminder).toHaveBeenCalledWith("0.9.0"));
+    expect(window.localStorage.getItem("medialyze-update-reminder-v1")).toBeNull();
   });
 
   it("updates telemetry mode from the release notes toggle", async () => {

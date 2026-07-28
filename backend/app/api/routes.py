@@ -82,7 +82,11 @@ from backend.app.schemas.scan import (
     ScanRequest,
 )
 from backend.app.schemas.storage_map import LibraryStorageMapRead
-from backend.app.schemas.update_status import UpdateStatusRead
+from backend.app.schemas.update_status import (
+    DesktopUpdateReminderMark,
+    DesktopUpdateReminderRead,
+    UpdateStatusRead,
+)
 from backend.app.models.entities import (
     DuplicateDetectionMode,
     JellyfinConnection,
@@ -189,7 +193,11 @@ from backend.app.services.stats import build_dashboard
 from backend.app.services.stats_cache import stats_cache
 from backend.app.services.storage_map import StorageMapPathError, get_library_storage_map
 from backend.app.services.telemetry import build_telemetry_payload, send_current_telemetry_snapshot
-from backend.app.services.update_status import get_or_check_update_status
+from backend.app.services.update_status import (
+    get_desktop_update_reminder,
+    get_or_check_update_status,
+    mark_desktop_update_reminder,
+)
 
 router = APIRouter()
 
@@ -442,6 +450,30 @@ def update_status(
     settings: Settings = Depends(get_app_settings),
 ) -> UpdateStatusRead:
     return get_or_check_update_status(db, settings)
+
+
+@router.get("/desktop/update-reminder", response_model=DesktopUpdateReminderRead)
+def desktop_update_reminder(
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> DesktopUpdateReminderRead:
+    if not settings.is_desktop:
+        raise HTTPException(status_code=404, detail="Update reminders are only available in desktop mode")
+    return get_desktop_update_reminder(db)
+
+
+@router.post("/desktop/update-reminder/mark", response_model=DesktopUpdateReminderRead)
+def mark_desktop_update_reminder_route(
+    payload: DesktopUpdateReminderMark,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> DesktopUpdateReminderRead:
+    if not settings.is_desktop:
+        raise HTTPException(status_code=404, detail="Update reminders are only available in desktop mode")
+    try:
+        return mark_desktop_update_reminder(db, settings, payload.version)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/telemetry/preview")

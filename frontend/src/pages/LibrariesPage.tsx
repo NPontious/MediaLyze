@@ -929,6 +929,7 @@ export function LibrariesPage() {
   const [ignorePatternsStatus, setIgnorePatternsStatus] = useState<string | null>(null);
   const [isLoadingIgnorePatterns, setIsLoadingIgnorePatterns] = useState(true);
   const [isSavingIgnorePatterns, setIsSavingIgnorePatterns] = useState(false);
+  const [hideAutomaticUpdateReminders, setHideAutomaticUpdateReminders] = useState(false);
   const [showAnalyzedFilesCsvExport, setShowAnalyzedFilesCsvExport] = useState(false);
   const [showFullWidthAppShell, setShowFullWidthAppShell] = useState(false);
   const [hideQualityScoreMeter, setHideQualityScoreMeter] = useState(false);
@@ -1097,6 +1098,7 @@ export function LibrariesPage() {
   }, [appHistoryRetention]);
 
   function applyUpdatedAppSettingsState(updated: typeof appSettings) {
+    setHideAutomaticUpdateReminders(updated.feature_flags.hide_automatic_update_reminders === true);
     setShowAnalyzedFilesCsvExport(updated.feature_flags.show_analyzed_files_csv_export);
     setShowFullWidthAppShell(updated.feature_flags.show_full_width_app_shell);
     setHideQualityScoreMeter(updated.feature_flags.hide_quality_score_meter);
@@ -1847,6 +1849,7 @@ export function LibrariesPage() {
     setDefaultIgnorePatternInputs(persisted.default);
     setPatternRecognitionInputs(normalizePatternRecognitionInputs(appSettings.pattern_recognition));
     setResolutionCategoryDrafts(cloneResolutionCategoryDrafts(persistedResolution));
+    setHideAutomaticUpdateReminders(appSettings.feature_flags.hide_automatic_update_reminders === true);
     setShowAnalyzedFilesCsvExport(appSettings.feature_flags.show_analyzed_files_csv_export);
     setShowFullWidthAppShell(appSettings.feature_flags.show_full_width_app_shell);
     setHideQualityScoreMeter(appSettings.feature_flags.hide_quality_score_meter);
@@ -2683,6 +2686,25 @@ export function LibrariesPage() {
       void refreshHistoryStorage().catch(() => undefined);
     } catch (reason) {
       setShowAnalyzedFilesCsvExport(previousValue);
+      setFeatureFlagsStatus((reason as Error).message);
+    } finally {
+      setIsSavingFeatureFlags(false);
+    }
+  }
+
+  async function toggleHideAutomaticUpdateReminders(hidden: boolean) {
+    const previousValue = hideAutomaticUpdateReminders;
+    setHideAutomaticUpdateReminders(hidden);
+    setFeatureFlagsStatus(null);
+    setIsSavingFeatureFlags(true);
+    try {
+      const updated = await api.updateAppSettings({
+        feature_flags: { hide_automatic_update_reminders: hidden },
+      });
+      applyUpdatedAppSettingsState(updated);
+      setFeatureFlagsStatus(null);
+    } catch (reason) {
+      setHideAutomaticUpdateReminders(previousValue);
       setFeatureFlagsStatus((reason as Error).message);
     } finally {
       setIsSavingFeatureFlags(false);
@@ -7130,6 +7152,25 @@ export function LibrariesPage() {
               <div className="app-settings-section">
                 <p className="app-settings-section-title">{t("libraries.featureFlagsTitle")}</p>
                 <div className="app-settings-flag-list">
+                  <div className="app-settings-flag-row">
+                    <label className="app-settings-flag-toggle" htmlFor="hide-automatic-update-reminders">
+                      <input
+                        id="hide-automatic-update-reminders"
+                        type="checkbox"
+                        checked={hideAutomaticUpdateReminders}
+                        disabled={isSavingFeatureFlags || !appSettingsLoaded}
+                        onChange={(event) => void toggleHideAutomaticUpdateReminders(event.target.checked)}
+                      />
+                      <span>{t("libraries.featureFlags.hideAutomaticUpdateReminders")}</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel={t("libraries.featureFlags.hideAutomaticUpdateRemindersTooltipAria")}
+                      content={t("libraries.featureFlags.hideAutomaticUpdateRemindersTooltip")}
+                      preserveLineBreaks
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
                   <div className="app-settings-flag-row">
                     <label className="app-settings-flag-toggle" htmlFor="show-analyzed-files-csv-export">
                       <input

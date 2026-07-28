@@ -20,9 +20,12 @@ import {
   getCurrentReleaseNotes,
   isDevelopmentVersion,
   isFirstOpenAfterUpdate,
+  isUpdateReminderDue,
+  markBrowserUpdateReminder,
   markReleaseNotesSeen,
   mergeReleaseNotes,
   normalizeReleaseVersion,
+  readBrowserUpdateReminder,
   shouldShowReleaseNotes,
   type ReleaseNotes,
 } from "../lib/release-notes";
@@ -35,6 +38,18 @@ const GITHUB_SPONSORS_URL = "https://github.com/sponsors/frederikemmer";
 const UI_ELEMENTS_CLICK_WINDOW_MS = 1500;
 const UI_ELEMENTS_CLICK_COUNT = 3;
 const RELEASE_NOTE_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+const GITHUB_RELEASES_URL = `${GITHUB_REPOSITORY_URL}releases`;
+
+type InstallerDownloadState =
+  | "idle"
+  | "loading"
+  | "success"
+  | "canceled"
+  | "asset_unavailable"
+  | "unsupported_platform"
+  | "integrity_error"
+  | "network_error"
+  | "save_error";
 
 const CIRCLE_CHEVRON_TRANSITION: Transition = {
   times: [0, 0.4, 1],
@@ -225,11 +240,12 @@ export function AppShell() {
   const { appSettings, appSettingsLoaded, libraries, librariesLoaded, loadDashboard, loadLibraries, setAppSettings } = useAppData();
   const [localReleaseNotes] = useState<ReleaseNotes[]>(() => getAllReleaseNotes());
   const [releaseNotes] = useState<ReleaseNotes | null>(() => getCurrentReleaseNotes());
+  const initialCurrentReleaseNotesOpenRef = useRef(shouldShowReleaseNotes(APP_VERSION, releaseNotes));
   const currentReleaseVersion = releaseNotes?.version ?? normalizeReleaseVersion(APP_VERSION);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [showReleaseNotes, setShowReleaseNotes] = useState(() => shouldShowReleaseNotes(APP_VERSION, releaseNotes));
+  const [showReleaseNotes, setShowReleaseNotes] = useState(initialCurrentReleaseNotesOpenRef.current);
   const [showUpdateTelemetryAttention, setShowUpdateTelemetryAttention] = useState(
-    () => shouldShowReleaseNotes(APP_VERSION, releaseNotes) && isFirstOpenAfterUpdate(APP_VERSION, releaseNotes),
+    () => initialCurrentReleaseNotesOpenRef.current && isFirstOpenAfterUpdate(APP_VERSION, releaseNotes),
   );
   const [expandedReleaseVersion, setExpandedReleaseVersion] = useState(currentReleaseVersion);
   const [stoppingScans, setStoppingScans] = useState(false);
@@ -237,13 +253,28 @@ export function AppShell() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [pendingTelemetryMode, setPendingTelemetryMode] = useState<TelemetryMode | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
-  const [downloadState, setDownloadState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [downloadState, setDownloadState] = useState<InstallerDownloadState>("idle");
   const [releaseActionsMenuOpen, setReleaseActionsMenuOpen] = useState(false);
   const hadActiveJobsRef = useRef(hasActiveJobs);
+  const automaticUpdateReminderHandledRef = useRef(false);
+  const automaticUpdateReminderOpenRef = useRef(false);
   const settingsIconClickRef = useRef({ count: 0, lastClickedAt: 0 });
   const versionLabel = APP_VERSION === "dev" ? "dev" : `v${APP_VERSION}`;
   const latestAvailableVersion = updateStatus?.latest_version ?? null;
   const updateAvailable = APP_VERSION !== "dev" && Boolean(updateStatus?.update_available && latestAvailableVersion);
+  const desktopBridge = getDesktopBridge();
+  const desktopRuntime = desktopBridge?.getRuntimeInfo?.() ?? null;
+  const matchingDesktopAsset = desktopRuntime
+    ? updateStatus?.desktop_assets?.find(
+        (asset) => asset.platform === desktopRuntime.platform && asset.arch === desktopRuntime.arch,
+      ) ?? null
+    : null;
+  const knownDesktopTarget = desktopRuntime
+    ? (desktopRuntime.platform === "darwin" && desktopRuntime.arch === "arm64")
+      || (desktopRuntime.platform === "win32" && desktopRuntime.arch === "x64")
+      || (desktopRuntime.platform === "linux" && desktopRuntime.arch === "x64")
+    : false;
+  const latestReleaseUrl = updateStatus?.latest_release_url ?? GITHUB_RELEASES_URL;
   const allReleaseNotes = useMemo(() => {
     const mergedReleaseNotes = mergeReleaseNotes(localReleaseNotes, updateStatus?.release_notes ?? []);
     return updateAvailable &&
@@ -270,6 +301,7 @@ export function AppShell() {
       return;
     }
     markReleaseNotesSeen(APP_VERSION, releaseNotes);
+    automaticUpdateReminderOpenRef.current = false;
     setShowReleaseNotes(false);
     setReleaseActionsMenuOpen(false);
     setShowUpdateTelemetryAttention(false);
@@ -292,17 +324,23 @@ export function AppShell() {
     if (!latestAvailableVersion) {
       return;
     }
-    const bridge = getDesktopBridge();
-    if (!bridge?.downloadLatestInstaller) {
+    if (!desktopBridge?.downloadLatestInstaller || !matchingDesktopAsset) {
       return;
     }
     setDownloadState("loading");
     try {
-      const result = await bridge.downloadLatestInstaller(latestAvailableVersion);
-      setDownloadState(result.ok ? "success" : "error");
+      const result = await desktopBridge.downloadLatestInstaller(latestAvailableVersion);
+      setDownloadState(result.ok ? "success" : result.status ?? "network_error");
     } catch {
-      setDownloadState("error");
+      setDownloadState("network_error");
     }
+  }
+
+  async function cancelInstallerDownload() {
+    if (!desktopBridge?.cancelInstallerDownload) {
+      return;
+    }
+    await desktopBridge.cancelInstallerDownload().catch(() => false);
   }
 
   function openReleaseNotes() {
@@ -310,6 +348,7 @@ export function AppShell() {
       return;
     }
     setExpandedReleaseVersion(updateAvailable && latestAvailableVersion ? latestAvailableVersion : releaseNotes?.version ?? allReleaseNotes[0].version);
+    automaticUpdateReminderOpenRef.current = false;
     setShowUpdateTelemetryAttention(false);
     setReleaseActionsMenuOpen(false);
     setShowReleaseNotes(true);
@@ -346,6 +385,69 @@ export function AppShell() {
   useEffect(() => {
     void api.updateStatus().then(setUpdateStatus).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (
+      automaticUpdateReminderHandledRef.current
+      || !appSettingsLoaded
+      || updateStatus === null
+    ) {
+      return;
+    }
+    automaticUpdateReminderHandledRef.current = true;
+    if (
+      initialCurrentReleaseNotesOpenRef.current
+      || (telemetryUndecided && !telemetry.environment_disabled)
+      || appSettings.feature_flags.hide_automatic_update_reminders === true
+      || !updateAvailable
+      || !latestAvailableVersion
+      || updateStatus.automatic_reminder_eligible !== true
+    ) {
+      return;
+    }
+
+    const openReminder = (markShown: () => Promise<boolean> | boolean) => {
+      automaticUpdateReminderOpenRef.current = true;
+      setExpandedReleaseVersion(latestAvailableVersion);
+      setShowUpdateTelemetryAttention(false);
+      setShowReleaseNotes(true);
+      window.requestAnimationFrame(() => {
+        void Promise.resolve(markShown()).then((marked) => {
+          if (!marked && automaticUpdateReminderOpenRef.current) {
+            automaticUpdateReminderOpenRef.current = false;
+            setShowReleaseNotes(false);
+          }
+        });
+      });
+    };
+
+    if (isDesktopApp()) {
+      void api.desktopUpdateReminder()
+        .then((reminder) => {
+          if (isUpdateReminderDue(reminder.reminded_at)) {
+            openReminder(() =>
+              api.markDesktopUpdateReminder(latestAvailableVersion)
+                .then(() => true)
+                .catch(() => false)
+            );
+          }
+        })
+        .catch(() => undefined);
+    } else {
+      const storage = readBrowserUpdateReminder();
+      if (storage.available && isUpdateReminderDue(storage.reminder?.remindedAt ?? null)) {
+        openReminder(() => markBrowserUpdateReminder(latestAvailableVersion));
+      }
+    }
+  }, [
+    appSettings.feature_flags.hide_automatic_update_reminders,
+    appSettingsLoaded,
+    latestAvailableVersion,
+    telemetry.environment_disabled,
+    telemetryUndecided,
+    updateAvailable,
+    updateStatus,
+  ]);
 
   useEffect(() => {
     if (!appSettingsLoaded || allReleaseNotes.length === 0) {
@@ -560,20 +662,21 @@ export function AppShell() {
                   <ReleaseNotesMenuIcon open={releaseActionsMenuOpen} />
                 </button>
                 <div id="release-notes-secondary-actions" className="release-notes-secondary-actions">
-                  {isDesktopApp() && updateAvailable && latestAvailableVersion ? (
+                  {isDesktopApp() && updateAvailable && latestAvailableVersion && matchingDesktopAsset ? (
                     <button
                       type="button"
                       className={`release-notes-download release-notes-download-${downloadState}`}
-                      disabled={downloadState === "loading"}
-                      onClick={() => void downloadLatestInstaller()}
+                      onClick={() => downloadState === "loading"
+                        ? void cancelInstallerDownload()
+                        : void downloadLatestInstaller()}
                     >
                       <Download aria-hidden="true" className="nav-icon" />
                       <span>
                         {downloadState === "loading"
-                          ? t("releaseNotes.downloadLoading")
+                          ? t("releaseNotes.downloadCancel")
                           : downloadState === "success"
                             ? t("releaseNotes.downloadSuccess")
-                            : downloadState === "error"
+                            : downloadState !== "idle"
                               ? t("releaseNotes.downloadRetry", { version: latestAvailableVersion })
                               : t("releaseNotes.download", { version: latestAvailableVersion })}
                       </span>
@@ -631,6 +734,22 @@ export function AppShell() {
               </div>
             </div>
             {telemetryError ? <div className="alert release-notes-alert">{telemetryError}</div> : null}
+            {isDesktopApp() && updateAvailable && latestAvailableVersion && !matchingDesktopAsset ? (
+              <div className="alert release-notes-alert">
+                {knownDesktopTarget
+                  ? t("releaseNotes.downloadUnavailable")
+                  : t("releaseNotes.downloadUnsupported")}
+                {" "}
+                <a href={latestReleaseUrl} target="_blank" rel="noreferrer">
+                  {t("releaseNotes.openReleasePage")}
+                </a>
+              </div>
+            ) : null}
+            {downloadState !== "idle" && downloadState !== "loading" && downloadState !== "success" ? (
+              <div className="alert release-notes-alert">
+                {t(`releaseNotes.downloadStates.${downloadState}`)}
+              </div>
+            ) : null}
             <div className="release-notes-content">
               {allReleaseNotes.map((versionNotes) => {
                 const isExpanded = expandedReleaseVersion === versionNotes.version;
@@ -669,6 +788,9 @@ export function AppShell() {
                     </button>
                     {isExpanded ? (
                       <div id={`release-notes-version-${versionNotes.version}`} className="release-notes-version-body">
+                        {versionNotes.sections.length === 0 ? (
+                          <p>{t("releaseNotes.noDetails")}</p>
+                        ) : null}
                         {versionNotes.sections.map((section, sectionIndex) => (
                           <section key={`${section.title || "changes"}-${sectionIndex}`} className="release-notes-section">
                             {section.title ? <h3>{section.title}</h3> : null}

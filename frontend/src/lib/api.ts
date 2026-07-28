@@ -175,12 +175,29 @@ export type UpdateReleaseNotes = {
   }>;
 };
 
+export type UpdateDesktopAsset = {
+  platform: "darwin" | "win32" | "linux";
+  arch: "arm64" | "x64";
+  filename: string;
+  download_url: string;
+  size_bytes: number;
+  sha256: string | null;
+};
+
 export type UpdateStatus = {
   current_version: string;
   latest_version: string | null;
+  latest_release_url?: string | null;
   update_available: boolean;
+  automatic_reminder_eligible?: boolean;
   checked_at: string | null;
   release_notes: UpdateReleaseNotes[];
+  desktop_assets?: UpdateDesktopAsset[];
+};
+
+export type DesktopUpdateReminder = {
+  version: string | null;
+  reminded_at: string | null;
 };
 
 export type QualityCategoryConfig = {
@@ -766,6 +783,18 @@ export type StorageMapNode = {
   resolution_category_label: string | null;
   hdr_type: string | null;
   quality_score: number | null;
+  container: string | null;
+  duration_seconds: number | null;
+  bitrate: number | null;
+  audio_bitrate: number | null;
+  audio_codec: string | null;
+  audio_channels: number | null;
+  frame_rate: number | null;
+  bit_depth: number | null;
+  audio_language: string | null;
+  subtitle_status: string | null;
+  subtitle_language: string | null;
+  analysis_status: string | null;
 };
 
 export type LibraryStorageMap = {
@@ -1250,6 +1279,8 @@ export type AppSettings = {
     last_user_visible_payload: Record<string, unknown> | null;
   };
   feature_flags: {
+    hide_automatic_update_reminders?: boolean;
+    show_automatic_update_reminders?: boolean;
     show_analyzed_files_csv_export: boolean;
     show_full_width_app_shell: boolean;
     hide_quality_score_meter: boolean;
@@ -1729,6 +1760,12 @@ export const api = {
       `/files/${id}/software-compatibility${buildRepeatedQuery("profile_ids", profileIds)}`,
     ),
   updateStatus: () => request<UpdateStatus>("/update-status"),
+  desktopUpdateReminder: () => request<DesktopUpdateReminder>("/desktop/update-reminder"),
+  markDesktopUpdateReminder: (version: string) =>
+    request<DesktopUpdateReminder>("/desktop/update-reminder/mark", {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
   dashboard: (panels?: readonly string[] | null) => request<DashboardResponse>(`/dashboard${buildPanelQuery(panels)}`),
   dashboardHistory: (signal?: AbortSignal) =>
     request<DashboardHistoryResponse>("/dashboard/history", { signal }),
@@ -2101,6 +2138,7 @@ export const api = {
       mode?: "off" | "minimal" | "enabled";
     };
     feature_flags?: {
+      hide_automatic_update_reminders?: boolean;
       show_analyzed_files_csv_export?: boolean;
       show_full_width_app_shell?: boolean;
       hide_quality_score_meter?: boolean;

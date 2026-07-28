@@ -23,6 +23,18 @@ class StorageMapNodeRead(BaseModel):
     resolution_category_label: str | None = None
     hdr_type: str | None = None
     quality_score: int | None = None
+    container: str | None = None
+    duration_seconds: float | None = None
+    bitrate: int | None = None
+    audio_bitrate: int | None = None
+    audio_codec: str | None = None
+    audio_channels: int | None = None
+    frame_rate: float | None = None
+    bit_depth: int | None = None
+    audio_language: str | None = None
+    subtitle_status: str | None = None
+    subtitle_language: str | None = None
+    analysis_status: str | None = None
 
 
 class LibraryStorageMapRead(BaseModel):

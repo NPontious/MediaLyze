@@ -6,16 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ New
 
-- add a Storage Map main navigation view with MediaLyze-native summary cards, a viewport-filling size-proportional folder/file treemap, wrapped adaptive labels, folder drill-down with a contextual overlay navigation control, file-detail navigation, metadata-based coloring, consistently inset select chevrons, and a Jellyfin/file-name switch for linked libraries
+- add a Storage Map main navigation view with MediaLyze-native summary cards, a viewport-filling size-proportional folder/file treemap, edge-faded adaptive labels that remain visible down to a single usable line, fast rich metadata hover cards, streamlined header and treemap chrome, folder drill-down with a direct contextual overlay navigation control, file-detail navigation, grouped coloring options for video codec, resolution, dynamic range, frame rate, video bit depth, audio codec, channels, audio bitrate, audio language, subtitle availability/language, container, file size, duration, overall bitrate, quality, and analysis status, dark-theme-safe per-tile colors, SDR fallback labeling for analyzed video files without an explicit HDR value, consistently inset select chevrons, and a Jellyfin/file-name switch for linked libraries
+- add three-day update reminders for stable Docker and desktop installations with an explicit `Hide automatic update reminders` opt-out, release-body changelogs, installation-wide desktop reminder persistence, and architecture-aware installer availability
 
 ### 🔒 Security
 
 - update the Electron packaging toolchain, React Router, Vite, PostCSS, and transitive YAML tooling to resolve current Dependabot advisories
+- harden desktop installer downloads with immutable release URLs, strict asset and redirect validation, explicit save destinations, temporary files, size and SHA-256 verification, and cancel-safe cleanup
 
 ### ⚡ Performance
 
 - accelerate library file browsing with debounced requests, smaller pages, cached background counts, compact denormalized table rows, SQLite FTS5 trigram search, index-friendly path sorting, and compressed API responses
 - bound statistics, history, comparison, file-list, and Storage Map caches with automatic TTL/LRU cleanup; reduce comparison queries and responses to the selected axes and renderer; and lazy-load raw ffprobe payloads only when their detail panel is opened
+
+### 🐛 Bug fixes
+
+- prevent the file-detail Streaming playback search from rendering a second nested input surface in dark mode
 
 ## v0.17.0
 

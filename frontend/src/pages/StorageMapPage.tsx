@@ -12,7 +12,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,11 +26,34 @@ import { StatCard } from "../components/StatCard";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { useAppData } from "../lib/app-data";
 import { api, type LibraryStorageMap, type StorageMapNode } from "../lib/api";
-import { formatBytes, formatCodecLabel } from "../lib/format";
+import {
+  formatBitrate,
+  formatBytes,
+  formatCodecLabel,
+  formatContainerLabel,
+  formatDuration,
+} from "../lib/format";
 import { formatHdrType } from "../lib/hdr";
 import { LruCache } from "../lib/lru-cache";
 
-type StorageMapColorMode = "codec" | "resolution" | "hdr" | "quality" | "size";
+type StorageMapColorMode =
+  | "codec"
+  | "resolution"
+  | "hdr"
+  | "quality"
+  | "size"
+  | "container"
+  | "duration"
+  | "bitrate"
+  | "audio_bitrate"
+  | "audio_codec"
+  | "audio_channels"
+  | "frame_rate"
+  | "bit_depth"
+  | "audio_language"
+  | "subtitle_status"
+  | "subtitle_language"
+  | "analysis_status";
 type StorageMapSortMode = "size" | "name" | "quality";
 type StorageMapNameSource = "file" | "jellyfin";
 
@@ -43,7 +65,28 @@ type StorageMapRect = {
   height: number;
 };
 
-const COLOR_MODES: StorageMapColorMode[] = ["codec", "resolution", "hdr", "quality", "size"];
+const COLOR_MODE_GROUPS: Array<{
+  label: "video" | "audio" | "subtitles" | "file";
+  modes: StorageMapColorMode[];
+}> = [
+  {
+    label: "video",
+    modes: ["codec", "resolution", "hdr", "frame_rate", "bit_depth"],
+  },
+  {
+    label: "audio",
+    modes: ["audio_codec", "audio_channels", "audio_bitrate", "audio_language"],
+  },
+  {
+    label: "subtitles",
+    modes: ["subtitle_status", "subtitle_language"],
+  },
+  {
+    label: "file",
+    modes: ["container", "size", "duration", "bitrate", "quality", "analysis_status"],
+  },
+];
+const COLOR_MODES = COLOR_MODE_GROUPS.flatMap((group) => group.modes);
 const SORT_MODES: StorageMapSortMode[] = ["size", "name", "quality"];
 const UNKNOWN_COLOR = "#6b7280";
 const CATEGORY_PALETTE = ["#1b998b", "#ff6b3d", "#4f6fcf", "#a967c7", "#d49b2f", "#397f9e"];
@@ -74,7 +117,7 @@ function stablePaletteColor(value: string | null | undefined): string {
 function colorForNode(
   node: StorageMapNode,
   mode: StorageMapColorMode,
-  maxSize: number,
+  maxValue: number,
 ): string {
   if (mode === "codec") {
     const codec = node.video_codec?.toLowerCase();
@@ -100,14 +143,72 @@ function colorForNode(
     const normalized = Math.max(0, Math.min(1, node.quality_score / 100));
     return `hsl(${Math.round(8 + normalized * 154)} 48% ${Math.round(46 - normalized * 10)}%)`;
   }
-  const normalized = Math.sqrt(Math.max(0, node.size_bytes) / Math.max(maxSize, 1));
+  if (mode === "container") return stablePaletteColor(node.container);
+  if (mode === "audio_codec") return stablePaletteColor(node.audio_codec);
+  if (mode === "audio_channels") {
+    const channelColors: Record<number, string> = {
+      1: "#60717d",
+      2: "#397f9e",
+      6: "#1b998b",
+      8: "#a967c7",
+    };
+    return node.audio_channels
+      ? (channelColors[node.audio_channels] ?? stablePaletteColor(String(node.audio_channels)))
+      : UNKNOWN_COLOR;
+  }
+  if (mode === "frame_rate") {
+    return node.frame_rate
+      ? stablePaletteColor(String(Math.round(node.frame_rate * 1000) / 1000))
+      : UNKNOWN_COLOR;
+  }
+  if (mode === "bit_depth") {
+    const depthColors: Record<number, string> = {
+      8: "#397f9e",
+      10: "#1b998b",
+      12: "#a967c7",
+    };
+    return node.bit_depth
+      ? (depthColors[node.bit_depth] ?? stablePaletteColor(String(node.bit_depth)))
+      : UNKNOWN_COLOR;
+  }
+  if (mode === "audio_language") return stablePaletteColor(node.audio_language);
+  if (mode === "subtitle_language") return stablePaletteColor(node.subtitle_language);
+  if (mode === "subtitle_status") {
+    const statusColors: Record<string, string> = {
+      none: "#60717d",
+      internal: "#4f6fcf",
+      external: "#ff6b3d",
+      mixed: "#a967c7",
+    };
+    return node.subtitle_status ? (statusColors[node.subtitle_status] ?? UNKNOWN_COLOR) : UNKNOWN_COLOR;
+  }
+  if (mode === "analysis_status") {
+    const statusColors: Record<string, string> = {
+      ready: "#1b998b",
+      analyzing: "#d49b2f",
+      pending: "#60717d",
+      failed: "#c45151",
+    };
+    return node.analysis_status ? (statusColors[node.analysis_status] ?? UNKNOWN_COLOR) : UNKNOWN_COLOR;
+  }
+  const value = numericValueForNode(node, mode);
+  if (value === null) return UNKNOWN_COLOR;
+  const normalized = Math.sqrt(Math.max(0, value) / Math.max(maxValue, 1));
   return `hsl(${Math.round(204 - normalized * 178)} 55% ${Math.round(48 - normalized * 10)}%)`;
+}
+
+function numericValueForNode(node: StorageMapNode, mode: StorageMapColorMode): number | null {
+  if (mode === "duration") return node.duration_seconds;
+  if (mode === "bitrate") return node.bitrate;
+  if (mode === "audio_bitrate") return node.audio_bitrate;
+  return node.size_bytes;
 }
 
 function labelForNode(
   node: StorageMapNode,
   mode: StorageMapColorMode,
   unknownLabel: string,
+  valueLabel: (value: string) => string,
 ): string {
   if (mode === "codec") {
     return node.video_codec ? formatCodecLabel(node.video_codec, "video") : unknownLabel;
@@ -120,6 +221,36 @@ function labelForNode(
   }
   if (mode === "quality") {
     return node.quality_score === null ? unknownLabel : `${Math.round(node.quality_score)}/100`;
+  }
+  if (mode === "container") return node.container ? formatContainerLabel(node.container) : unknownLabel;
+  if (mode === "duration") return node.duration_seconds === null ? unknownLabel : formatDuration(node.duration_seconds);
+  if (mode === "bitrate") return node.bitrate === null ? unknownLabel : formatBitrate(node.bitrate);
+  if (mode === "audio_bitrate") {
+    return node.audio_bitrate === null ? unknownLabel : formatBitrate(node.audio_bitrate);
+  }
+  if (mode === "audio_codec") {
+    return node.audio_codec ? formatCodecLabel(node.audio_codec, "audio") : unknownLabel;
+  }
+  if (mode === "audio_channels") {
+    return node.audio_channels === null ? unknownLabel : `${node.audio_channels} ch`;
+  }
+  if (mode === "frame_rate") {
+    return node.frame_rate === null ? unknownLabel : `${Number(node.frame_rate.toFixed(3))} fps`;
+  }
+  if (mode === "bit_depth") {
+    return node.bit_depth === null ? unknownLabel : `${node.bit_depth}-bit`;
+  }
+  if (mode === "audio_language") return node.audio_language?.toUpperCase() ?? unknownLabel;
+  if (mode === "subtitle_language") return node.subtitle_language?.toUpperCase() ?? unknownLabel;
+  if (mode === "subtitle_status") {
+    return node.subtitle_status
+      ? valueLabel(node.subtitle_status)
+      : unknownLabel;
+  }
+  if (mode === "analysis_status") {
+    return node.analysis_status
+      ? valueLabel(node.analysis_status)
+      : unknownLabel;
   }
   return formatBytes(node.size_bytes);
 }
@@ -181,11 +312,42 @@ function StorageMapTile({
   onOpen: (node: StorageMapNode) => void;
 }) {
   const { t } = useTranslation();
-  const tileRef = useRef<HTMLButtonElement>(null);
-  const [labelsHidden, setLabelsHidden] = useState(false);
   const displayName = displayNameForNode(node, nameSource);
-  const metricLabel = labelForNode(node, colorMode, t("storageMap.unknown"));
-  const detail = `${displayName} · ${formatBytes(node.size_bytes)} · ${metricLabel}`;
+  const metricLabel = labelForNode(
+    node,
+    colorMode,
+    t("storageMap.unknown"),
+    (value) => t(`storageMap.values.${value}`),
+  );
+  const tooltipRows = [
+    { label: t("dashboard.storage"), value: formatBytes(node.size_bytes) },
+    ...(node.kind === "folder"
+      ? [{ label: t("dashboard.files"), value: String(node.file_count) }]
+      : []),
+    ...(node.video_codec
+      ? [{ label: t("storageMap.modes.codec"), value: formatCodecLabel(node.video_codec, "video") }]
+      : []),
+    ...(node.resolution || node.resolution_category_label
+      ? [{
+          label: t("storageMap.modes.resolution"),
+          value: node.resolution
+            ? node.resolution.replace("x", " × ")
+            : (node.resolution_category_label ?? t("storageMap.unknown")),
+        }]
+      : []),
+    ...(node.hdr_type
+      ? [{
+          label: t("storageMap.modes.hdr"),
+          value: formatHdrType(node.hdr_type) ?? node.hdr_type,
+        }]
+      : []),
+    ...(node.quality_score !== null
+      ? [{
+          label: t("storageMap.modes.quality"),
+          value: `${Math.round(node.quality_score)}/100`,
+        }]
+      : []),
+  ];
   const style = {
     "--storage-map-tile-color": colorForNode(node, colorMode, maxSize),
     left: `${rect.x}%`,
@@ -194,62 +356,47 @@ function StorageMapTile({
     height: `${rect.height}%`,
   } as CSSProperties;
 
-  useLayoutEffect(() => {
-    const tile = tileRef.current;
-    if (!tile) return undefined;
-
-    const updateLabelVisibility = () => {
-      const label = tile.querySelector<HTMLElement>(".storage-map-tile-copy");
-      if (!label) return;
-      const name = label.querySelector<HTMLElement>(".storage-map-tile-name");
-      const meta = label.querySelector<HTMLElement>(".storage-map-tile-meta");
-      const size = label.querySelector<HTMLElement>(".storage-map-tile-size");
-      const labelStyles = window.getComputedStyle(label);
-      const requiredHeight =
-        (name?.scrollHeight ?? 0) +
-        (meta?.scrollHeight ?? 0) +
-        (size?.scrollHeight ?? 0) +
-        Number.parseFloat(labelStyles.paddingTop) +
-        Number.parseFloat(labelStyles.paddingBottom) +
-        4;
-      const shouldHide =
-        tile.clientWidth < 74 ||
-        tile.clientHeight < 48 ||
-        label.scrollWidth > label.clientWidth ||
-        requiredHeight > tile.clientHeight;
-      setLabelsHidden((current) => (current === shouldHide ? current : shouldHide));
-    };
-
-    updateLabelVisibility();
-    const animationFrame = window.requestAnimationFrame(updateLabelVisibility);
-    const timeout = window.setTimeout(updateLabelVisibility, 0);
-    void document.fonts?.ready.then(updateLabelVisibility);
-    if (typeof ResizeObserver === "undefined") {
-      return () => {
-        window.cancelAnimationFrame(animationFrame);
-        window.clearTimeout(timeout);
-      };
-    }
-    const observer = new ResizeObserver(updateLabelVisibility);
-    observer.observe(tile);
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      window.clearTimeout(timeout);
-      observer.disconnect();
-    };
-  }, [colorMode, displayName, rect.height, rect.width]);
-
   return (
-    <button
-      ref={tileRef}
-      type="button"
-      className={`storage-map-tile storage-map-tile-${node.kind}${labelsHidden ? " labels-hidden" : ""}`}
-      style={style}
-      title={detail}
-      aria-label={t(node.kind === "folder" ? "storageMap.folderAria" : "storageMap.fileAria", {
+    <TooltipTrigger
+      ariaLabel={t(node.kind === "folder" ? "storageMap.folderAria" : "storageMap.fileAria", {
         name: displayName,
         size: formatBytes(node.size_bytes),
       })}
+      className={`storage-map-tile storage-map-tile-${node.kind}`}
+      tooltipClassName="storage-map-tile-tooltip"
+      content={(
+        <div className="storage-map-tile-tooltip-content">
+          <div className="storage-map-tile-tooltip-heading">
+            <span className="storage-map-tile-tooltip-icon" aria-hidden="true">
+              {node.kind === "folder" ? <Folder /> : <File />}
+            </span>
+            <span>
+              <strong>{displayName}</strong>
+              <small>
+                {node.kind === "folder"
+                  ? t("storageMap.folders")
+                  : t("dashboard.files")}
+              </small>
+            </span>
+          </div>
+          <span className="storage-map-tile-tooltip-metric">
+            {t(`storageMap.modes.${colorMode}`)} · {metricLabel}
+          </span>
+          <dl>
+            {tooltipRows.map((row) => (
+              <div key={`${row.label}:${row.value}`}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+      hoverOpenDelay={80}
+      maxWidth={360}
+      placement="auto"
+      pinOnClick={false}
+      style={style}
       onClick={() => onOpen(node)}
     >
       <span className="storage-map-tile-copy" aria-hidden="true">
@@ -260,7 +407,7 @@ function StorageMapTile({
         <span className="storage-map-tile-meta">{metricLabel}</span>
         <span className="storage-map-tile-size">{formatBytes(node.size_bytes)}</span>
       </span>
-    </button>
+    </TooltipTrigger>
   );
 }
 
@@ -276,7 +423,10 @@ function StorageMapTreemap({
   onOpen: (node: StorageMapNode) => void;
 }) {
   const { t } = useTranslation();
-  const maxSize = Math.max(...nodes.map((node) => node.size_bytes), 1);
+  const maxValue = Math.max(
+    ...nodes.map((node) => numericValueForNode(node, colorMode) ?? 0),
+    1,
+  );
   const rects = useMemo(() => layoutStorageMapNodes(nodes), [nodes]);
 
   return (
@@ -286,7 +436,7 @@ function StorageMapTreemap({
           key={`${node.kind}:${node.path}`}
           node={node}
           colorMode={colorMode}
-          maxSize={maxSize}
+          maxSize={maxValue}
           rect={{ x, y, width, height }}
           nameSource={nameSource}
           onOpen={onOpen}
@@ -467,10 +617,17 @@ export function StorageMapPage() {
                       value={colorMode}
                       onChange={(event) => updateQuery({ color: event.target.value })}
                     >
-                      {COLOR_MODES.map((mode) => (
-                        <option key={mode} value={mode}>
-                          {t(`storageMap.modes.${mode}`)}
-                        </option>
+                      {COLOR_MODE_GROUPS.map((group) => (
+                        <optgroup
+                          key={group.label}
+                          label={t(`storageMap.groups.${group.label}`)}
+                        >
+                          {group.modes.map((mode) => (
+                            <option key={mode} value={mode}>
+                              {t(`storageMap.modes.${mode}`)}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                     <ChevronDown aria-hidden="true" />
@@ -542,15 +699,14 @@ export function StorageMapPage() {
 
               <div className={`storage-map-stage${currentPath ? " has-up-overlay" : ""}`}>
                 {currentPath ? (
-                  <TooltipTrigger
-                    ariaLabel={t("storageMap.up")}
-                    content={t("storageMap.up")}
+                  <button
+                    type="button"
+                    aria-label={t("storageMap.up")}
                     className="secondary icon-only-button storage-map-up-button storage-map-up-overlay"
-                    pinOnClick={false}
                     onClick={() => updateQuery({ path: parentPath })}
                   >
                     <ArrowUp aria-hidden="true" />
-                  </TooltipTrigger>
+                  </button>
                 ) : null}
                 {loading && !data ? (
                   <div className="storage-map-empty" aria-busy="true">
@@ -583,13 +739,6 @@ export function StorageMapPage() {
                 )}
               </div>
 
-              <div className="storage-map-footer">
-                <span>
-                  <i aria-hidden="true" />
-                  {t("storageMap.tilesVisible", { count: sortedItems.length })}
-                </span>
-                <span>{t(`storageMap.modes.${colorMode}`)}</span>
-              </div>
             </div>
           </div>
         )}

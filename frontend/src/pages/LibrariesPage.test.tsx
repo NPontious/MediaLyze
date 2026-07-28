@@ -99,6 +99,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       last_user_visible_payload: null,
     },
     feature_flags: {
+      hide_automatic_update_reminders: false,
       show_analyzed_files_csv_export: false,
       show_full_width_app_shell: false,
       hide_quality_score_meter: false,
@@ -1053,6 +1054,26 @@ describe("LibrariesPage ignore patterns", () => {
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith({
         feature_flags: { show_all_playbacks_when_unstacked: true },
+      }),
+    );
+  });
+
+  it("persists the automatic update reminder feature flag", async () => {
+    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
+      createAppSettings({
+        feature_flags: { hide_automatic_update_reminders: true },
+      }),
+    );
+
+    renderPage({ activePanel: "appSettings" });
+
+    const checkbox = await screen.findByLabelText("Hide automatic update reminders");
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    fireEvent.click(checkbox);
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith({
+        feature_flags: { hide_automatic_update_reminders: true },
       }),
     );
   });

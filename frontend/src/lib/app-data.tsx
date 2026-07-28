@@ -74,6 +74,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   ui_preferences: DEFAULT_UI_PREFERENCES,
   telemetry: DEFAULT_TELEMETRY,
   feature_flags: {
+    hide_automatic_update_reminders: false,
     show_analyzed_files_csv_export: false,
     show_full_width_app_shell: false,
     hide_quality_score_meter: false,
@@ -175,6 +176,11 @@ function normalizeAppSettings(payload: Partial<AppSettings> | null | undefined):
         payload?.telemetry?.last_user_visible_payload ?? DEFAULT_TELEMETRY.last_user_visible_payload,
     },
     feature_flags: {
+      hide_automatic_update_reminders:
+        payload?.feature_flags?.hide_automatic_update_reminders
+        ?? (payload?.feature_flags?.show_automatic_update_reminders === undefined
+          ? false
+          : !payload.feature_flags.show_automatic_update_reminders),
       show_analyzed_files_csv_export: payload?.feature_flags?.show_analyzed_files_csv_export ?? false,
       show_full_width_app_shell: payload?.feature_flags?.show_full_width_app_shell ?? false,
       hide_quality_score_meter: payload?.feature_flags?.hide_quality_score_meter ?? false,

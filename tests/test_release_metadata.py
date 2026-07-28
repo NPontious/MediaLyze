@@ -164,3 +164,15 @@ def test_validate_release_metadata_accepts_v_prefixed_changelog_sections(tmp_pat
     assert version == "0.1.1"
     assert "Important bug fix." in notes
     assert ">2026-03-13" not in notes
+
+
+def test_desktop_workflow_stamps_and_verifies_one_shared_build_version() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = (repo_root / ".github" / "workflows" / "build-desktop.yaml").read_text(encoding="utf-8")
+    desktop_main = (repo_root / "desktop" / "main.cjs").read_text(encoding="utf-8")
+
+    assert 'BUILD_VERSION=${build_version}' in workflow
+    assert "VITE_APP_VERSION: ${{ env.BUILD_VERSION }}" in workflow
+    assert 'npm version "${BUILD_VERSION}" --no-git-tag-version' in workflow
+    assert "frontend/dist/build-version.json" in workflow
+    assert "MEDIALYZE_APP_VERSION: app.getVersion()" in desktop_main

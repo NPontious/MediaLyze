@@ -1047,6 +1047,10 @@ function ReleaseDialogFixture() {
           </button>
         </div>
       </div>
+      <div className="alert release-notes-alert">
+        The installer for this system has not been published yet.{" "}
+        <a href="/releases/tag/v0.18.0" onClick={preventCatalogNavigation}>Open the release page</a>
+      </div>
       <div className="release-notes-content">
         <section className="release-notes-version release-notes-version-current">
           <button type="button" className="release-notes-version-toggle">
@@ -1628,6 +1632,18 @@ export function UiElementsPage() {
                   </div>
                   <div className="app-settings-flag-row">
                     <label className="app-settings-flag-toggle">
+                      <input type="checkbox" />
+                      <span>Hide automatic update reminders</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel="Explain hiding automatic update reminders"
+                      content="Prevents newer stable releases from opening automatically. Update checks and the manual update indicator remain available."
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
+                  <div className="app-settings-flag-row">
+                    <label className="app-settings-flag-toggle">
                       <input type="checkbox" defaultChecked />
                       <span>Show all playbacks when unstacked</span>
                     </label>
@@ -1845,7 +1861,7 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[9]}>
             <VariantGroup title="Library and file detail variants">
-              <VariantCard title="Storage map explorer" source="StorageMapPage" classes={["storage-map-explorer", "storage-map-toolbar", "storage-map-treemap", "storage-map-tile"]} wide>
+              <VariantCard title="Storage map explorer" source="StorageMapPage" classes={["storage-map-explorer", "storage-map-toolbar", "storage-map-treemap", "storage-map-tile", "storage-map-tile-tooltip"]} wide>
                 <div className="storage-map-panel">
                   <div className="storage-map-header">
                     <div className="storage-map-title-block">
@@ -1879,7 +1895,31 @@ export function UiElementsPage() {
                           <span>Color</span>
                           <span className="storage-map-select-wrap">
                             <select defaultValue="codec">
-                              <option value="codec">Video codec</option>
+                              <optgroup label="Video">
+                                <option value="codec">Video codec</option>
+                                <option value="resolution">Resolution</option>
+                                <option value="hdr">Dynamic range</option>
+                                <option value="frame_rate">Frame rate</option>
+                                <option value="bit_depth">Video bit depth</option>
+                              </optgroup>
+                              <optgroup label="Audio">
+                                <option value="audio_codec">Audio codec</option>
+                                <option value="audio_channels">Audio channels</option>
+                                <option value="audio_bitrate">Audio bitrate</option>
+                                <option value="audio_language">Audio language</option>
+                              </optgroup>
+                              <optgroup label="Subtitles">
+                                <option value="subtitle_status">Subtitle availability</option>
+                                <option value="subtitle_language">Subtitle language</option>
+                              </optgroup>
+                              <optgroup label="File">
+                                <option value="container">Container</option>
+                                <option value="size">File size</option>
+                                <option value="duration">Duration</option>
+                                <option value="bitrate">Overall bitrate</option>
+                                <option value="quality">Quality score</option>
+                                <option value="analysis_status">Analysis status</option>
+                              </optgroup>
                             </select>
                             <ChevronDown aria-hidden="true" />
                           </span>
@@ -1905,22 +1945,44 @@ export function UiElementsPage() {
                         <span className="storage-map-area-hint"><Info aria-hidden="true" />Area = storage used</span>
                       </div>
                       <div className="storage-map-stage has-up-overlay" style={{ minHeight: 250 }}>
-                        <TooltipTrigger
-                          ariaLabel="Up one level"
-                          content="Up one level"
+                        <button
+                          type="button"
+                          aria-label="Up one level"
                           className="secondary icon-only-button storage-map-up-button storage-map-up-overlay"
-                          pinOnClick={false}
                         >
                           <ArrowUp aria-hidden="true" />
-                        </TooltipTrigger>
+                        </button>
                         <div className="storage-map-treemap">
-                          <button type="button" className="storage-map-tile storage-map-tile-folder" style={{ left: 0, top: 0, width: "62%", height: "100%", background: "#1b998b" }}>
+                          <TooltipTrigger
+                            ariaLabel="Open folder Feature Films, 4.2 TB"
+                            className="storage-map-tile storage-map-tile-folder"
+                            tooltipClassName="storage-map-tile-tooltip"
+                            hoverOpenDelay={80}
+                            maxWidth={360}
+                            placement="auto"
+                            pinOnClick={false}
+                            style={{ left: 0, top: 0, width: "62%", height: "100%", background: "#1b998b" }}
+                            content={(
+                              <div className="storage-map-tile-tooltip-content">
+                                <div className="storage-map-tile-tooltip-heading">
+                                  <span className="storage-map-tile-tooltip-icon" aria-hidden="true"><Folder /></span>
+                                  <span><strong>Feature Films</strong><small>Folders</small></span>
+                                </div>
+                                <span className="storage-map-tile-tooltip-metric">Video codec · H.265 / HEVC</span>
+                                <dl>
+                                  <div><dt>Storage</dt><dd>4.2 TB</dd></div>
+                                  <div><dt>Files</dt><dd>426</dd></div>
+                                  <div><dt>Resolution</dt><dd>3840 × 2160</dd></div>
+                                </dl>
+                              </div>
+                            )}
+                          >
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><Folder aria-hidden="true" /><strong>Feature Films</strong></span>
                               <span className="storage-map-tile-meta">HEVC</span>
                               <span className="storage-map-tile-size">4.2 TB</span>
                             </span>
-                          </button>
+                          </TooltipTrigger>
                           <button type="button" className="storage-map-tile storage-map-tile-file" style={{ left: "62%", top: 0, width: "38%", height: "68%", background: "#4f6fcf" }}>
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>Free Solo.mkv</strong></span>
@@ -1928,10 +1990,15 @@ export function UiElementsPage() {
                               <span className="storage-map-tile-size">287 GB</span>
                             </span>
                           </button>
-                          <button type="button" className="storage-map-tile storage-map-tile-file labels-hidden" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "#ff6b3d" }} />
+                          <button type="button" className="storage-map-tile storage-map-tile-file" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "#ff6b3d" }}>
+                            <span className="storage-map-tile-copy" aria-hidden="true">
+                              <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>A very long documentary filename that fades at the tile edge.mkv</strong></span>
+                              <span className="storage-map-tile-meta">HDR10 · 4K UHD</span>
+                              <span className="storage-map-tile-size">94 GB</span>
+                            </span>
+                          </button>
                         </div>
                       </div>
-                      <div className="storage-map-footer"><span><i aria-hidden="true" />All 426 tiles visible</span><span>Video codec</span></div>
                     </div>
                   </div>
                 </div>
@@ -1964,7 +2031,7 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-streaming-availability-tooltip", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-data-summary", "playback-history-timeline-axis", "playback-history-availability-boundary", "playback-history-availability-note", "playback-history-timestamp", "playback-history-undated", "playback-history-undated-list", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
+              <VariantCard title="Jellyfin metadata and playback in standard file-detail panels" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-streaming-availability-tooltip", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-data-summary", "playback-history-timeline-axis", "playback-history-availability-boundary", "playback-history-availability-note", "playback-history-search", "playback-history-timestamp", "playback-history-undated", "playback-history-undated-list", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
                 <div className="file-detail-overview">
                   <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
                   <div className="meta-tags file-detail-overview-badges"><span className="badge">HEVC</span><span className="badge">UHD</span><div className="jellyfin-overview-badge-group is-separated"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div></div>
