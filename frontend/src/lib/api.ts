@@ -768,6 +768,11 @@ export type StorageMapBreadcrumb = {
   path: string;
 };
 
+export type StorageMapColorShare = {
+  value: string | number | null;
+  size_bytes: number;
+};
+
 export type StorageMapNode = {
   kind: "folder" | "file";
   name: string;
@@ -795,6 +800,7 @@ export type StorageMapNode = {
   subtitle_status: string | null;
   subtitle_language: string | null;
   analysis_status: string | null;
+  color_distributions: Record<string, StorageMapColorShare[]>;
 };
 
 export type LibraryStorageMap = {

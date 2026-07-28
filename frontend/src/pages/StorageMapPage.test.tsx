@@ -67,6 +67,7 @@ function storageNode(overrides: Partial<StorageMapNode>): StorageMapNode {
     subtitle_status: "internal",
     subtitle_language: "eng",
     analysis_status: "ready",
+    color_distributions: {},
     ...overrides,
   };
 }
@@ -157,6 +158,12 @@ describe("StorageMapPage", () => {
               name: "Feature Films",
               path: "Feature Films",
               size_bytes: 100,
+              color_distributions: {
+                codec: [
+                  { value: "hevc", size_bytes: 70 },
+                  { value: "av1", size_bytes: 30 },
+                ],
+              },
             }),
           ],
         }),
@@ -187,6 +194,9 @@ describe("StorageMapPage", () => {
 
     const folderTile = await screen.findByRole("button", { name: /Open folder Feature Films/i });
     expect(folderTile).not.toHaveAttribute("title");
+    expect(folderTile.style.backgroundImage).toContain("radial-gradient");
+    expect(folderTile.style.backgroundImage).toContain("rgb(27, 153, 139)");
+    expect(folderTile.style.backgroundImage).toContain("rgb(255, 107, 61)");
     fireEvent.mouseEnter(folderTile);
     const folderTooltip = await screen.findByRole("tooltip");
     expect(folderTooltip).toHaveTextContent("Feature Films");

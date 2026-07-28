@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -18,6 +18,7 @@ from backend.app.models.entities import (
 from backend.app.schemas.storage_map import (
     LibraryStorageMapRead,
     StorageMapBreadcrumbRead,
+    StorageMapColorShareRead,
     StorageMapNodeRead,
 )
 from backend.app.services.app_settings import get_app_settings
@@ -55,6 +56,9 @@ class _FolderAggregate:
     bitrate_weight: int = 0
     audio_bitrate_weighted_total: int = 0
     audio_bitrate_weight: int = 0
+    color_distribution_bytes: defaultdict[str, Counter] = field(
+        default_factory=lambda: defaultdict(Counter),
+    )
 
     def add(
         self,
@@ -115,6 +119,27 @@ class _FolderAggregate:
         if subtitle_language:
             self.subtitle_language_bytes[subtitle_language] += weight
         self.analysis_status_bytes[analysis_status] += weight
+        distribution_values = {
+            "codec": video_codec,
+            "resolution": resolution_category[0] if resolution_category else resolution,
+            "hdr": hdr_type,
+            "quality": quality_score,
+            "size": size_bytes,
+            "container": container,
+            "duration": duration_seconds,
+            "bitrate": bitrate,
+            "audio_bitrate": audio_bitrate,
+            "audio_codec": audio_codec,
+            "audio_channels": audio_channels,
+            "frame_rate": round(frame_rate, 3) if frame_rate else None,
+            "bit_depth": bit_depth,
+            "audio_language": audio_language,
+            "subtitle_status": subtitle_status,
+            "subtitle_language": subtitle_language,
+            "analysis_status": analysis_status,
+        }
+        for mode, value in distribution_values.items():
+            self.color_distribution_bytes[mode][value] += weight
 
     def to_read(self) -> StorageMapNodeRead:
         quality = round(self.weighted_quality_total / max(self.size_bytes, 1)) if self.file_count else None
@@ -146,6 +171,7 @@ class _FolderAggregate:
             subtitle_status=_dominant(self.subtitle_status_bytes),
             subtitle_language=_dominant(self.subtitle_language_bytes),
             analysis_status=_dominant(self.analysis_status_bytes),
+            color_distributions=_color_distributions(self.color_distribution_bytes),
         )
 
 
@@ -161,6 +187,29 @@ def _weighted_average(total: float, weight: int) -> float | None:
 
 def _weighted_average_int(total: int, weight: int) -> int | None:
     return round(total / weight) if weight else None
+
+
+def _color_distributions(
+    distributions: dict[str, Counter],
+    *,
+    max_entries: int = 10,
+) -> dict[str, list[StorageMapColorShareRead]]:
+    result: dict[str, list[StorageMapColorShareRead]] = {}
+    for mode, counter in distributions.items():
+        entries = counter.most_common(max_entries)
+        omitted_bytes = sum(counter.values()) - sum(size_bytes for _, size_bytes in entries)
+        shares = [
+            StorageMapColorShareRead(value=value, size_bytes=size_bytes)
+            for value, size_bytes in entries
+        ]
+        if omitted_bytes > 0:
+            unknown_share = next((share for share in shares if share.value is None), None)
+            if unknown_share is not None:
+                unknown_share.size_bytes += omitted_bytes
+            else:
+                shares.append(StorageMapColorShareRead(value=None, size_bytes=omitted_bytes))
+        result[mode] = shares
+    return result
 
 
 def _subtitle_status(has_internal: bool, has_external: bool) -> str:

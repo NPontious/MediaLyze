@@ -1961,7 +1961,20 @@ export function UiElementsPage() {
                             maxWidth={360}
                             placement="auto"
                             pinOnClick={false}
-                            style={{ left: 0, top: 0, width: "62%", height: "100%", background: "#1b998b" }}
+                            style={{
+                              left: 0,
+                              top: 0,
+                              width: "62%",
+                              height: "100%",
+                              backgroundColor: "#1b998b",
+                              backgroundImage: [
+                                "radial-gradient(ellipse 78% 70% at 0% 0%, #4f6fcf 0%, color-mix(in srgb, #4f6fcf 82%, transparent) 36%, transparent 74%)",
+                                "radial-gradient(ellipse 64% 58% at 100% 0%, #ff6b3d 0%, color-mix(in srgb, #ff6b3d 82%, transparent) 36%, transparent 74%)",
+                                "radial-gradient(ellipse 72% 64% at 100% 100%, #a967c7 0%, color-mix(in srgb, #a967c7 82%, transparent) 36%, transparent 74%)",
+                                "radial-gradient(ellipse 84% 76% at 0% 100%, #1b998b 0%, color-mix(in srgb, #1b998b 82%, transparent) 36%, transparent 74%)",
+                                "radial-gradient(ellipse 76% 68% at 48% 52%, #d49b2f 0%, color-mix(in srgb, #d49b2f 82%, transparent) 36%, transparent 74%)",
+                              ].join(", "),
+                            }}
                             content={(
                               <div className="storage-map-tile-tooltip-content">
                                 <div className="storage-map-tile-tooltip-heading">
@@ -1983,14 +1996,14 @@ export function UiElementsPage() {
                               <span className="storage-map-tile-size">4.2 TB</span>
                             </span>
                           </TooltipTrigger>
-                          <button type="button" className="storage-map-tile storage-map-tile-file" style={{ left: "62%", top: 0, width: "38%", height: "68%", background: "#4f6fcf" }}>
+                          <button type="button" className="tooltip-trigger storage-map-tile storage-map-tile-file" style={{ left: "62%", top: 0, width: "38%", height: "68%", background: "#4f6fcf" }}>
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>Free Solo.mkv</strong></span>
                               <span className="storage-map-tile-meta">H.264</span>
                               <span className="storage-map-tile-size">287 GB</span>
                             </span>
                           </button>
-                          <button type="button" className="storage-map-tile storage-map-tile-file" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "#ff6b3d" }}>
+                          <button type="button" className="tooltip-trigger storage-map-tile storage-map-tile-file" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "#ff6b3d" }}>
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>A very long documentary filename that fades at the tile edge.mkv</strong></span>
                               <span className="storage-map-tile-meta">HDR10 · 4K UHD</span>

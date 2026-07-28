@@ -1808,6 +1808,14 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
     ]
     assert root_payload["items"][0]["file_count"] == 2
     assert root_payload["items"][0]["video_codec"] == "hevc"
+    assert root_payload["items"][0]["color_distributions"]["codec"] == [
+        {"value": "hevc", "size_bytes": 100},
+        {"value": "av1", "size_bytes": 20},
+    ]
+    assert root_payload["items"][0]["color_distributions"]["hdr"] == [
+        {"value": "dolby_vision", "size_bytes": 100},
+        {"value": "SDR", "size_bytes": 20},
+    ]
     assert root_payload["items"][1]["hdr_type"] is None
 
     assert folder_response.status_code == 200

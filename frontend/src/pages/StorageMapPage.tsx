@@ -204,6 +204,93 @@ function numericValueForNode(node: StorageMapNode, mode: StorageMapColorMode): n
   return node.size_bytes;
 }
 
+function colorForDistributionValue(
+  node: StorageMapNode,
+  mode: StorageMapColorMode,
+  value: string | number | null,
+  maxValue: number,
+): string {
+  if (value === null) return UNKNOWN_COLOR;
+  const syntheticNode = { ...node };
+  if (mode === "codec") syntheticNode.video_codec = typeof value === "string" ? value : null;
+  else if (mode === "resolution") {
+    syntheticNode.resolution_category_id = typeof value === "string" ? value : null;
+    syntheticNode.resolution = null;
+  } else if (mode === "hdr") syntheticNode.hdr_type = typeof value === "string" ? value : null;
+  else if (mode === "quality") syntheticNode.quality_score = typeof value === "number" ? value : null;
+  else if (mode === "size") syntheticNode.size_bytes = typeof value === "number" ? value : 0;
+  else if (mode === "container") syntheticNode.container = typeof value === "string" ? value : null;
+  else if (mode === "duration") syntheticNode.duration_seconds = typeof value === "number" ? value : null;
+  else if (mode === "bitrate") syntheticNode.bitrate = typeof value === "number" ? value : null;
+  else if (mode === "audio_bitrate") syntheticNode.audio_bitrate = typeof value === "number" ? value : null;
+  else if (mode === "audio_codec") syntheticNode.audio_codec = typeof value === "string" ? value : null;
+  else if (mode === "audio_channels") syntheticNode.audio_channels = typeof value === "number" ? value : null;
+  else if (mode === "frame_rate") syntheticNode.frame_rate = typeof value === "number" ? value : null;
+  else if (mode === "bit_depth") syntheticNode.bit_depth = typeof value === "number" ? value : null;
+  else if (mode === "audio_language") syntheticNode.audio_language = typeof value === "string" ? value : null;
+  else if (mode === "subtitle_status") syntheticNode.subtitle_status = typeof value === "string" ? value : null;
+  else if (mode === "subtitle_language") syntheticNode.subtitle_language = typeof value === "string" ? value : null;
+  else if (mode === "analysis_status") syntheticNode.analysis_status = typeof value === "string" ? value : null;
+  return colorForNode(syntheticNode, mode, maxValue);
+}
+
+const FOLDER_GRADIENT_ANCHORS = [
+  [0, 0],
+  [100, 0],
+  [100, 100],
+  [0, 100],
+  [36, 30],
+  [70, 34],
+  [28, 72],
+  [72, 76],
+  [50, 54],
+] as const;
+
+function folderGradientForNode(
+  node: StorageMapNode,
+  mode: StorageMapColorMode,
+  maxValue: number,
+): string | undefined {
+  if (node.kind !== "folder") return undefined;
+  const distribution = node.color_distributions[mode] ?? [];
+  if (distribution.length < 2) return undefined;
+
+  const byColor = new Map<string, number>();
+  for (const share of distribution) {
+    const color = colorForDistributionValue(node, mode, share.value, maxValue);
+    byColor.set(color, (byColor.get(color) ?? 0) + share.size_bytes);
+  }
+  const colors = [...byColor.entries()]
+    .map(([color, sizeBytes]) => ({ color, sizeBytes }))
+    .sort((left, right) => right.sizeBytes - left.sizeBytes);
+  if (colors.length < 2) return undefined;
+
+  const total = colors.reduce((sum, item) => sum + item.sizeBytes, 0);
+  const guaranteedColors = colors.slice(0, FOLDER_GRADIENT_ANCHORS.length);
+  const weightedSlots = FOLDER_GRADIENT_ANCHORS.length - guaranteedColors.length;
+  const weightedColors = Array.from({ length: weightedSlots }, (_, index) => {
+    const target = ((index + 0.5) / Math.max(weightedSlots, 1)) * total;
+    let accumulated = 0;
+    return colors.find((item) => {
+      accumulated += item.sizeBytes;
+      return accumulated >= target;
+    }) ?? colors[0];
+  });
+  const anchorColors = [...guaranteedColors, ...weightedColors];
+
+  return FOLDER_GRADIENT_ANCHORS.map(([x, y], index) => {
+    const item = anchorColors[index];
+    const share = item.sizeBytes / Math.max(total, 1);
+    const radiusX = Math.round(40 + Math.sqrt(share) * 52);
+    const radiusY = Math.round(36 + Math.sqrt(share) * 46);
+    return (
+      `radial-gradient(ellipse ${radiusX}% ${radiusY}% at ${x}% ${y}%, ` +
+      `color-mix(in srgb, ${item.color} 96%, transparent) 0%, ` +
+      `color-mix(in srgb, ${item.color} 82%, transparent) 36%, transparent 74%)`
+    );
+  }).join(", ");
+}
+
 function labelForNode(
   node: StorageMapNode,
   mode: StorageMapColorMode,
@@ -350,6 +437,7 @@ function StorageMapTile({
   ];
   const style = {
     "--storage-map-tile-color": colorForNode(node, colorMode, maxSize),
+    backgroundImage: folderGradientForNode(node, colorMode, maxSize),
     left: `${rect.x}%`,
     top: `${rect.y}%`,
     width: `${rect.width}%`,

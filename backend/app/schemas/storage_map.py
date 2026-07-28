@@ -8,6 +8,11 @@ class StorageMapBreadcrumbRead(BaseModel):
     path: str
 
 
+class StorageMapColorShareRead(BaseModel):
+    value: str | int | float | None = None
+    size_bytes: int
+
+
 class StorageMapNodeRead(BaseModel):
     kind: Literal["folder", "file"]
     name: str
@@ -35,6 +40,7 @@ class StorageMapNodeRead(BaseModel):
     subtitle_status: str | None = None
     subtitle_language: str | None = None
     analysis_status: str | None = None
+    color_distributions: dict[str, list[StorageMapColorShareRead]] = Field(default_factory=dict)
 
 
 class LibraryStorageMapRead(BaseModel):
