@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Fixed
+
+- include the second-generation suffix in the "Fire TV Stick 4K Max (2. Gen)" hardware profile ID
+
 ## v0.17.0
 
 >2026-07-27
