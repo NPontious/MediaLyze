@@ -2872,10 +2872,10 @@
 }
 
 .settings-delete-library-confirm-form input {
-  min-height: 42px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 5px 12px;
   border: 1px solid rgba(31, 28, 22, 0.14);
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(255, 250, 243, 0.78);
   color: var(--ink);
   font: inherit;
@@ -4706,77 +4706,13 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
     0 0 0 2px rgba(255, 107, 61, 0.12);
 }
 
-.settings-choice-picker-shell {
-  width: 100%;
-  display: block;
-}
-
-.settings-choice-picker-field {
-  width: 100%;
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 10px;
-  border: 1px solid rgba(31, 28, 22, 0.12);
-  border-radius: 9px;
-  background: rgba(255, 250, 243, 0.74);
-  color: var(--ink);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 1px 2px rgba(31, 28, 22, 0.025);
-}
-
-.settings-choice-picker-field:hover,
-.settings-choice-picker-field:focus-visible,
-.settings-choice-picker-field.is-open {
-  transform: none;
-  border-color: rgba(39, 148, 107, 0.34);
-  background: rgba(39, 148, 107, 0.08);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.74),
-    0 0 0 2px rgba(39, 148, 107, 0.08);
-}
-
-.settings-choice-picker-field:focus-visible {
-  outline: 0;
-}
-
-.settings-choice-picker-value {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ink);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-choice-picker-chevron {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  color: var(--muted);
-  transition: transform 0.16s ease;
-}
-
-.settings-choice-picker-field.is-open .settings-choice-picker-chevron {
-  transform: rotate(180deg);
-}
-
-.settings-choice-picker-popover {
-  width: 100%;
-  min-width: 100%;
-  max-width: min(320px, calc(100vw - 40px));
-}
-
 .settings-choice-input {
   width: 100%;
   min-height: 36px;
   padding: 5px 12px;
   border: 1px solid rgba(31, 28, 22, 0.12);
   border-radius: 9px;
-  background: rgba(255, 250, 243, 0.74);
+  background-color: rgba(255, 250, 243, 0.74);
   color: var(--ink);
   font: inherit;
   line-height: 1.2;
@@ -4786,14 +4722,14 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
 }
 
 .settings-choice-input:hover {
-  background: rgba(255, 250, 243, 0.88);
+  background-color: rgba(255, 250, 243, 0.88);
   border-color: rgba(31, 28, 22, 0.16);
 }
 
 .settings-choice-input:focus-visible {
   outline: 0;
   border-color: rgba(39, 148, 107, 0.34);
-  background: rgba(39, 148, 107, 0.08);
+  background-color: rgba(39, 148, 107, 0.08);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.74),
     0 0 0 2px rgba(39, 148, 107, 0.08);
@@ -5048,28 +4984,6 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
   box-shadow: none;
 }
 
-.quality-profile-picker-name,
-.quality-profile-picker-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.quality-profile-picker-name {
-  justify-content: space-between;
-}
-
-.quality-profile-picker-option {
-  justify-content: flex-start;
-}
-
-.quality-profile-picker-name > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .quality-profile-picker-name-input {
   width: 100%;
   padding: 0 12px;
@@ -5141,23 +5055,11 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
 }
 
 .quality-picker-field:disabled,
-.settings-choice-picker-field:disabled,
 .quality-density-input:disabled,
 .quality-profile-weight-input:disabled,
 .quality-profile-picker-name-input:disabled {
   cursor: not-allowed;
   opacity: 0.58;
-}
-
-.quality-profile-picker-menu {
-  z-index: 15;
-  width: 100%;
-  min-width: 100%;
-  max-width: 100%;
-}
-
-.quality-profile-picker-option {
-  font-weight: 700;
 }
 
 .quality-profile-editor-header,
@@ -5646,7 +5548,9 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
 }
 
 .history-retention-input {
-  min-width: 7.5rem;
+  width: 6rem;
+  min-width: 6rem;
+  max-width: 100%;
 }
 
 .history-reconstruction-progress {
@@ -11004,8 +10908,17 @@ body.is-column-resizing {
   background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent 42%);
 }
 
+.storage-map-tile-color-field {
+  position: absolute;
+  inset: -12%;
+  pointer-events: none;
+  filter: blur(clamp(14px, 2.4vw, 32px)) saturate(1.12);
+  transform: scale(1.08);
+}
+
 .storage-map-tile-copy {
   position: absolute;
+  z-index: 1;
   inset: 0;
   display: grid;
   grid-template-rows: auto auto 1fr auto;
@@ -11767,26 +11680,8 @@ html[data-theme="dark"] {
       0 2px 6px rgba(0, 0, 0, 0.24);
   }
 
-  .settings-choice-picker-field {
-    background: rgba(38, 35, 31, 0.68);
-    border-color: rgba(240, 236, 228, 0.1);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.055),
-      0 1px 2px rgba(0, 0, 0, 0.16);
-  }
-
-  .settings-choice-picker-field:hover,
-  .settings-choice-picker-field:focus-visible,
-  .settings-choice-picker-field.is-open {
-    background: rgba(39, 148, 107, 0.14);
-    border-color: rgba(39, 148, 107, 0.46);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.07),
-      0 0 0 2px rgba(39, 148, 107, 0.14);
-  }
-
   .settings-choice-input {
-    background: rgba(38, 35, 31, 0.68);
+    background-color: rgba(38, 35, 31, 0.68);
     border-color: rgba(240, 236, 228, 0.1);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.055),
@@ -11794,12 +11689,12 @@ html[data-theme="dark"] {
   }
 
   .settings-choice-input:hover {
-    background: rgba(44, 41, 37, 0.82);
+    background-color: rgba(44, 41, 37, 0.82);
     border-color: rgba(240, 236, 228, 0.16);
   }
 
   .settings-choice-input:focus-visible {
-    background: rgba(39, 148, 107, 0.14);
+    background-color: rgba(39, 148, 107, 0.14);
     border-color: rgba(39, 148, 107, 0.46);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.07),

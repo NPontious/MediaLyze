@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug fixes
 
 - prevent the file-detail Streaming playback search from rendering a second nested input surface in dark mode
+- color Storage Map quality tiles with the precise 0–100 raw score while displaying the rounded score on the 1–10 scale
+- align oversized text and numeric fields in Settings with the compact input style used by newer controls
+- replace the remaining oversized custom single-choice menus in Settings with native platform dropdowns
+- prevent settings dropdown chevrons from repeating across the control in dark mode and interactive states
 
 ## v0.17.0
 

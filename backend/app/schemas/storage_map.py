@@ -28,6 +28,7 @@ class StorageMapNodeRead(BaseModel):
     resolution_category_label: str | None = None
     hdr_type: str | None = None
     quality_score: int | None = None
+    quality_score_raw: float | None = None
     container: str | None = None
     duration_seconds: float | None = None
     bitrate: int | None = None

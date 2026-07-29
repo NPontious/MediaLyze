@@ -788,6 +788,7 @@ export type StorageMapNode = {
   resolution_category_label: string | null;
   hdr_type: string | null;
   quality_score: number | null;
+  quality_score_raw: number | null;
   container: string | null;
   duration_seconds: number | null;
   bitrate: number | null;

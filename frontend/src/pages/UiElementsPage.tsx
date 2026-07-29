@@ -589,14 +589,10 @@ function QualityProfileFixture() {
       </div>
       <div className="quality-profile-picker is-protected">
         <div className="quality-profile-picker-control">
-          <button type="button" className="quality-profile-picker-trigger">
-            <span className="quality-profile-picker-name">
-              <span>Default video</span>
-              <span className="badge">Default</span>
-              <span className="badge">Built-in</span>
-            </span>
-            <ChevronDown className="nav-icon" aria-hidden="true" />
-          </button>
+          <select className="quality-profile-picker-trigger" defaultValue="default-video" aria-label="Select profile">
+            <option value="default-video">Default video — Default — Built-in</option>
+            <option value="cinema">Cinema</option>
+          </select>
           <div className="quality-profile-picker-actions">
             <TooltipTrigger
               ariaLabel="Built-in default profile protection"
@@ -675,7 +671,7 @@ function IgnorePatternFixture() {
       <div className="ignore-pattern-section-body">
         <div className="ignore-pattern-row ignore-pattern-row-draft">
           <div className="ignore-pattern-control">
-            <input defaultValue="*.sample" aria-label="New ignore pattern" />
+            <input className="settings-choice-input" defaultValue="*.sample" aria-label="New ignore pattern" />
           </div>
           <button type="button" className="secondary icon-only-button ignore-pattern-action-button" aria-label="Add">
             <Plus aria-hidden="true" className="nav-icon" />
@@ -683,7 +679,7 @@ function IgnorePatternFixture() {
         </div>
         <div className="ignore-pattern-row ignore-pattern-row-saved">
           <div className="ignore-pattern-control">
-            <input defaultValue="*/@eaDir/*" aria-label="Saved ignore pattern" />
+            <input className="settings-choice-input" defaultValue="*/@eaDir/*" aria-label="Saved ignore pattern" />
           </div>
           <button type="button" className="secondary icon-only-button ignore-pattern-action-button" aria-label="Remove">
             <Trash2 aria-hidden="true" className="nav-icon" />
@@ -1504,18 +1500,12 @@ export function UiElementsPage() {
               <VariantCard title="Collapsed settings sidebar" source={`${settings} > Navigation`} classes={["is-settings-nav-collapsed", "settings-navigation-item-content"]}>
                 <SettingsNavigationFixture collapsed />
               </VariantCard>
-              <VariantCard title="Settings choice picker" source={`${settings} > App settings`} classes={["settings-choice-picker-field", "settings-choice-picker-popover"]}>
-                <div className="settings-choice-picker-shell quality-picker-field-shell search-filter-picker">
-                  <button type="button" className="settings-choice-picker-field is-open">
-                    <span className="settings-choice-picker-value">System</span>
-                    <ChevronDown aria-hidden="true" className="nav-icon settings-choice-picker-chevron" />
-                  </button>
-                  <div className="search-filter-picker-popover quality-picker-popover settings-choice-picker-popover">
-                    <button type="button" className="search-filter-picker-item is-selected">System</button>
-                    <button type="button" className="search-filter-picker-item">Light</button>
-                    <button type="button" className="search-filter-picker-item">Dark</button>
-                  </div>
-                </div>
+              <VariantCard title="Native settings select · single chevron" source={`${settings} > Libraries / Quality profiles`} classes={["settings-choice-input"]}>
+                <select className="settings-choice-input" defaultValue="system" aria-label="Theme">
+                  <option value="system">System</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
               </VariantCard>
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />
@@ -1616,12 +1606,12 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[3]}>
             <VariantGroup title="Form families">
-              <VariantCard title="Basic form grid and feature flag" source={`${settings} > Create library / App settings`} classes={["form-grid", "field", "field-hint", "app-settings-flag-row", "app-settings-flag-toggle"]}>
+              <VariantCard title="Basic form grid and feature flag" source={`${settings} > Create library / App settings`} classes={["form-grid", "field", "field-hint", "settings-choice-input", "app-settings-flag-row", "app-settings-flag-toggle"]}>
                 <div className="form-grid ui-elements-form-grid">
                   <div className="field">
                     <label htmlFor="ui-library-name">Name</label>
-                    <input id="ui-library-name" defaultValue="Movies archive" />
-                    <p className="field-hint">Default input surface.</p>
+                    <input id="ui-library-name" className="settings-choice-input" defaultValue="Movies archive" />
+                    <p className="field-hint">Compact settings input surface.</p>
                   </div>
                   <div className="field">
                     <label htmlFor="ui-library-type">Media type</label>
@@ -1677,7 +1667,7 @@ export function UiElementsPage() {
                   <SearchFilterFixture invalid />
                 </div>
               </VariantCard>
-              <VariantCard title="Ignore pattern rows" source={`${settings} > Ignore patterns`} classes={["ignore-pattern-section", "ignore-pattern-row", "ignore-pattern-action-button"]} wide>
+              <VariantCard title="Ignore pattern rows" source={`${settings} > Ignore patterns`} classes={["ignore-pattern-section", "ignore-pattern-row", "settings-choice-input", "ignore-pattern-action-button"]} wide>
                 <IgnorePatternFixture />
               </VariantCard>
               <VariantCard title="Quality picker and profile editor" source={`${settings} > Quality profiles`} classes={["quality-picker-field", "quality-profile-picker-control", "quality-profile-metric-item", "quality-profile-weight-input"]} wide>
@@ -1894,7 +1884,7 @@ export function UiElementsPage() {
                         <label className="storage-map-field">
                           <span>Color</span>
                           <span className="storage-map-select-wrap">
-                            <select defaultValue="codec">
+                            <select defaultValue="quality">
                               <optgroup label="Video">
                                 <option value="codec">Video codec</option>
                                 <option value="resolution">Resolution</option>
@@ -1967,13 +1957,6 @@ export function UiElementsPage() {
                               width: "62%",
                               height: "100%",
                               backgroundColor: "#1b998b",
-                              backgroundImage: [
-                                "radial-gradient(ellipse 78% 70% at 0% 0%, #4f6fcf 0%, color-mix(in srgb, #4f6fcf 82%, transparent) 36%, transparent 74%)",
-                                "radial-gradient(ellipse 64% 58% at 100% 0%, #ff6b3d 0%, color-mix(in srgb, #ff6b3d 82%, transparent) 36%, transparent 74%)",
-                                "radial-gradient(ellipse 72% 64% at 100% 100%, #a967c7 0%, color-mix(in srgb, #a967c7 82%, transparent) 36%, transparent 74%)",
-                                "radial-gradient(ellipse 84% 76% at 0% 100%, #1b998b 0%, color-mix(in srgb, #1b998b 82%, transparent) 36%, transparent 74%)",
-                                "radial-gradient(ellipse 76% 68% at 48% 52%, #d49b2f 0%, color-mix(in srgb, #d49b2f 82%, transparent) 36%, transparent 74%)",
-                              ].join(", "),
                             }}
                             content={(
                               <div className="storage-map-tile-tooltip-content">
@@ -1981,7 +1964,7 @@ export function UiElementsPage() {
                                   <span className="storage-map-tile-tooltip-icon" aria-hidden="true"><Folder /></span>
                                   <span><strong>Feature Films</strong><small>Folders</small></span>
                                 </div>
-                                <span className="storage-map-tile-tooltip-metric">Video codec · H.265 / HEVC</span>
+                                <span className="storage-map-tile-tooltip-metric">Quality score · 9/10</span>
                                 <dl>
                                   <div><dt>Storage</dt><dd>4.2 TB</dd></div>
                                   <div><dt>Files</dt><dd>426</dd></div>
@@ -1990,23 +1973,38 @@ export function UiElementsPage() {
                               </div>
                             )}
                           >
+                            <span
+                              className="storage-map-tile-color-field"
+                              aria-hidden="true"
+                              style={{
+                                backgroundImage: [
+                                  "radial-gradient(ellipse 45% 45% at 50% 76%, hsl(116 48% 39%) 0%, transparent 78%)",
+                                  "radial-gradient(ellipse 54% 43% at 70% 40%, hsl(137 48% 38%) 0%, transparent 78%)",
+                                  "radial-gradient(ellipse 43% 54% at 32% 34%, hsl(156 48% 36%) 0%, transparent 78%)",
+                                  "radial-gradient(ellipse 65% 56% at 0% 100%, hsl(147 48% 37%) 0%, transparent 78%)",
+                                  "radial-gradient(ellipse 56% 65% at 100% 100%, hsl(137 48% 38%) 0%, transparent 78%)",
+                                  "radial-gradient(ellipse 65% 56% at 100% 0%, hsl(156 48% 36%) 0%, transparent 78%)",
+                                  "radial-gradient(ellipse 56% 65% at 0% 0%, hsl(147 48% 37%) 0%, transparent 78%)",
+                                ].join(", "),
+                              }}
+                            />
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><Folder aria-hidden="true" /><strong>Feature Films</strong></span>
-                              <span className="storage-map-tile-meta">HEVC</span>
+                              <span className="storage-map-tile-meta">9/10</span>
                               <span className="storage-map-tile-size">4.2 TB</span>
                             </span>
                           </TooltipTrigger>
-                          <button type="button" className="tooltip-trigger storage-map-tile storage-map-tile-file" style={{ left: "62%", top: 0, width: "38%", height: "68%", background: "#4f6fcf" }}>
+                          <button type="button" className="tooltip-trigger storage-map-tile storage-map-tile-file" style={{ left: "62%", top: 0, width: "38%", height: "68%", background: "hsl(147 48% 37%)" }}>
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>Free Solo.mkv</strong></span>
-                              <span className="storage-map-tile-meta">H.264</span>
+                              <span className="storage-map-tile-meta">9/10</span>
                               <span className="storage-map-tile-size">287 GB</span>
                             </span>
                           </button>
-                          <button type="button" className="tooltip-trigger storage-map-tile storage-map-tile-file" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "#ff6b3d" }}>
+                          <button type="button" className="tooltip-trigger storage-map-tile storage-map-tile-file" aria-label="Small files" style={{ left: "62%", top: "68%", width: "38%", height: "32%", background: "hsl(116 48% 39%)" }}>
                             <span className="storage-map-tile-copy" aria-hidden="true">
                               <span className="storage-map-tile-name"><FileVideo aria-hidden="true" /><strong>A very long documentary filename that fades at the tile edge.mkv</strong></span>
-                              <span className="storage-map-tile-meta">HDR10 · 4K UHD</span>
+                              <span className="storage-map-tile-meta">7/10</span>
                               <span className="storage-map-tile-size">94 GB</span>
                             </span>
                           </button>

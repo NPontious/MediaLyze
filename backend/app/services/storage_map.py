@@ -37,6 +37,7 @@ class _FolderAggregate:
     size_bytes: int = 0
     file_count: int = 0
     weighted_quality_total: int = 0
+    weighted_quality_raw_total: float = 0
     codec_bytes: Counter[str] = field(default_factory=Counter)
     resolution_bytes: Counter[str] = field(default_factory=Counter)
     resolution_category_bytes: Counter[tuple[str, str]] = field(default_factory=Counter)
@@ -65,6 +66,7 @@ class _FolderAggregate:
         *,
         size_bytes: int,
         quality_score: int,
+        quality_score_raw: float,
         video_codec: str | None,
         resolution: str | None,
         resolution_category: tuple[str, str] | None,
@@ -86,6 +88,7 @@ class _FolderAggregate:
         self.size_bytes += size_bytes
         self.file_count += 1
         self.weighted_quality_total += quality_score * weight
+        self.weighted_quality_raw_total += quality_score_raw * weight
         if video_codec:
             self.codec_bytes[video_codec] += weight
         if resolution:
@@ -123,7 +126,7 @@ class _FolderAggregate:
             "codec": video_codec,
             "resolution": resolution_category[0] if resolution_category else resolution,
             "hdr": hdr_type,
-            "quality": quality_score,
+            "quality": quality_score_raw,
             "size": size_bytes,
             "container": container,
             "duration": duration_seconds,
@@ -143,6 +146,11 @@ class _FolderAggregate:
 
     def to_read(self) -> StorageMapNodeRead:
         quality = round(self.weighted_quality_total / max(self.size_bytes, 1)) if self.file_count else None
+        quality_raw = (
+            round(self.weighted_quality_raw_total / max(self.size_bytes, 1), 2)
+            if self.file_count
+            else None
+        )
         category = _dominant(self.resolution_category_bytes)
         return StorageMapNodeRead(
             kind="folder",
@@ -156,6 +164,7 @@ class _FolderAggregate:
             resolution_category_label=category[1] if category else None,
             hdr_type=_dominant(self.hdr_bytes),
             quality_score=quality,
+            quality_score_raw=quality_raw,
             container=_dominant(self.container_bytes),
             duration_seconds=_weighted_average(self.duration_weighted_total, self.duration_weight),
             bitrate=_weighted_average_int(self.bitrate_weighted_total, self.bitrate_weight),
@@ -187,6 +196,10 @@ def _weighted_average(total: float, weight: int) -> float | None:
 
 def _weighted_average_int(total: int, weight: int) -> int | None:
     return round(total / weight) if weight else None
+
+
+def _effective_quality_score_raw(quality_score: int, quality_score_raw: float) -> float:
+    return quality_score_raw if quality_score_raw > 0 else quality_score * 10
 
 
 def _color_distributions(
@@ -311,6 +324,7 @@ def _build_library_storage_map(
             JellyfinItem.title.label("jellyfin_title"),
             MediaFile.size_bytes,
             MediaFile.quality_score,
+            MediaFile.quality_score_raw,
             MediaFile.primary_video_codec,
             MediaFile.primary_video_width,
             MediaFile.primary_video_height,
@@ -404,6 +418,10 @@ def _build_library_storage_map(
             if hasattr(row.scan_status, "value")
             else str(row.scan_status)
         )
+        quality_score_raw = _effective_quality_score_raw(
+            row.quality_score,
+            row.quality_score_raw,
+        )
         matching_file_count += 1
         matching_size_bytes += row.size_bytes
 
@@ -416,6 +434,7 @@ def _build_library_storage_map(
             folder.add(
                 size_bytes=row.size_bytes,
                 quality_score=row.quality_score,
+                quality_score_raw=quality_score_raw,
                 video_codec=row.primary_video_codec,
                 resolution=resolution,
                 resolution_category=category_pair,
@@ -451,6 +470,7 @@ def _build_library_storage_map(
                 resolution_category_label=resolution_category.label if resolution_category else None,
                 hdr_type=hdr_type,
                 quality_score=row.quality_score,
+                quality_score_raw=quality_score_raw,
                 container=container,
                 duration_seconds=row.duration_seconds,
                 bitrate=row.bitrate,

@@ -54,7 +54,8 @@ function storageNode(overrides: Partial<StorageMapNode>): StorageMapNode {
     resolution_category_id: "uhd",
     resolution_category_label: "4K UHD",
     hdr_type: "HDR10",
-    quality_score: 90,
+    quality_score: 9,
+    quality_score_raw: 90,
     container: "mkv",
     duration_seconds: 7200,
     bitrate: 12_000_000,
@@ -194,9 +195,10 @@ describe("StorageMapPage", () => {
 
     const folderTile = await screen.findByRole("button", { name: /Open folder Feature Films/i });
     expect(folderTile).not.toHaveAttribute("title");
-    expect(folderTile.style.backgroundImage).toContain("radial-gradient");
-    expect(folderTile.style.backgroundImage).toContain("rgb(27, 153, 139)");
-    expect(folderTile.style.backgroundImage).toContain("rgb(255, 107, 61)");
+    const folderColorField = folderTile.querySelector<HTMLElement>(".storage-map-tile-color-field");
+    expect(folderColorField?.style.backgroundImage).toContain("radial-gradient");
+    expect(folderColorField?.style.backgroundImage).toContain("rgb(27, 153, 139)");
+    expect(folderColorField?.style.backgroundImage).toContain("rgb(255, 107, 61)");
     fireEvent.mouseEnter(folderTile);
     const folderTooltip = await screen.findByRole("tooltip");
     expect(folderTooltip).toHaveTextContent("Feature Films");
@@ -264,5 +266,28 @@ describe("StorageMapPage", () => {
     expect(colorSelect.querySelectorAll("option")).toHaveLength(17);
     fireEvent.change(colorSelect, { target: { value: "audio_codec" } });
     expect(screen.getByText("Dolby Digital Plus")).toBeInTheDocument();
+  });
+
+  it("colors quality by the raw score while displaying the rounded score out of ten", async () => {
+    vi.spyOn(api, "libraryStorageMap").mockResolvedValue(
+      storageMap({
+        items: [storageNode({ quality_score: 9, quality_score_raw: 90 })],
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/storage-map?library=1&color=quality"]}>
+        <Routes>
+          <Route path="/storage-map" element={<StorageMapPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const tile = await screen.findByRole("button", { name: /Open file details for Movie\.mkv/i });
+    expect(tile.style.getPropertyValue("--storage-map-tile-color")).toBe("hsl(147 48% 37%)");
+    expect(tile).toHaveTextContent("9/10");
+
+    fireEvent.mouseEnter(tile);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("9/10");
   });
 });

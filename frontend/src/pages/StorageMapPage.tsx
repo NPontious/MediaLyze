@@ -114,6 +114,11 @@ function stablePaletteColor(value: string | null | undefined): string {
   return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
 }
 
+function qualityScoreForColor(node: StorageMapNode): number | null {
+  if (node.quality_score_raw !== null) return node.quality_score_raw;
+  return node.quality_score === null ? null : node.quality_score * 10;
+}
+
 function colorForNode(
   node: StorageMapNode,
   mode: StorageMapColorMode,
@@ -139,8 +144,9 @@ function colorForNode(
     return stablePaletteColor(hdr);
   }
   if (mode === "quality") {
-    if (node.quality_score === null) return UNKNOWN_COLOR;
-    const normalized = Math.max(0, Math.min(1, node.quality_score / 100));
+    const qualityScoreRaw = qualityScoreForColor(node);
+    if (qualityScoreRaw === null) return UNKNOWN_COLOR;
+    const normalized = Math.max(0, Math.min(1, qualityScoreRaw / 100));
     return `hsl(${Math.round(8 + normalized * 154)} 48% ${Math.round(46 - normalized * 10)}%)`;
   }
   if (mode === "container") return stablePaletteColor(node.container);
@@ -217,7 +223,9 @@ function colorForDistributionValue(
     syntheticNode.resolution_category_id = typeof value === "string" ? value : null;
     syntheticNode.resolution = null;
   } else if (mode === "hdr") syntheticNode.hdr_type = typeof value === "string" ? value : null;
-  else if (mode === "quality") syntheticNode.quality_score = typeof value === "number" ? value : null;
+  else if (mode === "quality") {
+    syntheticNode.quality_score_raw = typeof value === "number" ? value : null;
+  }
   else if (mode === "size") syntheticNode.size_bytes = typeof value === "number" ? value : 0;
   else if (mode === "container") syntheticNode.container = typeof value === "string" ? value : null;
   else if (mode === "duration") syntheticNode.duration_seconds = typeof value === "number" ? value : null;
@@ -235,15 +243,13 @@ function colorForDistributionValue(
 }
 
 const FOLDER_GRADIENT_ANCHORS = [
-  [0, 0],
-  [100, 0],
-  [100, 100],
-  [0, 100],
-  [36, 30],
-  [70, 34],
-  [28, 72],
-  [72, 76],
-  [50, 54],
+  [0, 0, 0.9, 1.04],
+  [100, 0, 1.04, 0.9],
+  [100, 100, 0.9, 1.04],
+  [0, 100, 1.04, 0.9],
+  [32, 34, 0.68, 0.86],
+  [70, 40, 0.86, 0.68],
+  [50, 76, 0.74, 0.74],
 ] as const;
 
 function folderGradientForNode(
@@ -278,17 +284,20 @@ function folderGradientForNode(
   });
   const anchorColors = [...guaranteedColors, ...weightedColors];
 
-  return FOLDER_GRADIENT_ANCHORS.map(([x, y], index) => {
+  const layers = FOLDER_GRADIENT_ANCHORS.map(([x, y, widthScale, heightScale], index) => {
     const item = anchorColors[index];
     const share = item.sizeBytes / Math.max(total, 1);
-    const radiusX = Math.round(40 + Math.sqrt(share) * 52);
-    const radiusY = Math.round(36 + Math.sqrt(share) * 46);
+    const radius = 38 + Math.sqrt(share) * 40;
+    const radiusX = Math.round(radius * widthScale);
+    const radiusY = Math.round(radius * heightScale);
     return (
       `radial-gradient(ellipse ${radiusX}% ${radiusY}% at ${x}% ${y}%, ` +
-      `color-mix(in srgb, ${item.color} 96%, transparent) 0%, ` +
-      `color-mix(in srgb, ${item.color} 82%, transparent) 36%, transparent 74%)`
+      `${item.color} 0%, ` +
+      `color-mix(in srgb, ${item.color} 78%, transparent) 30%, ` +
+      `color-mix(in srgb, ${item.color} 24%, transparent) 58%, transparent 78%)`
     );
-  }).join(", ");
+  });
+  return layers.reverse().join(", ");
 }
 
 function labelForNode(
@@ -307,7 +316,7 @@ function labelForNode(
     return node.hdr_type ? (formatHdrType(node.hdr_type) ?? unknownLabel) : unknownLabel;
   }
   if (mode === "quality") {
-    return node.quality_score === null ? unknownLabel : `${Math.round(node.quality_score)}/100`;
+    return node.quality_score === null ? unknownLabel : `${Math.round(node.quality_score)}/10`;
   }
   if (mode === "container") return node.container ? formatContainerLabel(node.container) : unknownLabel;
   if (mode === "duration") return node.duration_seconds === null ? unknownLabel : formatDuration(node.duration_seconds);
@@ -431,13 +440,13 @@ function StorageMapTile({
     ...(node.quality_score !== null
       ? [{
           label: t("storageMap.modes.quality"),
-          value: `${Math.round(node.quality_score)}/100`,
+          value: `${Math.round(node.quality_score)}/10`,
         }]
       : []),
   ];
+  const folderGradient = folderGradientForNode(node, colorMode, maxSize);
   const style = {
     "--storage-map-tile-color": colorForNode(node, colorMode, maxSize),
-    backgroundImage: folderGradientForNode(node, colorMode, maxSize),
     left: `${rect.x}%`,
     top: `${rect.y}%`,
     width: `${rect.width}%`,
@@ -487,6 +496,13 @@ function StorageMapTile({
       style={style}
       onClick={() => onOpen(node)}
     >
+      {folderGradient ? (
+        <span
+          className="storage-map-tile-color-field"
+          aria-hidden="true"
+          style={{ backgroundImage: folderGradient }}
+        />
+      ) : null}
       <span className="storage-map-tile-copy" aria-hidden="true">
         <span className="storage-map-tile-name">
           {node.kind === "folder" ? <Folder aria-hidden="true" /> : <File aria-hidden="true" />}
@@ -616,7 +632,10 @@ export function StorageMapPage() {
         return displayNameForNode(left, nameSource).localeCompare(displayNameForNode(right, nameSource));
       }
       if (sortMode === "quality") {
-        return (right.quality_score ?? -1) - (left.quality_score ?? -1) || right.size_bytes - left.size_bytes;
+        return (
+          (qualityScoreForColor(right) ?? -1) - (qualityScoreForColor(left) ?? -1) ||
+          right.size_bytes - left.size_bytes
+        );
       }
       return (
         right.size_bytes - left.size_bytes ||

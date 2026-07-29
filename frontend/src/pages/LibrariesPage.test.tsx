@@ -1201,6 +1201,10 @@ describe("LibrariesPage ignore patterns", () => {
     expect(screen.getByRole("button", { name: "Explain retention days" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Explain storage limit" })).toBeInTheDocument();
     expect(screen.getByText(/File history retention only affects per-file snapshots/)).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Retention days")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Retention days")[0]).toHaveClass("settings-choice-input", "history-retention-input");
+    expect(screen.getAllByLabelText("Storage limit (GB)")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Storage limit (GB)")[0]).toHaveClass("settings-choice-input", "history-retention-input");
     expect(await screen.findByText("977 KB")).toBeInTheDocument();
     expect((await screen.findAllByText("2.9 MB")).length).toBeGreaterThan(0);
   });
@@ -1850,7 +1854,8 @@ describe("LibrariesPage desktop mode", () => {
     await screen.findByRole("link", { name: "Movies" });
     await expandLibrarySettings();
 
-    await waitFor(() => expect(screen.getByLabelText("Scan mode")).toHaveTextContent("Time Interval"));
+    await waitFor(() => expect(screen.getByLabelText("Scan mode")).toHaveValue("scheduled"));
+    expect(screen.getByLabelText("Scan mode").tagName).toBe("SELECT");
     expect(
       screen.getAllByText(
         "Watch mode is only available for local paths. MediaLyze falls back to scheduled scans for network locations.",
@@ -1868,8 +1873,9 @@ describe("LibrariesPage desktop mode", () => {
 
     await screen.findByRole("link", { name: "Movies" });
     await expandLibrarySettings();
-    fireEvent.click(screen.getByLabelText("Duplicate detection"));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "Both" }));
+    const duplicateDetectionSelect = screen.getByLabelText("Duplicate detection");
+    expect(duplicateDetectionSelect.tagName).toBe("SELECT");
+    fireEvent.change(duplicateDetectionSelect, { target: { value: "both" } });
 
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith(

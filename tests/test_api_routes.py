@@ -1718,7 +1718,8 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
             extension="mkv",
             size_bytes=100,
             mtime=1.0,
-            quality_score=96,
+            quality_score=10,
+            quality_score_raw=96,
             primary_video_codec="hevc",
             primary_video_width=3840,
             primary_video_height=2160,
@@ -1731,7 +1732,8 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
             extension="mkv",
             size_bytes=20,
             mtime=1.0,
-            quality_score=84,
+            quality_score=8,
+            quality_score_raw=84,
             primary_video_codec="av1",
             primary_video_width=1920,
             primary_video_height=1080,
@@ -1757,7 +1759,8 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
                     extension="mkv",
                     size_bytes=10,
                     mtime=1.0,
-                    quality_score=70,
+                    quality_score=7,
+                    quality_score_raw=70,
                 ),
             ]
         )
@@ -1808,9 +1811,15 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
     ]
     assert root_payload["items"][0]["file_count"] == 2
     assert root_payload["items"][0]["video_codec"] == "hevc"
+    assert root_payload["items"][0]["quality_score"] == 10
+    assert root_payload["items"][0]["quality_score_raw"] == 94
     assert root_payload["items"][0]["color_distributions"]["codec"] == [
         {"value": "hevc", "size_bytes": 100},
         {"value": "av1", "size_bytes": 20},
+    ]
+    assert root_payload["items"][0]["color_distributions"]["quality"] == [
+        {"value": 96.0, "size_bytes": 100},
+        {"value": 84.0, "size_bytes": 20},
     ]
     assert root_payload["items"][0]["color_distributions"]["hdr"] == [
         {"value": "dolby_vision", "size_bytes": 100},
@@ -1825,6 +1834,8 @@ def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
     assert [item["name"] for item in folder_payload["items"]] == ["Dune.mkv", "Small.mkv"]
     assert folder_payload["items"][0]["file_id"] is not None
     assert folder_payload["items"][0]["resolution_category_id"] == "4k"
+    assert folder_payload["items"][0]["quality_score"] == 10
+    assert folder_payload["items"][0]["quality_score_raw"] == 96
     assert folder_payload["items"][0]["jellyfin_title"] == "Dune: Part Two"
     assert folder_payload["items"][1]["jellyfin_title"] is None
     assert folder_payload["items"][1]["hdr_type"] == "SDR"
