@@ -131,6 +131,7 @@ def test_shipped_profiles_load_with_matching_ids(tmp_path) -> None:
         "apple-tv-hd",
         "fire-tv-stick-4k-max-2nd-gen",
         "google-pixel-9",
+        "google-tv-streamer-4k",
         "onn-4k-2023",
     ]
     assert {profile.id for profile in list_profiles(settings, "software")} == {
