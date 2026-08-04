@@ -484,7 +484,7 @@ function SettingsNavigationFixture({ collapsed = false }: { collapsed?: boolean 
                 {!collapsed ? <span>Libraries</span> : null}
               </span>
             </button>
-            <button type="button" className="settings-navigation-item" aria-label="Jellyfin" data-settings-panel-id="jellyfin">
+            <button type="button" className="settings-navigation-item" aria-label="Connectors" data-settings-panel-id="jellyfin">
               <span className="settings-navigation-item-content">
                 <Server className="nav-icon" aria-hidden="true" />
                 {!collapsed ? <span>Jellyfin</span> : null}
@@ -1510,7 +1510,14 @@ export function UiElementsPage() {
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />
               </VariantCard>
-              <VariantCard title="Jellyfin connection lifecycle, catalog status, local matching, and playback users" source={`${settings} > Jellyfin`} classes={["jellyfin-form-grid", "jellyfin-actions", "jellyfin-sync-progress", "jellyfin-status-grid", "jellyfin-user-selection", "jellyfin-user-selection-toolbar", "jellyfin-user-groups"]} wide>
+              <VariantCard title="Provider-neutral connector cards and location-to-root mapping" source={`${settings} > Connectors`} classes={["connector-card", "connector-form-grid", "connector-mapping-table", "connector-status"]} wide>
+                <section className="connector-card">
+                  <header><div><span className="badge">jellyfin</span><h3><Server aria-hidden="true" /> Living room</h3></div><span className="connector-status status-success">success</span></header>
+                  <div className="connector-form-grid"><label><span>Name</span><input defaultValue="Living room" /></label><label><span>Server URL</span><input defaultValue="http://jellyfin:8096" /></label><label><span>API key / secret</span><input type="password" placeholder="Secret configured" /></label></div>
+                  <div className="connector-mapping-table-wrap"><table className="connector-mapping-table"><thead><tr><th>External library</th><th>Location</th><th>MediaLyze root</th><th>Status</th></tr></thead><tbody><tr><td>Movies</td><td><code>/srv/media</code></td><td><select defaultValue="primary"><option value="primary">Movies · Primary</option></select></td><td><span className="badge">Bound</span></td></tr><tr><td>Archive</td><td><code>/srv/archive</code></td><td><select defaultValue=""><option value="">Unmapped</option></select></td><td><span className="badge warning">Unmapped</span></td></tr></tbody></table></div>
+                </section>
+              </VariantCard>
+              <VariantCard title="Jellyfin compatibility lifecycle and playback users" source={`${settings} > Connectors > Jellyfin compatibility`} classes={["jellyfin-form-grid", "jellyfin-actions", "jellyfin-sync-progress", "jellyfin-status-grid", "jellyfin-user-selection", "jellyfin-user-selection-toolbar", "jellyfin-user-groups"]} wide>
                 <div className="jellyfin-settings-section">
                   <div className="jellyfin-section-heading"><Server aria-hidden="true" /><div><h3>Connection</h3><p>Read-only external metadata source.</p></div></div>
                   <div className="jellyfin-form-grid"><label><span>Server URL</span><input defaultValue="http://jellyfin:8096" /></label><label><span>API key</span><input type="password" defaultValue="configured-key" /></label><div className="jellyfin-form-field"><span className="jellyfin-field-label"><label htmlFor="catalog-jellyfin-sync-interval">Sync interval</label><TooltipTrigger ariaLabel="Explain sync interval" content="Enter 0 to disable scheduled synchronization.">?</TooltipTrigger></span><input id="catalog-jellyfin-sync-interval" type="number" min="0" defaultValue="0" /></div></div>

@@ -15,16 +15,32 @@ class LibraryRootRead(BaseModel):
     path_key: str
 
 
+class LibraryRootWrite(BaseModel):
+    id: int | None = Field(default=None, ge=1)
+    path: str = Field(min_length=1, max_length=2048)
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
 class LinkedJellyfinLibraryRead(BaseModel):
     id: int
     name: str
     last_synced_at: UtcDateTime
 
 
+class ConnectorLibraryLinkRead(BaseModel):
+    connection_id: int
+    connection_name: str
+    provider: str
+    connector_library_id: int
+    connector_library_name: str
+    link_method: str
+
+
 class LibraryCreate(BaseModel):
     name: str
     path: str
     paths: list[str] = Field(default_factory=list)
+    roots: list[LibraryRootWrite] = Field(default_factory=list)
     type: LibraryType
     scan_mode: ScanMode = ScanMode.manual
     duplicate_detection_mode: DuplicateDetectionMode = DuplicateDetectionMode.off
@@ -33,12 +49,14 @@ class LibraryCreate(BaseModel):
     quality_profile_id: int | None = None
     show_on_dashboard: bool = True
     history_added_date_source: HistoryAddedDateSource = HistoryAddedDateSource.medialyze
+    preferred_connector_connection_id: int | None = Field(default=None, ge=1)
 
 
 class LibraryUpdate(BaseModel):
     name: str | None = None
     path: str | None = None
     paths: list[str] | None = None
+    roots: list[LibraryRootWrite] | None = None
     type: LibraryType | None = None
     scan_mode: ScanMode | None = None
     duplicate_detection_mode: DuplicateDetectionMode | None = None
@@ -47,6 +65,7 @@ class LibraryUpdate(BaseModel):
     quality_profile_id: int | None = None
     show_on_dashboard: bool | None = None
     history_added_date_source: HistoryAddedDateSource | None = None
+    preferred_connector_connection_id: int | None = Field(default=None, ge=1)
 
 
 class LibrarySummary(BaseModel):
@@ -67,12 +86,14 @@ class LibrarySummary(BaseModel):
     quality_profile_id: int | None = None
     show_on_dashboard: bool = True
     history_added_date_source: HistoryAddedDateSource = HistoryAddedDateSource.medialyze
+    preferred_connector_connection_id: int | None = None
     file_count: int = 0
     total_size_bytes: int = 0
     total_duration_seconds: float = 0
     ready_files: int = 0
     pending_files: int = 0
     linked_jellyfin_library: LinkedJellyfinLibraryRead | None = None
+    connector_links: list[ConnectorLibraryLinkRead] = Field(default_factory=list)
 
 
 class LibraryStatistics(BaseModel):

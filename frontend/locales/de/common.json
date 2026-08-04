@@ -1689,6 +1689,13 @@
       "header": "Header"
     }
   },
+  "connectors": {
+    "title": "Connectoren", "externalSources": "Externe Quellen", "noExternalSources": "Dieser Datei ist keine Connector-Quelle zugeordnet.", "rootAlias": "Root-Alias", "historySource": "Added-Date des bevorzugten Connectors", "preferredConnection": "Bevorzugte Metadaten-Connection", "choosePreferred": "Connection auswählen",
+    "description": "Verbinde MediaLyze mit einem oder mehreren Medienservern und ordne jede externe Library-Location einem stabilen MediaLyze-Root zu.",
+    "addConnection": "Connection hinzufügen", "provider": "Provider", "name": "Name", "serverUrl": "Server-URL", "secret": "API-Key / Secret", "secretConfigured": "Secret konfiguriert", "syncInterval": "Sync-Intervall (Minuten)", "create": "Connection erstellen", "created": "Connection erstellt.", "saved": "Connection gespeichert.", "empty": "Noch keine Connector-Connection konfiguriert.",
+    "enable": "Aktivieren", "disable": "Deaktivieren", "test": "Verbindung testen", "testFailed": "Verbindungstest fehlgeschlagen.", "testSucceeded": "Mit {{name}} verbunden.", "sync": "Jetzt synchronisieren", "syncQueued": "Synchronisierung eingereiht.", "cancel": "Sync abbrechen", "cancelRequested": "Abbruch angefordert.", "delete": "Entfernen", "deleteConfirm": "{{name}} und alle lokal gespeicherten Connector-Daten entfernen?", "deleted": "Connection entfernt.",
+    "mappingTitle": "Location-zu-Root-Mapping", "mappingDescription": "Root-Bindings sind für die physische Dateizuordnung autoritativ. Eine Datei darf Quellen aus mehreren Connections besitzen.", "advanced": "Erweiterter Modus", "externalLibrary": "Externe Library", "location": "Location", "localRoot": "MediaLyze-Root", "sourcePrefix": "Quellpräfix", "targetSubpath": "Ziel-Unterpfad", "caseMode": "Groß-/Kleinschreibung", "priority": "Priorität", "status": "Status", "unmapped": "Nicht zugeordnet", "bound": "Zugeordnet", "saveMappings": "Mappings speichern", "bindingsSaved": "Mappings gespeichert und Matches neu berechnet.", "syncForLibraries": "Synchronisiere, um externe Libraries und Locations zu erkennen.", "jellyfinCompatibility": "Jellyfin-Playback- und Kompatibilitätseinstellungen"
+  },
   "jellyfin": {
     "title": "Jellyfin",
     "connection": "Verbindung",

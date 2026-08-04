@@ -241,7 +241,7 @@ See [docs/patterns.md](docs/patterns.md) for folder discovery, series recognitio
 
 Telemetry payloads are documented in [docs/telemetry.md](docs/telemetry.md), including the `none`, `minimal`, and `enabled` payload contracts and the privacy-preserving rounding rules for coarse usage counts.
 
-Jellyfin permissions, Docker path mappings, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md).
+Provider-neutral connections, multi-server path bindings, matching invariants, synchronization, and provider development are documented in [docs/connectors.md](docs/connectors.md). Jellyfin-specific permissions, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md). `JELLYFIN_API_KEY_FILE` applies only to the migrated standard Jellyfin connection; configure additional connections in the UI.
 
 Repository automation, Docker and desktop publishing, manual workflow controls, and release recovery are documented in [docs/github_actions.md](docs/github_actions.md).
 

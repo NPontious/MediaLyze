@@ -134,6 +134,39 @@ def test_update_status_returns_persisted_latest_release() -> None:
     assert payload["release_notes"][0]["version"] == "9.9.9"
 
 
+def test_connector_connection_api_keeps_secrets_write_only() -> None:
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    with factory() as db:
+        client = _build_test_app(db)
+        providers = client.get("/api/connectors/providers")
+        created = client.post(
+            "/api/connectors",
+            json={
+                "provider": "jellyfin",
+                "name": "Living Room",
+                "base_url": "http://jellyfin.local",
+                "secret": "never-return-this",
+            },
+        )
+        listed = client.get("/api/connectors")
+
+    assert providers.status_code == 200
+    assert "jellyfin" in providers.json()
+    assert created.status_code == 201
+    assert created.json()["has_secret"] is True
+    assert "secret" not in created.json()
+    assert "never-return-this" not in created.text
+    assert listed.status_code == 200
+    assert "never-return-this" not in listed.text
+
+
 def test_desktop_update_reminder_routes_are_desktop_only_and_persist_marks() -> None:
     engine = create_engine(
         "sqlite:///:memory:",

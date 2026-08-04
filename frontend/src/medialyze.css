@@ -18,6 +18,28 @@
 .jellyfin-settings { gap: 28px; }
 .jellyfin-settings-section { gap: 14px; }
 .jellyfin-settings-section + .jellyfin-settings-section { padding-top: 24px; border-top: 1px solid rgba(31, 28, 22, 0.12); }
+
+.connector-settings-stack, .connector-card-list { display: grid; gap: 16px; }
+.connector-panel-heading, .connector-card > header, .connector-mapping-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.connector-panel-heading > p, .connector-mapping-heading p { margin: 0; color: var(--text-muted); }
+.connector-card { display: grid; gap: 16px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-subtle); }
+.connector-card header h3 { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+.connector-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.connector-form-grid label { display: grid; gap: 6px; }
+.connector-mapping-shell { display: grid; gap: 12px; }
+.connector-mapping-table-wrap { overflow-x: auto; }
+.connector-mapping-table { width: 100%; min-width: 760px; border-collapse: collapse; }
+.connector-mapping-table th, .connector-mapping-table td { padding: 9px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.connector-mapping-table input, .connector-mapping-table select { min-width: 130px; }
+.connector-legacy-details { display: grid; gap: 14px; }
+.connector-legacy-details > summary { cursor: pointer; font-weight: 700; }
+.library-root-row { display: grid; grid-template-columns: minmax(150px, 240px) 1fr; align-items: end; gap: 10px; }
+.library-root-row label { display: grid; gap: 4px; }
+.library-root-row code { min-width: 0; overflow-wrap: anywhere; }
+.file-external-sources, .file-external-source-list { display: grid; gap: 14px; }
+.file-external-source-card { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.file-external-source-card > div { display: flex; align-items: center; gap: 8px; }
+.file-external-source-card code { overflow-wrap: anywhere; }
 .jellyfin-section-heading { flex-direction: row; align-items: flex-start; gap: 10px; }
 .jellyfin-section-heading svg { width: 20px; height: 20px; color: var(--accent); }
 .jellyfin-section-heading h3 { margin: 0; font-size: 1rem; }

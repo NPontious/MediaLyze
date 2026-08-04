@@ -273,6 +273,9 @@ class MediaFileHistoryEntryRead(BaseModel):
     id: int
     media_file_id: int | None
     library_id: int
+    library_root_id: int | None = None
+    root_alias: str | None = None
+    display_path: str
     relative_path: str
     filename: str
     captured_at: UtcDateTime
@@ -284,6 +287,9 @@ class MediaFileHistoryEntryRead(BaseModel):
 class MediaFileHistoryRead(BaseModel):
     file_id: int
     library_id: int
+    library_root_id: int | None = None
+    root_alias: str | None = None
+    display_path: str
     relative_path: str
     total: int
     items: list[MediaFileHistoryEntryRead]

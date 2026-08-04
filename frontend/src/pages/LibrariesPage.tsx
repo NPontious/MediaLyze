@@ -29,7 +29,7 @@ import {
 import { AsyncPanel } from "../components/AsyncPanel";
 import { CheckIcon } from "../components/CheckIcon";
 import { CompatibilityProfilesPanel } from "../components/CompatibilityProfilesPanel";
-import { JellyfinSettingsPanel } from "../components/JellyfinSettingsPanel";
+import { ConnectorSettingsPanel } from "../components/ConnectorSettingsPanel";
 import { JellyfinLibraryPathMappings } from "../components/JellyfinLibraryPathMappings";
 import { CopyIcon } from "../components/CopyIcon";
 import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
@@ -761,7 +761,7 @@ const SETTINGS_NAV_GROUPS: SettingsNavigationGroup[] = [
     labelKey: "libraries.settingsGroups.librariesSources",
     items: [
       { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
-      { id: "jellyfin", labelKey: "jellyfin.title", icon: Server },
+      { id: "jellyfin", labelKey: "connectors.title", icon: Server },
     ],
   },
   {
@@ -2354,6 +2354,38 @@ export function LibrariesPage() {
         delete next[library.id];
         return next;
       });
+    }
+  }
+
+  async function updateLibraryRootAlias(library: LibrarySummary, rootId: number, displayName: string) {
+    const roots = library.roots ?? [];
+    const normalized = displayName.trim();
+    const current = roots.find((root) => root.id === rootId);
+    if (!normalized || !current || current.display_name === normalized) return;
+    try {
+      const updated = await api.updateLibrarySettings(library.id, {
+        roots: roots.map((root) => ({
+          id: root.id,
+          path: root.path,
+          display_name: root.id === rootId ? normalized : root.display_name,
+        })),
+      });
+      upsertLibrary(updated);
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    }
+  }
+
+  async function updatePreferredConnector(library: LibrarySummary, connectionId: number | null) {
+    try {
+      const updated = await api.updateLibrarySettings(library.id, {
+        preferred_connector_connection_id: connectionId,
+      });
+      upsertLibrary(updated);
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
     }
   }
 
@@ -6065,7 +6097,10 @@ export function LibrariesPage() {
                             </div>
                             <div className="library-source-paths">
                               {(library.roots?.length ? library.roots : [{ id: 0, path: library.path, display_name: "", path_key: library.path }]).map((root) => (
-                                <code key={`${library.id}-${root.path}`}>{root.path}</code>
+                                <div className="library-root-row" key={`${library.id}-${root.path}`}>
+                                  {root.id ? <label><span>{t("connectors.rootAlias")}</span><input defaultValue={root.display_name} onBlur={(event) => void updateLibraryRootAlias(library, root.id, event.target.value)} /></label> : null}
+                                  <code>{root.path}</code>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -6119,8 +6154,25 @@ export function LibrariesPage() {
                       >
                         <option value="medialyze">{t("jellyfin.historySourceMedialyze")}</option>
                         <option value="jellyfin">{t("jellyfin.historySourceJellyfin")}</option>
+                        <option value="connector">{t("connectors.historySource")}</option>
                       </select>
                     </div>
+                    {(library.connector_links?.length ?? 0) > 0 ? (
+                      <div className="field">
+                        <label htmlFor={`preferred-connector-${library.id}`}>{t("connectors.preferredConnection")}</label>
+                        <select
+                          id={`preferred-connector-${library.id}`}
+                          className="settings-choice-input"
+                          value={library.preferred_connector_connection_id ?? ""}
+                          onChange={(event) => void updatePreferredConnector(library, event.target.value ? Number(event.target.value) : null)}
+                        >
+                          <option value="">{t("connectors.choosePreferred")}</option>
+                          {Array.from(new Map((library.connector_links ?? []).map((link) => [link.connection_id, link])).values()).map((link) => (
+                            <option key={link.connection_id} value={link.connection_id}>{link.provider} · {link.connection_name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
                     <div className="field">
                       <div className="field-label-row">
                         <label htmlFor={`duplicate-detection-mode-${library.id}`}>{t("libraries.duplicateDetectionMode")}</label>
@@ -6260,7 +6312,7 @@ export function LibrariesPage() {
           </AsyncPanel>
           ) : null}
           {activeSettingsPanelId === "jellyfin" ? (
-            <JellyfinSettingsPanel
+            <ConnectorSettingsPanel
               onCatalogChanged={() => {
                 void loadJellyfinLibraries(true);
                 void loadLibraries(true);

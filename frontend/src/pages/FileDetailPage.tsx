@@ -50,6 +50,7 @@ import {
   type CompatibilityEvaluation,
   type CompatibilityProfile,
   type CompatibilityStatus,
+  type FileConnectorSource,
   type HardwareProfile,
   type JellyfinFileOverlay,
   type MediaFileDetail,
@@ -1612,6 +1613,8 @@ export function FileDetailPage() {
   const [fileHistoryError, setFileHistoryError] = useState<string | null>(null);
   const [jellyfinOverlay, setJellyfinOverlay] = useState<JellyfinFileOverlay | null>(null);
   const [jellyfinError, setJellyfinError] = useState<string | null>(null);
+  const [connectorSources, setConnectorSources] = useState<FileConnectorSource[] | null>(null);
+  const [connectorSourcesError, setConnectorSourcesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activePanelState, setActivePanelState] = useState<{
     fileId: string;
@@ -1689,6 +1692,13 @@ export function FileDetailPage() {
         setJellyfinError(null);
       })
       .catch((reason: Error) => setJellyfinError(reason.message));
+    api
+      .fileConnectors(fileId)
+      .then((payload) => {
+        setConnectorSources(payload);
+        setConnectorSourcesError(null);
+      })
+      .catch((reason: Error) => setConnectorSourcesError(reason.message));
     Promise.all([
       api.hardwareProfiles(),
       api.softwareProfiles(),
@@ -1934,7 +1944,7 @@ export function FileDetailPage() {
       ),
     },
     jellyfin: {
-      title: t("jellyfin.streaming"),
+      title: t("connectors.externalSources"),
       loading: !jellyfinOverlay && !jellyfinError,
       error: jellyfinError,
       titleAddon: (
@@ -1946,15 +1956,31 @@ export function FileDetailPage() {
         />
       ),
       body: (
-        <JellyfinStreamingDetails
-          userData={jellyfinOverlay?.user_data ?? []}
-          playbackEvents={jellyfinOverlay?.playback_events ?? []}
-          individualPlaybackHistoryStartAt={
-            jellyfinOverlay?.individual_playback_history_start_at ?? null
-          }
-          durationSeconds={file?.duration}
-          showAllPlaybacksWhenUnstacked={showAllPlaybacksWhenUnstacked}
-        />
+        <div className="file-external-sources">
+          <div className="file-external-source-list">
+            {connectorSourcesError ? <p className="notice error">{connectorSourcesError}</p> : null}
+            {(connectorSources ?? []).map((source) => (
+              <article className="file-external-source-card" key={`${source.connection_id}-${source.connector_item_id}`}>
+                <div><span className="badge">{source.provider}</span><strong>{source.title}</strong></div>
+                <span>{source.connection_name} · {source.item_type}</span>
+                {source.remote_path ? <code>{source.remote_path}</code> : null}
+                <small>{source.match_method}</small>
+              </article>
+            ))}
+            {connectorSources?.length === 0 ? <p className="field-hint">{t("connectors.noExternalSources")}</p> : null}
+          </div>
+          {jellyfinOverlay?.item ? (
+            <JellyfinStreamingDetails
+              userData={jellyfinOverlay.user_data ?? []}
+              playbackEvents={jellyfinOverlay.playback_events ?? []}
+              individualPlaybackHistoryStartAt={
+                jellyfinOverlay.individual_playback_history_start_at ?? null
+              }
+              durationSeconds={file?.duration}
+              showAllPlaybacksWhenUnstacked={showAllPlaybacksWhenUnstacked}
+            />
+          ) : null}
+        </div>
       ),
     },
     cover: {

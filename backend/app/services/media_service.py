@@ -2273,7 +2273,14 @@ def get_media_file_history(db: Session, file_id: int, *, limit: int = 50) -> Med
         MediaFileHistory.library_id == media_file.library_id,
         or_(
             MediaFileHistory.media_file_id == media_file.id,
-            MediaFileHistory.relative_path == media_file.relative_path,
+            and_(
+                MediaFileHistory.library_root_id == media_file.library_root_id,
+                MediaFileHistory.relative_path == media_file.relative_path,
+            ),
+            and_(
+                MediaFileHistory.library_root_id.is_(None),
+                MediaFileHistory.relative_path == media_file.relative_path,
+            ),
         ),
     )
     total = db.scalar(select(func.count()).select_from(base_query.subquery())) or 0
@@ -2284,9 +2291,14 @@ def get_media_file_history(db: Session, file_id: int, *, limit: int = 50) -> Med
         ).limit(limit)
     ).all()
 
+    root_alias = media_file.library_root.display_name if media_file.library_root else None
+    display_path = f"{root_alias}/{media_file.relative_path}" if root_alias else media_file.relative_path
     return MediaFileHistoryRead(
         file_id=media_file.id,
         library_id=media_file.library_id,
+        library_root_id=media_file.library_root_id,
+        root_alias=root_alias,
+        display_path=display_path,
         relative_path=media_file.relative_path,
         total=total,
         items=[
@@ -2294,6 +2306,13 @@ def get_media_file_history(db: Session, file_id: int, *, limit: int = 50) -> Med
                 id=entry.id,
                 media_file_id=entry.media_file_id,
                 library_id=entry.library_id,
+                library_root_id=entry.library_root_id,
+                root_alias=entry.root_alias,
+                display_path=(
+                    f"{entry.root_alias}/{entry.relative_path}"
+                    if entry.root_alias
+                    else entry.relative_path
+                ),
                 relative_path=entry.relative_path,
                 filename=entry.filename,
                 captured_at=entry.captured_at,

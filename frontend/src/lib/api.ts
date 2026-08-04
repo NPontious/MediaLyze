@@ -263,7 +263,76 @@ export type QualityBreakdown = {
 
 export type DuplicateDetectionMode = "off" | "filename" | "filehash" | "both";
 export type LibraryType = "movies" | "series" | "music" | "audiobooks" | "mixed" | "other";
-export type HistoryAddedDateSource = "medialyze" | "jellyfin";
+export type HistoryAddedDateSource = "medialyze" | "jellyfin" | "connector";
+
+export type ConnectorConnection = {
+  id: number;
+  provider: string;
+  name: string;
+  base_url: string;
+  config: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
+  enabled: boolean;
+  sync_interval_minutes: number;
+  server_name: string | null;
+  server_version: string | null;
+  last_status: string;
+  last_error: string | null;
+  last_sync_started_at: string | null;
+  last_sync_finished_at: string | null;
+  last_successful_sync_at: string | null;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConnectorLocation = {
+  id: number;
+  connector_library_id: number;
+  remote_path: string;
+  normalized_path: string;
+};
+
+export type ConnectorLibrary = {
+  id: number;
+  connection_id: number;
+  remote_id: string;
+  name: string;
+  media_type: string | null;
+  provider_payload: Record<string, unknown>;
+  last_synced_at: string | null;
+  locations: ConnectorLocation[];
+  linked_library_ids: number[];
+};
+
+export type ConnectorBinding = {
+  id: number;
+  location_id: number;
+  library_root_id: number;
+  source_prefix: string;
+  normalized_source_prefix: string;
+  target_subpath: string;
+  case_mode: "sensitive" | "insensitive";
+  priority: number;
+  active: boolean;
+};
+
+export type ConnectorBindingWrite = Omit<ConnectorBinding, "id" | "normalized_source_prefix"> & {
+  id?: number;
+};
+
+export type FileConnectorSource = {
+  connection_id: number;
+  connection_name: string;
+  provider: string;
+  connector_item_id: number;
+  remote_id: string;
+  title: string;
+  item_type: string;
+  remote_path: string | null;
+  match_method: string;
+  provider_payload: Record<string, unknown>;
+};
 
 export type JellyfinConnection = {
   base_url: string;
@@ -719,6 +788,15 @@ export type LibrarySummary = {
   quality_profile_id?: number | null;
   show_on_dashboard: boolean;
   history_added_date_source?: HistoryAddedDateSource;
+  preferred_connector_connection_id?: number | null;
+  connector_links?: Array<{
+    connection_id: number;
+    connection_name: string;
+    provider: string;
+    connector_library_id: number;
+    connector_library_name: string;
+    link_method: string;
+  }>;
   file_count: number;
   total_size_bytes: number;
   total_duration_seconds: number;
@@ -1125,6 +1203,9 @@ export type MediaFileHistoryEntry = {
   id: number;
   media_file_id: number | null;
   library_id: number;
+  library_root_id?: number | null;
+  root_alias?: string | null;
+  display_path?: string;
   relative_path: string;
   filename: string;
   captured_at: string;
@@ -1136,6 +1217,9 @@ export type MediaFileHistoryEntry = {
 export type MediaFileHistory = {
   file_id: number;
   library_id: number;
+  library_root_id?: number | null;
+  root_alias?: string | null;
+  display_path?: string;
   relative_path: string;
   total: number;
   items: MediaFileHistoryEntry[];
@@ -1980,6 +2064,8 @@ export const api = {
   fileRawFfprobe: (id: string | number, signal?: AbortSignal) =>
     request<MediaFileRawProbe>(`/files/${id}/raw-ffprobe`, { signal }),
   fileJellyfin: (id: string | number) => request<JellyfinFileOverlay>(`/files/${id}/jellyfin`),
+  fileConnectors: (id: string | number) =>
+    request<FileConnectorSource[]>(`/files/${id}/connectors`),
   jellyfinImageUrl: (itemId: string | number, imageType: "Primary" | "Backdrop" | "Thumb" = "Primary") =>
     `${API_PREFIX}/jellyfin/images/${itemId}/${imageType}`,
   fileStreams: (id: string | number) => request<MediaFileStreamDetails>(`/files/${id}/streams`),
@@ -1997,6 +2083,60 @@ export const api = {
     request<PathInspection>("/paths/inspect", {
       method: "POST",
       body: JSON.stringify({ path }),
+    }),
+  connectorProviders: () => request<string[]>("/connectors/providers"),
+  connectors: () => request<ConnectorConnection[]>("/connectors"),
+  createConnector: (payload: {
+    provider: string;
+    name: string;
+    base_url: string;
+    secret?: string;
+    enabled?: boolean;
+    sync_interval_minutes?: number;
+  }) => request<ConnectorConnection>("/connectors", { method: "POST", body: JSON.stringify(payload) }),
+  updateConnector: (id: number, payload: Partial<{
+    name: string;
+    base_url: string;
+    secret: string;
+    enabled: boolean;
+    sync_interval_minutes: number;
+    config: Record<string, unknown>;
+  }>) => request<ConnectorConnection>(`/connectors/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteConnector: (id: number) => request<void>(`/connectors/${id}`, { method: "DELETE" }),
+  testConnector: (id: number, payload: { base_url?: string; secret?: string } = {}) =>
+    request<{ success: boolean; server_name: string | null; server_version: string | null; error: string | null }>(
+      `/connectors/${id}/test`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  syncConnector: (id: number) =>
+    request<{ job_id: number; status: string; trigger_source: string; accepted: boolean }>(
+      `/connectors/${id}/sync`,
+      { method: "POST" },
+    ),
+  cancelConnectorSync: (id: number, jobId?: number | null) =>
+    request<{ job_id: number | null; status: string | null; cancellation_requested: boolean }>(
+      `/connectors/${id}/sync/cancel${jobId ? `?job_id=${jobId}` : ""}`,
+      { method: "POST" },
+    ),
+  connectorSyncStatus: (id: number) => request<{
+    id: number;
+    connection_id: number;
+    status: string;
+    trigger_source: string;
+    cancellation_requested: boolean;
+    progress_phase: string | null;
+    progress_detail: string | null;
+    progress_current: number;
+    progress_total: number | null;
+    error: string | null;
+    sync_summary: Record<string, unknown>;
+  } | null>(`/connectors/${id}/sync/status`),
+  connectorLibraries: (id: number) => request<ConnectorLibrary[]>(`/connectors/${id}/libraries`),
+  connectorBindings: (id: number) => request<ConnectorBinding[]>(`/connectors/${id}/bindings`),
+  updateConnectorBindings: (id: number, bindings: ConnectorBindingWrite[]) =>
+    request<ConnectorBinding[]>(`/connectors/${id}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({ bindings }),
     }),
   jellyfinConnection: () => request<JellyfinConnection>("/jellyfin/connection"),
   updateJellyfinConnection: (payload: {
@@ -2163,6 +2303,7 @@ export const api = {
     name: string;
     path: string;
     paths?: string[];
+    roots?: Array<{ id?: number; path: string; display_name?: string }>;
     type: LibraryType;
     scan_mode: string;
     duplicate_detection_mode?: DuplicateDetectionMode;
@@ -2182,6 +2323,7 @@ export const api = {
       name?: string;
       path?: string;
       paths?: string[];
+      roots?: Array<{ id?: number; path: string; display_name?: string }>;
       type?: LibraryType;
       scan_mode?: string;
       duplicate_detection_mode?: DuplicateDetectionMode;
@@ -2190,6 +2332,7 @@ export const api = {
       quality_profile_id?: number | null;
       show_on_dashboard?: boolean;
       history_added_date_source?: HistoryAddedDateSource;
+      preferred_connector_connection_id?: number | null;
     },
   ) =>
     request<LibrarySummary>(`/libraries/${libraryId}`, {

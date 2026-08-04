@@ -1689,6 +1689,13 @@
       "header": "Cabecera"
     }
   },
+  "connectors": {
+    "title": "Conectores", "externalSources": "Fuentes externas", "noExternalSources": "No hay ninguna fuente de conector asociada a este archivo.", "rootAlias": "Alias de raíz", "historySource": "Fecha de alta del conector preferido", "preferredConnection": "Conexión de metadatos preferida", "choosePreferred": "Elegir una conexión",
+    "description": "Conecta MediaLyze a uno o varios servidores multimedia y asigna cada ubicación externa a una raíz estable de MediaLyze.",
+    "addConnection": "Añadir conexión", "provider": "Proveedor", "name": "Nombre", "serverUrl": "URL del servidor", "secret": "Clave API / secreto", "secretConfigured": "Secreto configurado", "syncInterval": "Intervalo de sincronización (minutos)", "create": "Crear conexión", "created": "Conexión creada.", "saved": "Conexión guardada.", "empty": "Aún no hay conexiones configuradas.",
+    "enable": "Activar", "disable": "Desactivar", "test": "Probar conexión", "testFailed": "La prueba de conexión falló.", "testSucceeded": "Conectado a {{name}}.", "sync": "Sincronizar ahora", "syncQueued": "Sincronización en cola.", "cancel": "Cancelar sincronización", "cancelRequested": "Cancelación solicitada.", "delete": "Eliminar", "deleteConfirm": "¿Eliminar {{name}} y todos sus datos locales del conector?", "deleted": "Conexión eliminada.",
+    "mappingTitle": "Asignación de ubicación a raíz", "mappingDescription": "Las asignaciones de raíz son autoritativas para vincular archivos físicos. Un archivo puede tener fuentes de varias conexiones.", "advanced": "Modo avanzado", "externalLibrary": "Biblioteca externa", "location": "Ubicación", "localRoot": "Raíz de MediaLyze", "sourcePrefix": "Prefijo de origen", "targetSubpath": "Subruta de destino", "caseMode": "Mayúsculas/minúsculas", "priority": "Prioridad", "status": "Estado", "unmapped": "Sin asignar", "bound": "Asignado", "saveMappings": "Guardar asignaciones", "bindingsSaved": "Asignaciones guardadas y coincidencias recalculadas.", "syncForLibraries": "Sincroniza para detectar bibliotecas y ubicaciones externas.", "jellyfinCompatibility": "Ajustes de reproducción y compatibilidad de Jellyfin"
+  },
   "jellyfin": {
     "title": "Jellyfin", "connection": "Conexión", "connectionDescription": "Lee metadatos, bibliotecas, imágenes y reproducción por usuario desde un servidor Jellyfin.",
     "enableIntegration": "Activar integración", "disableIntegration": "Desactivar integración", "disconnect": "Eliminar conexión", "disconnectConfirm": "¿Eliminar la conexión de Jellyfin y todos los datos de Jellyfin almacenados localmente?", "disconnected": "Se eliminaron la conexión de Jellyfin y sus datos almacenados.",
