@@ -60,24 +60,16 @@ def _limit_dimensions(capability) -> tuple[int | None, int | None]:
 
 def _video_within_limits(stream, capability: HardwareVideoCapability | SoftwareCapability) -> str | None:
     max_width, max_height = _limit_dimensions(capability)
-    if stream.width is None or stream.height is None:
-        return "metadata_unknown"
-    if max_width and stream.width > max_width or max_height and stream.height > max_height:
+    if max_width and stream.width and stream.width > max_width or max_height and stream.height and stream.height > max_height:
         return "video_resolution_unsupported"
     if capability.max_fps is not None:
-        if stream.frame_rate is None:
-            return "metadata_unknown"
-        if stream.frame_rate > capability.max_fps + 0.01:
+        if stream.frame_rate is not None and stream.frame_rate > capability.max_fps + 0.01:
             return "video_fps_unsupported"
     if capability.bit_depth:
-        if stream.bit_depth is None:
-            return "metadata_unknown"
-        if stream.bit_depth not in capability.bit_depth:
+        if stream.bit_depth is not None and stream.bit_depth not in capability.bit_depth:
             return "video_bit_depth_unsupported"
     if isinstance(capability, SoftwareCapability) and capability.profiles:
-        if not stream.profile:
-            return "metadata_unknown"
-        if _key(stream.profile) not in {_key(item) for item in capability.profiles}:
+        if stream.profile and _key(stream.profile) not in {_key(item) for item in capability.profiles}:
             return "video_profile_unsupported"
     if stream.hdr_type and stream.hdr_type.upper() != "SDR" and capability.hdr:
         normalized = {_key(item) for item in capability.hdr}
