@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from sqlalchemy import delete, func, literal, select
+from sqlalchemy import delete, func, literal, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -27,6 +27,10 @@ from backend.app.services.connector_credentials import read_connector_secret
 from backend.app.services.connector_matching import recompute_connector_matches
 from backend.app.services.connector_pathing import normalize_connector_path
 from backend.app.services.connector_registry import connector_registry
+from backend.app.services.connector_security import (
+    public_connector_payload,
+    redact_connector_error,
+)
 from backend.app.services.stats_cache import stats_cache
 from backend.app.utils.time import utc_now
 
@@ -35,10 +39,15 @@ class ConnectorSyncCancelled(RuntimeError):
     pass
 
 
+class ConnectorSyncFailed(RuntimeError):
+    pass
+
+
 def create_or_get_connector_sync_job(
     db: Session,
     connection_id: int,
     trigger_source: str = "manual",
+    job_type: str = "sync",
 ) -> tuple[ConnectorSyncJob, bool]:
     active = db.scalar(
         select(ConnectorSyncJob)
@@ -54,6 +63,7 @@ def create_or_get_connector_sync_job(
         connection_id=connection_id,
         status=JobStatus.queued,
         trigger_source=trigger_source,
+        job_type=job_type,
         active_lock=1,
         progress_phase="queued",
     )
@@ -73,6 +83,28 @@ def create_or_get_connector_sync_job(
         return active, False
     db.refresh(job)
     return job, True
+
+
+def claim_connector_sync_job(db: Session, job_id: int) -> ConnectorSyncJob | None:
+    claimed = db.execute(
+        update(ConnectorSyncJob)
+        .where(
+            ConnectorSyncJob.id == job_id,
+            ConnectorSyncJob.status == JobStatus.queued,
+            ConnectorSyncJob.active_lock == 1,
+            ConnectorSyncJob.cancellation_requested.is_(False),
+        )
+        .values(
+            status=JobStatus.running,
+            started_at=utc_now(),
+            heartbeat_at=utc_now(),
+            progress_phase="starting",
+        )
+    )
+    db.commit()
+    if claimed.rowcount != 1:
+        return None
+    return db.get(ConnectorSyncJob, job_id)
 
 
 def request_connector_sync_cancellation(
@@ -114,7 +146,16 @@ def recover_orphaned_connector_sync_jobs(db: Session) -> int:
         job.finished_at = now
         job.error = "Canceled during startup recovery"
     if jobs:
-        db.commit()
+        db.flush()
+    # No connector workers are active during startup recovery. Any remaining
+    # staging rows therefore belong to an interrupted or obsolete run.
+    for model in (
+        ConnectorSyncStageItem,
+        ConnectorSyncStageLocation,
+        ConnectorSyncStageLibrary,
+    ):
+        db.execute(delete(model))
+    db.commit()
     return len(jobs)
 
 
@@ -145,7 +186,14 @@ def _update_progress(
     db.commit()
 
 
-def _stage_library(db: Session, run_id: str, connection_id: int, library: RemoteLibrary) -> None:
+def _stage_library(
+    db: Session,
+    run_id: str,
+    connection_id: int,
+    library: RemoteLibrary,
+    *,
+    secret: str = "",
+) -> None:
     now = utc_now()
     db.merge(
         ConnectorSyncStageLibrary(
@@ -154,7 +202,10 @@ def _stage_library(db: Session, run_id: str, connection_id: int, library: Remote
             remote_id=library.remote_id,
             name=library.name,
             media_type=library.media_type,
-            provider_payload=library.provider_payload,
+            provider_payload=public_connector_payload(
+                library.provider_payload,
+                secrets=(secret,),
+            ),
             last_synced_at=now,
         )
     )
@@ -171,7 +222,13 @@ def _stage_library(db: Session, run_id: str, connection_id: int, library: Remote
         )
 
 
-def _stage_item_row(run_id: str, connection_id: int, item: RemoteItem) -> dict:
+def _stage_item_row(
+    run_id: str,
+    connection_id: int,
+    item: RemoteItem,
+    *,
+    secret: str = "",
+) -> dict:
     normalized_path = (
         normalize_connector_path(item.remote_path).display if item.remote_path else None
     )
@@ -197,7 +254,10 @@ def _stage_item_row(run_id: str, connection_id: int, item: RemoteItem) -> dict:
         "size_bytes": item.size_bytes,
         "duration_seconds": item.duration_seconds,
         "core_payload": {},
-        "provider_payload": item.provider_payload,
+        "provider_payload": public_connector_payload(
+            item.provider_payload,
+            secrets=(secret,),
+        ),
         "last_synced_at": utc_now(),
     }
 
@@ -485,6 +545,8 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
     job = db.get(ConnectorSyncJob, job_id)
     if job is None:
         raise ValueError("Connector sync job not found")
+    if job.status != JobStatus.running or job.cancellation_requested:
+        raise ConnectorSyncCancelled("Connector synchronization is no longer runnable")
     connection = db.get(ConnectorConnection, job.connection_id)
     if connection is None:
         raise ValueError("Connector connection not found")
@@ -493,9 +555,9 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
         raise ValueError("Connector URL and secret are required before synchronization")
 
     run_id = uuid4().hex
-    job.status = JobStatus.running
-    job.started_at = utc_now()
-    job.heartbeat_at = job.started_at
+    job.sync_run_id = run_id
+    job.started_at = job.started_at or utc_now()
+    job.heartbeat_at = utc_now()
     job.progress_phase = "connecting"
     connection.last_sync_started_at = job.started_at
     connection.last_status = "syncing"
@@ -514,7 +576,7 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
             libraries = list(adapter.iter_libraries())
             for index, library in enumerate(libraries, start=1):
                 cancellation()
-                _stage_library(db, run_id, connection.id, library)
+                _stage_library(db, run_id, connection.id, library, secret=secret)
                 if index % 100 == 0:
                     db.commit()
                     _update_progress(db, job, "libraries", index, len(libraries))
@@ -523,7 +585,9 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
             item_count = 0
             item_batch: list[dict] = []
             for item_count, item in enumerate(adapter.iter_items(libraries), start=1):
-                item_batch.append(_stage_item_row(run_id, connection.id, item))
+                item_batch.append(
+                    _stage_item_row(run_id, connection.id, item, secret=secret)
+                )
                 if len(item_batch) >= 500:
                     cancellation()
                     _upsert_stage_items(db, item_batch)
@@ -553,6 +617,7 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
         job.active_lock = None
         job.finished_at = finished
         job.progress_phase = "completed"
+        job.sync_run_id = None
         job.sync_summary = summary
         connection.last_status = "success"
         connection.last_sync_finished_at = finished
@@ -567,18 +632,69 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
         connection = db.get(ConnectorConnection, connection.id)
         finished = utc_now()
         canceled = isinstance(exc, ConnectorSyncCancelled)
+        safe_error = redact_connector_error(exc, secrets=(secret,))
         if job is not None:
             job.status = JobStatus.canceled if canceled else JobStatus.failed
             job.active_lock = None
             job.finished_at = finished
             job.progress_phase = "canceled" if canceled else "failed"
-            job.error = str(exc)[:2048]
+            job.sync_run_id = None
+            job.error = safe_error
         if connection is not None:
             connection.last_status = "canceled" if canceled else "failed"
-            connection.last_error = str(exc)[:2048]
+            connection.last_error = safe_error
             connection.last_sync_finished_at = finished
         db.commit()
-        raise
+        if canceled:
+            raise ConnectorSyncCancelled(safe_error) from None
+        raise ConnectorSyncFailed(safe_error) from None
+
+
+def run_connector_recompute(db: Session, job_id: int) -> dict[str, int]:
+    job = db.get(ConnectorSyncJob, job_id)
+    if job is None:
+        raise ValueError("Connector recompute job not found")
+    if job.status != JobStatus.running or job.cancellation_requested:
+        raise ConnectorSyncCancelled("Connector recompute is no longer runnable")
+    if db.get(ConnectorConnection, job.connection_id) is None:
+        raise ValueError("Connector connection not found")
+    try:
+        job.progress_phase = "matching"
+        job.progress_current = 0
+        job.heartbeat_at = utc_now()
+        db.commit()
+        matching = recompute_connector_matches(
+            db,
+            connection_id=job.connection_id,
+            cancellation_check=lambda: _check_cancellation(db, job_id),
+            commit=False,
+        )
+        _check_cancellation(db, job_id)
+        job = db.get(ConnectorSyncJob, job_id)
+        job.status = JobStatus.completed
+        job.active_lock = None
+        job.finished_at = utc_now()
+        job.progress_phase = "completed"
+        job.progress_current = sum(matching.values())
+        job.sync_summary = {"matching": matching}
+        db.commit()
+        stats_cache.invalidate(str(id(db.get_bind())))
+        return matching
+    except Exception as exc:
+        db.rollback()
+        safe_error = redact_connector_error(exc)
+        job = db.get(ConnectorSyncJob, job_id)
+        canceled = isinstance(exc, ConnectorSyncCancelled)
+        if job is not None:
+            job.status = JobStatus.canceled if canceled else JobStatus.failed
+            job.active_lock = None
+            job.finished_at = utc_now()
+            job.progress_phase = "canceled" if canceled else "failed"
+            job.error = safe_error
+        db.commit()
+        if canceled:
+            raise ConnectorSyncCancelled(safe_error) from None
+        raise ConnectorSyncFailed(safe_error) from None
 
 
 def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, int]]:

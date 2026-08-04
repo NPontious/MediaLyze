@@ -66,10 +66,20 @@ afterEach(() => {
 
 function mockCatalog() {
   vi.spyOn(api, "connectors").mockResolvedValue([CONNECTION]);
-  vi.spyOn(api, "connectorProviders").mockResolvedValue(["jellyfin"]);
+  vi.spyOn(api, "connectorProviderDescriptors").mockResolvedValue([{
+    provider: "jellyfin",
+    configuration_fields: [
+      { key: "base_url", input_type: "url", required: true, secret: false },
+      { key: "secret", input_type: "password", required: true, secret: true },
+    ],
+    optional_capabilities: ["images"],
+  }]);
   vi.spyOn(api, "libraries").mockResolvedValue([LOCAL_LIBRARY]);
   vi.spyOn(api, "connectorLibraries").mockResolvedValue([REMOTE_LIBRARY]);
   vi.spyOn(api, "connectorBindings").mockResolvedValue([]);
+  vi.spyOn(api, "connectorItems").mockResolvedValue({ total: 0, offset: 0, limit: 50, items: [] });
+  vi.spyOn(api, "connectorItemStatusSummary").mockResolvedValue({});
+  vi.spyOn(api, "connectorSyncStatus").mockResolvedValue(null);
 }
 
 describe("ConnectorSettingsPanel", () => {
@@ -79,7 +89,7 @@ describe("ConnectorSettingsPanel", () => {
     render(<ConnectorSettingsPanel />);
 
     expect(await screen.findByRole("heading", { name: "Living Room" })).toBeInTheDocument();
-    expect(screen.getByText("Jellyfin Movies")).toBeInTheDocument();
+    expect(screen.getAllByText("Jellyfin Movies")).toHaveLength(2);
     expect(screen.getByText("/srv/media/movies")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Movies · Primary" })).toBeInTheDocument();
     expect(screen.queryByText("Source prefix")).not.toBeInTheDocument();
@@ -106,5 +116,53 @@ describe("ConnectorSettingsPanel", () => {
         source_prefix: "/srv/media/movies",
       }),
     ]));
+  });
+
+  it("persists explicit many-to-many library links", async () => {
+    mockCatalog();
+    const updateLinks = vi.spyOn(api, "updateConnectorLibraryLinks").mockResolvedValue([
+      { ...REMOTE_LIBRARY, linked_library_ids: [LOCAL_LIBRARY.id] },
+    ]);
+
+    render(<ConnectorSettingsPanel />);
+    const linkSelect = await screen.findByRole("listbox", { name: "Jellyfin Movies" });
+    fireEvent.change(linkSelect, { target: { value: String(LOCAL_LIBRARY.id) } });
+    fireEvent.click(screen.getByRole("button", { name: "Save library links" }));
+
+    await waitFor(() => expect(updateLinks).toHaveBeenCalledWith(CONNECTION.id, [{
+      connector_library_id: REMOTE_LIBRARY.id,
+      library_ids: [LOCAL_LIBRARY.id],
+    }]));
+  });
+
+  it("offers durable ignore and automatic-match recovery for diagnostics", async () => {
+    mockCatalog();
+    vi.mocked(api.connectorItems).mockResolvedValue({
+      total: 1,
+      offset: 0,
+      limit: 50,
+      items: [{
+        id: 41,
+        connection_id: CONNECTION.id,
+        connector_library_id: REMOTE_LIBRARY.id,
+        remote_id: "missing",
+        item_type: "Movie",
+        remote_path: "/srv/media/movies/Missing.mkv",
+        title: "Missing",
+        size_bytes: null,
+        duration_seconds: null,
+        match_status: "no_local_file",
+        mismatch_reason: "no_local_file",
+        suggested_media_file_id: null,
+        last_synced_at: null,
+      }],
+    });
+    vi.mocked(api.connectorItemStatusSummary).mockResolvedValue({ no_local_file: 1 });
+    const ignore = vi.spyOn(api, "ignoreConnectorItem").mockResolvedValue();
+
+    render(<ConnectorSettingsPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+
+    await waitFor(() => expect(ignore).toHaveBeenCalledWith(CONNECTION.id, 41));
   });
 });

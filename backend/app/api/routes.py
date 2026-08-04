@@ -30,6 +30,7 @@ from backend.app.schemas.connectors import (
     ConnectorItemPageRead,
     ConnectorItemRead,
     ConnectorLibraryRead,
+    ConnectorLibraryLinkBatchUpdate,
     ConnectorLocationRead,
     ConnectorManualMatchWrite,
     ConnectorMatchRead,
@@ -118,6 +119,7 @@ from backend.app.models.entities import (
     JellyfinConnection,
     JellyfinItem,
     JellyfinLibrary,
+    JellyfinSyncJob,
     JellyfinMediaMatch,
     JellyfinPathMapping,
     JellyfinPlaybackEvent,
@@ -132,16 +134,24 @@ from backend.app.models.entities import (
 )
 from backend.app.services.connector_credentials import read_connector_secret
 from backend.app.services.connector_registry import connector_registry
+from backend.app.services.connector_security import (
+    public_connector_payload,
+    redact_connector_error,
+)
 from backend.app.services.connector_service import (
     create_connector_connection,
     delete_connector_connection,
     list_connector_libraries,
     mirror_legacy_jellyfin_connection,
+    is_legacy_default_connection,
     remove_manual_connector_match,
     replace_connector_bindings,
+    replace_connector_library_links,
+    restore_automatic_connector_match,
     serialize_connector_connection,
     set_manual_connector_match,
     update_connector_connection,
+    update_legacy_default_connection,
 )
 from backend.app.services.app_settings import get_app_settings as load_app_settings
 from backend.app.services.app_settings import update_app_settings
@@ -665,9 +675,57 @@ def cancel_active_scan_jobs(
     return ScanCancelResponse(canceled_jobs=len(canceled_ids))
 
 
+def _clear_jellyfin_connection_state(
+    db: Session,
+    generic_connection: ConnectorConnection | None,
+) -> None:
+    db.execute(delete(JellyfinMediaMatch))
+    db.execute(delete(JellyfinUserItemData))
+    db.execute(delete(JellyfinItem))
+    db.execute(delete(JellyfinLibrary))
+    db.execute(delete(JellyfinPathMapping))
+    db.execute(delete(JellyfinUser))
+    legacy = db.get(JellyfinConnection, 1)
+    if legacy is not None:
+        legacy.base_url = ""
+        legacy.api_key = ""
+        legacy.enabled = False
+        legacy.server_name = None
+        legacy.server_version = None
+        legacy.last_status = "never"
+        legacy.last_error = None
+        legacy.last_sync_started_at = None
+        legacy.last_sync_finished_at = None
+        legacy.last_successful_sync_at = None
+    if generic_connection is not None:
+        delete_connector_connection(db, generic_connection, commit=False)
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+
+
 @router.get("/connectors/providers", response_model=list[str])
 def connector_providers() -> list[str]:
     return list(connector_registry.providers())
+
+
+@router.get("/connectors/provider-descriptors", response_model=list[dict])
+def connector_provider_descriptors() -> list[dict]:
+    return [
+        {
+            "provider": descriptor.provider,
+            "configuration_fields": [
+                {
+                    "key": field.key,
+                    "input_type": field.input_type,
+                    "required": field.required,
+                    "secret": field.secret,
+                }
+                for field in descriptor.configuration_fields
+            ],
+            "optional_capabilities": list(descriptor.optional_capabilities),
+        }
+        for descriptor in connector_registry.descriptors()
+    ]
 
 
 @router.get("/connectors", response_model=list[ConnectorConnectionRead])
@@ -715,12 +773,27 @@ def connector_connection_update(
     payload: ConnectorConnectionUpdate,
     db: Session = Depends(get_db_session),
     runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    settings: Settings = Depends(get_app_settings),
 ) -> ConnectorConnectionRead:
     connection = db.get(ConnectorConnection, connection_id)
     if connection is None:
         raise HTTPException(status_code=404, detail="Connector connection not found")
     try:
-        update_connector_connection(db, connection, payload)
+        if is_legacy_default_connection(connection):
+            legacy = get_or_create_jellyfin_connection(db)
+            update_legacy_default_connection(
+                db,
+                connection,
+                legacy,
+                payload,
+                external_secret_available=bool(
+                    settings.jellyfin_api_key_file
+                    and settings.jellyfin_api_key_file.exists()
+                ),
+            )
+            runtime.refresh_jellyfin_schedule()
+        else:
+            update_connector_connection(db, connection, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     refresh_connector_schedules = getattr(runtime, "refresh_connector_schedules", None)
@@ -746,7 +819,14 @@ def connector_connection_delete(
     )
     if active is not None:
         raise HTTPException(status_code=409, detail="Cancel the active connector sync before deletion")
-    delete_connector_connection(db, connection)
+    if is_legacy_default_connection(connection) and get_active_jellyfin_sync_job(db) is not None:
+        raise HTTPException(status_code=409, detail="Cancel the active Jellyfin sync before deletion")
+    if is_legacy_default_connection(connection):
+        _clear_jellyfin_connection_state(db, connection)
+        JELLYFIN_IMAGE_CACHE.clear()
+        runtime.refresh_jellyfin_schedule()
+    else:
+        delete_connector_connection(db, connection)
     refresh_connector_schedules = getattr(runtime, "refresh_connector_schedules", None)
     if callable(refresh_connector_schedules):
         refresh_connector_schedules()
@@ -779,10 +859,10 @@ def connector_connection_test(
             server_version=info.version,
         )
     except Exception as exc:
-        error = str(exc)
-        if secret:
-            error = error.replace(secret, "***")
-        return ConnectorTestRead(success=False, error=error[:2048])
+        return ConnectorTestRead(
+            success=False,
+            error=redact_connector_error(exc, secrets=(secret,)),
+        )
 
 
 @router.post(
@@ -818,9 +898,45 @@ def connector_sync_cancel(
 def connector_sync_status(
     connection_id: int,
     db: Session = Depends(get_db_session),
-) -> ConnectorSyncJob | None:
-    if db.get(ConnectorConnection, connection_id) is None:
+) -> ConnectorSyncJob | ConnectorSyncJobRead | None:
+    connection = db.get(ConnectorConnection, connection_id)
+    if connection is None:
         raise HTTPException(status_code=404, detail="Connector connection not found")
+    if is_legacy_default_connection(connection):
+        generic_job = db.scalar(
+            select(ConnectorSyncJob)
+            .where(ConnectorSyncJob.connection_id == connection_id)
+            .order_by(ConnectorSyncJob.id.desc())
+        )
+        legacy_job = db.scalar(
+            select(JellyfinSyncJob).order_by(JellyfinSyncJob.id.desc())
+        )
+        if generic_job is not None and (
+            generic_job.status in {JobStatus.queued, JobStatus.running}
+            or legacy_job is None
+            or generic_job.queued_at >= legacy_job.queued_at
+        ):
+            return generic_job
+        if legacy_job is None:
+            return None
+        return ConnectorSyncJobRead(
+            id=legacy_job.id,
+            connection_id=connection_id,
+            job_type="sync",
+            sync_run_id=None,
+            status=legacy_job.status.value,
+            trigger_source=legacy_job.trigger_source.value,
+            cancellation_requested=legacy_job.cancellation_requested,
+            progress_phase=legacy_job.progress_phase,
+            progress_detail=legacy_job.progress_detail,
+            progress_current=legacy_job.progress_current,
+            progress_total=legacy_job.progress_total,
+            queued_at=legacy_job.queued_at,
+            started_at=legacy_job.started_at,
+            finished_at=legacy_job.finished_at,
+            error=legacy_job.error,
+            sync_summary=dict(legacy_job.sync_summary or {}),
+        )
     return db.scalar(
         select(ConnectorSyncJob)
         .where(ConnectorSyncJob.connection_id == connection_id)
@@ -882,9 +998,27 @@ def connector_bindings_replace(
     connection_id: int,
     payload: ConnectorBindingBatchUpdate,
     db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> list[ConnectorRootBinding]:
     try:
-        return replace_connector_bindings(db, connection_id, payload)
+        bindings = replace_connector_bindings(db, connection_id, payload)
+        runtime.request_connector_recompute(connection_id)
+        return bindings
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/connectors/{connection_id}/library-links", response_model=list[ConnectorLibraryRead])
+def connector_library_links_replace(
+    connection_id: int,
+    payload: ConnectorLibraryLinkBatchUpdate,
+    db: Session = Depends(get_db_session),
+) -> list[ConnectorLibraryRead]:
+    try:
+        return replace_connector_library_links(db, connection_id, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -896,6 +1030,7 @@ def connector_bindings_replace(
 def connector_items(
     connection_id: int,
     status: str | None = Query(default=None, max_length=32),
+    attention_only: bool = Query(default=False),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db_session),
@@ -905,6 +1040,8 @@ def connector_items(
     filters = [ConnectorItem.connection_id == connection_id]
     if status:
         filters.append(ConnectorItem.match_status == status)
+    elif attention_only:
+        filters.append(ConnectorItem.match_status != "matched")
     total = db.scalar(select(func.count()).select_from(ConnectorItem).where(*filters)) or 0
     items = list(
         db.scalars(
@@ -921,6 +1058,41 @@ def connector_items(
         limit=limit,
         items=[ConnectorItemRead.model_validate(item) for item in items],
     )
+
+
+@router.get("/connectors/{connection_id}/item-status-summary", response_model=dict[str, int])
+def connector_item_status_summary(
+    connection_id: int,
+    db: Session = Depends(get_db_session),
+) -> dict[str, int]:
+    if db.get(ConnectorConnection, connection_id) is None:
+        raise HTTPException(status_code=404, detail="Connector connection not found")
+    return {
+        status: int(count)
+        for status, count in db.execute(
+            select(ConnectorItem.match_status, func.count())
+            .where(ConnectorItem.connection_id == connection_id)
+            .group_by(ConnectorItem.match_status)
+        )
+    }
+
+
+@router.get("/connectors/{connection_id}/items/{item_id}/provider-payload", response_model=dict)
+def connector_item_provider_payload(
+    connection_id: int,
+    item_id: int,
+    db: Session = Depends(get_db_session),
+) -> dict:
+    item = db.get(ConnectorItem, item_id)
+    if item is None or item.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Connector item not found")
+    return {
+        "connection_id": connection_id,
+        "connector_item_id": item.id,
+        "remote_id": item.remote_id,
+        "core_payload": public_connector_payload(item.core_payload or {}),
+        "provider_payload": public_connector_payload(item.provider_payload or {}),
+    }
 
 
 @router.put("/connectors/{connection_id}/items/{item_id}/match", response_model=ConnectorMatchRead)
@@ -958,6 +1130,19 @@ def connector_item_unmatch(
         raise HTTPException(status_code=404, detail="Connector item not found")
     if not remove_manual_connector_match(db, item):
         raise HTTPException(status_code=404, detail="Connector match not found")
+    return Response(status_code=204)
+
+
+@router.post("/connectors/{connection_id}/items/{item_id}/automatic-match", status_code=204)
+def connector_item_restore_automatic_match(
+    connection_id: int,
+    item_id: int,
+    db: Session = Depends(get_db_session),
+) -> Response:
+    item = db.get(ConnectorItem, item_id)
+    if item is None or item.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Connector item not found")
+    restore_automatic_connector_match(db, item)
     return Response(status_code=204)
 
 
@@ -1087,27 +1272,7 @@ def jellyfin_connection_delete(
         )
         if generic_active is not None:
             raise HTTPException(status_code=409, detail="Cancel the active connector sync before disconnecting")
-    db.execute(delete(JellyfinMediaMatch))
-    db.execute(delete(JellyfinUserItemData))
-    db.execute(delete(JellyfinItem))
-    db.execute(delete(JellyfinLibrary))
-    db.execute(delete(JellyfinPathMapping))
-    db.execute(delete(JellyfinUser))
-    connection = db.get(JellyfinConnection, 1)
-    if connection is not None:
-        connection.base_url = ""
-        connection.api_key = ""
-        connection.enabled = False
-        connection.server_name = None
-        connection.server_version = None
-        connection.last_status = "never"
-        connection.last_error = None
-        connection.last_sync_started_at = None
-        connection.last_sync_finished_at = None
-        connection.last_successful_sync_at = None
-    db.commit()
-    if generic_connection is not None:
-        delete_connector_connection(db, generic_connection)
+    _clear_jellyfin_connection_state(db, generic_connection)
     JELLYFIN_IMAGE_CACHE.clear()
     runtime.refresh_jellyfin_schedule()
     refresh_connector_schedules = getattr(runtime, "refresh_connector_schedules", None)
@@ -1128,7 +1293,10 @@ def jellyfin_test(
         with JellyfinClient(base_url, api_key) as jellyfin_client:
             info = jellyfin_client.get_system_info()
     except JellyfinError as exc:
-        return JellyfinTestRead(ok=False, error=str(exc))
+        return JellyfinTestRead(
+            ok=False,
+            error=redact_connector_error(exc, secrets=(api_key,)),
+        )
     return JellyfinTestRead(
         ok=True,
         server_name=info.get("ServerName"),
@@ -2538,7 +2706,8 @@ def file_connector_sources(
     file_id: int,
     db: Session = Depends(get_db_session),
 ) -> list[FileConnectorSourceRead]:
-    if db.get(MediaFile, file_id) is None:
+    media_file = db.get(MediaFile, file_id)
+    if media_file is None:
         raise HTTPException(status_code=404, detail="Media file not found")
     rows = db.execute(
         select(ConnectorMediaMatch, ConnectorItem, ConnectorConnection)
@@ -2552,6 +2721,19 @@ def file_connector_sources(
             ConnectorItem.id,
         )
     ).all()
+    preferred_candidates = [
+        (match, item, connection)
+        for match, item, connection in rows
+        if connection.id == media_file.library.preferred_connector_connection_id
+    ]
+    preferred_item_id = min(
+        (
+            item.id
+            for match, item, _connection in preferred_candidates
+            if match.match_method == "manual"
+        ),
+        default=min((item.id for _match, item, _connection in preferred_candidates), default=None),
+    )
     return [
         FileConnectorSourceRead(
             connection_id=connection.id,
@@ -2563,7 +2745,16 @@ def file_connector_sources(
             item_type=item.item_type,
             remote_path=item.remote_path,
             match_method=match.match_method,
-            provider_payload=item.provider_payload or {},
+            preferred=item.id == preferred_item_id,
+            original_title=item.original_title,
+            series_name=item.series_name,
+            season_name=item.season_name,
+            date_created=item.date_created,
+            premiere_date=item.premiere_date,
+            production_year=item.production_year,
+            overview=item.overview,
+            provider_ids=public_connector_payload(item.provider_ids or {}),
+            provider_payload={},
         )
         for match, item, connection in rows
     ]
@@ -2585,19 +2776,85 @@ def file_jellyfin_overlay(
     file_id: int,
     db: Session = Depends(get_db_session),
 ) -> JellyfinFileOverlayRead:
-    if db.get(MediaFile, file_id) is None:
+    media_file = db.get(MediaFile, file_id)
+    if media_file is None:
         raise HTTPException(status_code=404, detail="Media file not found")
-    match = db.scalar(
-        select(JellyfinMediaMatch).where(
-            JellyfinMediaMatch.media_file_id == file_id,
-            JellyfinMediaMatch.status == "matched",
+    preferred_connection_id = media_file.library.preferred_connector_connection_id
+    preferred_connector_item: ConnectorItem | None = None
+    preferred_connection: ConnectorConnection | None = None
+    if preferred_connection_id is not None:
+        preferred_connection = db.get(ConnectorConnection, preferred_connection_id)
+        if preferred_connection is None or preferred_connection.provider != "jellyfin":
+            return JellyfinFileOverlayRead()
+        preferred_connector_item = db.scalar(
+            select(ConnectorItem)
+            .join(
+                ConnectorMediaMatch,
+                ConnectorMediaMatch.connector_item_id == ConnectorItem.id,
+            )
+            .where(
+                ConnectorItem.connection_id == preferred_connection_id,
+                ConnectorMediaMatch.media_file_id == file_id,
+                ConnectorMediaMatch.status == "matched",
+            )
+            .order_by(
+                (ConnectorMediaMatch.match_method == "manual").desc(),
+                ConnectorItem.id,
+            )
         )
-    )
-    if match is None:
-        return JellyfinFileOverlayRead()
-    item = db.get(JellyfinItem, match.jellyfin_item_id)
-    if item is None:
-        return JellyfinFileOverlayRead()
+        if preferred_connector_item is None:
+            return JellyfinFileOverlayRead()
+        item = db.scalar(
+            select(JellyfinItem).where(
+                JellyfinItem.jellyfin_item_id == preferred_connector_item.remote_id
+            )
+        ) if is_legacy_default_connection(preferred_connection) else None
+        if item is None:
+            payload = preferred_connector_item.provider_payload or {}
+            return JellyfinFileOverlayRead(
+                item=JellyfinItemRead(
+                    id=preferred_connector_item.id,
+                    jellyfin_item_id=preferred_connector_item.remote_id,
+                    item_type=preferred_connector_item.item_type,
+                    path=preferred_connector_item.remote_path,
+                    title=preferred_connector_item.title,
+                    original_title=preferred_connector_item.original_title,
+                    series_name=preferred_connector_item.series_name,
+                    season_name=preferred_connector_item.season_name,
+                    index_number=preferred_connector_item.index_number,
+                    parent_index_number=preferred_connector_item.parent_index_number,
+                    date_created=preferred_connector_item.date_created,
+                    premiere_date=preferred_connector_item.premiere_date,
+                    production_year=preferred_connector_item.production_year,
+                    overview=preferred_connector_item.overview,
+                    provider_ids=public_connector_payload(
+                        preferred_connector_item.provider_ids or {}
+                    ),
+                    image_tags={},
+                    backdrop_image_tags=[],
+                    match_status=preferred_connector_item.match_status,
+                    mismatch_reason=preferred_connector_item.mismatch_reason,
+                )
+            )
+        match = db.scalar(
+            select(JellyfinMediaMatch).where(
+                JellyfinMediaMatch.media_file_id == file_id,
+                JellyfinMediaMatch.jellyfin_item_id == item.id,
+                JellyfinMediaMatch.status == "matched",
+            )
+        )
+    else:
+        match = db.scalar(
+            select(JellyfinMediaMatch).where(
+                JellyfinMediaMatch.media_file_id == file_id,
+                JellyfinMediaMatch.status == "matched",
+            )
+        )
+        if match is None:
+            return JellyfinFileOverlayRead()
+        item = db.get(JellyfinItem, match.jellyfin_item_id)
+        if item is None:
+            return JellyfinFileOverlayRead()
     user_rows = db.execute(
         select(JellyfinUserItemData, JellyfinUser.name)
         .join(JellyfinUser, JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id)
@@ -2630,7 +2887,7 @@ def file_jellyfin_overlay(
             confidence=match.confidence,
             status=match.status,
             mismatch_reason=match.mismatch_reason,
-        ),
+        ) if match is not None else None,
         item=_jellyfin_item_read(item),
         user_data=[
             JellyfinUserItemDataRead(

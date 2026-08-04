@@ -27,6 +27,13 @@
 .connector-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .connector-form-grid label { display: grid; gap: 6px; }
 .connector-mapping-shell { display: grid; gap: 12px; }
+.connector-capability-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.connector-logical-links, .connector-item-diagnostics { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.connector-logical-links h4, .connector-logical-links p, .connector-item-diagnostics h4 { margin: 0; }
+.connector-logical-links p { color: var(--text-muted); }
+.connector-logical-links label { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(240px, 2fr); gap: 12px; align-items: start; }
+.connector-logical-links select[multiple] { min-height: 82px; }
+.connector-item-diagnostics td small { display: block; margin-top: 4px; color: var(--text-muted); }
 .connector-mapping-table-wrap { overflow-x: auto; }
 .connector-mapping-table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .connector-mapping-table th, .connector-mapping-table td { padding: 9px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
@@ -39,6 +46,7 @@
 .file-external-sources, .file-external-source-list { display: grid; gap: 14px; }
 .file-external-source-card { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .file-external-source-card > div { display: flex; align-items: center; gap: 8px; }
+.file-external-source-card p { margin: 4px 0; color: var(--text-muted); }
 .file-external-source-card code { overflow-wrap: anywhere; }
 .jellyfin-section-heading { flex-direction: row; align-items: flex-start; gap: 10px; }
 .jellyfin-section-heading svg { width: 20px; height: 20px; color: var(--accent); }

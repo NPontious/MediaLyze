@@ -42,6 +42,25 @@ class ConnectorPathResolution:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedConnectorBinding:
+    id: int
+    connection_id: int
+    connector_library_id: int
+    library_root_id: int
+    root_path: str
+    source_prefix: str
+    source_display: str
+    source_key: str
+    source_segments: int
+    target_subpath: str
+    case_mode: str
+    priority: int
+
+
+PreparedBindingCatalog = dict[int, tuple[PreparedConnectorBinding, ...]]
+
+
 def normalize_connector_path(value: str, *, case_mode: str = "sensitive") -> NormalizedConnectorPath:
     raw = str(value or "").strip().replace("\\", "/")
     unc = raw.startswith("//")
@@ -88,23 +107,18 @@ def binding_source_key(source_prefix: str, case_mode: str) -> str:
     return normalize_connector_path(source_prefix, case_mode=case_mode).key
 
 
-def resolve_connector_item_path(
+def prepare_connector_bindings(
     db: Session,
-    item: ConnectorItem,
     *,
-    accessibility_cache: dict[int, bool] | None = None,
-) -> ConnectorPathResolution:
-    if not item.remote_path:
-        return ConnectorPathResolution("unmapped", reason="path_missing")
-    if item.connector_library_id is None:
-        return ConnectorPathResolution("unmapped", reason="library_unmapped")
-    try:
-        normalize_connector_path(item.remote_path)
-    except ValueError:
-        return ConnectorPathResolution("unmapped", reason="invalid_remote_path")
-
-    rows = db.execute(
-        select(ConnectorRootBinding, LibraryRoot)
+    connection_id: int | None = None,
+) -> PreparedBindingCatalog:
+    query = (
+        select(
+            ConnectorRootBinding,
+            ConnectorLibraryLocation,
+            ConnectorLibrary,
+            LibraryRoot,
+        )
         .join(
             ConnectorLibraryLocation,
             ConnectorLibraryLocation.id == ConnectorRootBinding.location_id,
@@ -114,23 +128,86 @@ def resolve_connector_item_path(
             ConnectorLibrary.id == ConnectorLibraryLocation.connector_library_id,
         )
         .join(LibraryRoot, LibraryRoot.id == ConnectorRootBinding.library_root_id)
-        .where(
-            ConnectorRootBinding.active.is_(True),
-            ConnectorLibraryLocation.connector_library_id == item.connector_library_id,
-            ConnectorLibrary.connection_id == item.connection_id,
-        )
-    ).all()
-    candidates: list[tuple[int, int, ConnectorRootBinding, LibraryRoot, str]] = []
-    for binding, root in rows:
+        .where(ConnectorRootBinding.active.is_(True))
+    )
+    if connection_id is not None:
+        query = query.where(ConnectorLibrary.connection_id == connection_id)
+
+    grouped: dict[int, list[PreparedConnectorBinding]] = {}
+    for binding, location, connector_library, root in db.execute(query):
         try:
-            suffix = _path_suffix(item.remote_path, binding.source_prefix, binding.case_mode)
-            specificity = len(
-                normalize_connector_path(binding.source_prefix, case_mode=binding.case_mode).segments
+            normalized_source = normalize_connector_path(
+                binding.source_prefix,
+                case_mode=binding.case_mode,
             )
+            target_subpath = normalize_target_subpath(binding.target_subpath)
         except ValueError:
+            # Invalid rows can only originate from an old database or a manual
+            # database edit; treating them as absent keeps matching safe.
             continue
+        prepared = PreparedConnectorBinding(
+            id=binding.id,
+            connection_id=connector_library.connection_id,
+            connector_library_id=location.connector_library_id,
+            library_root_id=root.id,
+            root_path=root.path,
+            source_prefix=binding.source_prefix,
+            source_display=normalized_source.display,
+            source_key=normalized_source.key,
+            source_segments=len(normalized_source.segments),
+            target_subpath=target_subpath,
+            case_mode=binding.case_mode,
+            priority=binding.priority,
+        )
+        grouped.setdefault(location.connector_library_id, []).append(prepared)
+    return {
+        library_id: tuple(bindings)
+        for library_id, bindings in grouped.items()
+    }
+
+
+def _prepared_path_suffix(
+    normalized_path: NormalizedConnectorPath,
+    binding: PreparedConnectorBinding,
+) -> str | None:
+    path_key = (
+        normalized_path.display.casefold()
+        if binding.case_mode == "insensitive"
+        else normalized_path.display
+    )
+    if path_key == binding.source_key:
+        return ""
+    if not path_key.startswith(f"{binding.source_key}/"):
+        return None
+    return normalized_path.display[len(binding.source_display) :].lstrip("/")
+
+
+def resolve_connector_item_path(
+    db: Session,
+    item: ConnectorItem,
+    *,
+    accessibility_cache: dict[int, bool] | None = None,
+    prepared_bindings: PreparedBindingCatalog | None = None,
+) -> ConnectorPathResolution:
+    if not item.remote_path:
+        return ConnectorPathResolution("unmapped", reason="path_missing")
+    if item.connector_library_id is None:
+        return ConnectorPathResolution("unmapped", reason="library_unmapped")
+    try:
+        normalized_remote_path = normalize_connector_path(item.remote_path)
+    except ValueError:
+        return ConnectorPathResolution("unmapped", reason="invalid_remote_path")
+
+    catalog = prepared_bindings
+    if catalog is None:
+        catalog = prepare_connector_bindings(db, connection_id=item.connection_id)
+    candidates: list[tuple[int, int, PreparedConnectorBinding, str]] = []
+    for binding in catalog.get(item.connector_library_id, ()):
+        if binding.connection_id != item.connection_id:
+            continue
+        suffix = _prepared_path_suffix(normalized_remote_path, binding)
         if suffix is not None:
-            candidates.append((specificity, binding.priority, binding, root, suffix))
+            candidates.append((binding.source_segments, binding.priority, binding, suffix))
     if not candidates:
         return ConnectorPathResolution("unmapped", reason="no_binding")
     best_key = max((specificity, priority) for specificity, priority, *_rest in candidates)
@@ -138,16 +215,17 @@ def resolve_connector_item_path(
     if len(best) != 1:
         return ConnectorPathResolution("ambiguous_binding", reason="equivalent_bindings")
 
-    _specificity, _priority, binding, root, suffix = best[0]
+    _specificity, _priority, binding, suffix = best[0]
     cache = accessibility_cache if accessibility_cache is not None else {}
     if binding.id not in cache:
-        cache[binding.id] = Path(root.path).expanduser().exists()
+        cache[binding.id] = Path(binding.root_path).expanduser().exists()
     if not cache[binding.id]:
         return ConnectorPathResolution("root_unavailable", reason="root_not_accessible")
 
     try:
-        target = normalize_target_subpath(binding.target_subpath)
-        relative = normalize_target_subpath("/".join(part for part in (target, suffix) if part))
+        relative = normalize_target_subpath(
+            "/".join(part for part in (binding.target_subpath, suffix) if part)
+        )
     except ValueError:
         return ConnectorPathResolution("unmapped", reason="root_escape")
     if not relative:
@@ -155,7 +233,7 @@ def resolve_connector_item_path(
     return ConnectorPathResolution(
         "resolved",
         locator=ConnectorFileLocator(
-            library_root_id=root.id,
+            library_root_id=binding.library_root_id,
             relative_path=relative,
             binding_id=binding.id,
             case_mode=binding.case_mode,

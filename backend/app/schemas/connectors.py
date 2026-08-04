@@ -17,6 +17,7 @@ class ConnectorConnectionCreate(BaseModel):
     sync_interval_minutes: int = Field(default=60, ge=5, le=10080)
 
 
+
 class ConnectorConnectionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     base_url: str | None = Field(default=None, max_length=2048)
@@ -24,6 +25,7 @@ class ConnectorConnectionUpdate(BaseModel):
     config: dict | None = None
     enabled: bool | None = None
     sync_interval_minutes: int | None = Field(default=None, ge=5, le=10080)
+
 
 
 class ConnectorConnectionRead(BaseModel):
@@ -120,6 +122,25 @@ class ConnectorBindingRead(BaseModel):
     active: bool
 
 
+class ConnectorLibraryLinkWrite(BaseModel):
+    connector_library_id: int = Field(ge=1)
+    library_ids: list[int] = Field(default_factory=list, max_length=10000)
+
+
+class ConnectorLibraryLinkBatchUpdate(BaseModel):
+    links: list[ConnectorLibraryLinkWrite] = Field(default_factory=list, max_length=10000)
+
+    @model_validator(mode="after")
+    def reject_duplicate_connector_libraries(self) -> "ConnectorLibraryLinkBatchUpdate":
+        ids = [link.connector_library_id for link in self.links]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Connector library ids must be unique")
+        for link in self.links:
+            if len(link.library_ids) != len(set(link.library_ids)):
+                raise ValueError("MediaLyze library ids must be unique")
+        return self
+
+
 class ConnectorItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -176,6 +197,8 @@ class ConnectorSyncJobRead(BaseModel):
 
     id: int
     connection_id: int
+    job_type: str = "sync"
+    sync_run_id: str | None = None
     status: str
     trigger_source: str
     cancellation_requested: bool
@@ -200,4 +223,13 @@ class FileConnectorSourceRead(BaseModel):
     item_type: str
     remote_path: str | None
     match_method: str
+    preferred: bool = False
+    original_title: str | None = None
+    series_name: str | None = None
+    season_name: str | None = None
+    date_created: UtcDateTime | None = None
+    premiere_date: UtcDateTime | None = None
+    production_year: int | None = None
+    overview: str | None = None
+    provider_ids: dict = Field(default_factory=dict)
     provider_payload: dict = Field(default_factory=dict)

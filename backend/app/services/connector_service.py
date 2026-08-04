@@ -14,6 +14,9 @@ from backend.app.models.entities import (
     ConnectorLibraryLocation,
     ConnectorMediaMatch,
     ConnectorRootBinding,
+    ConnectorSyncStageItem,
+    ConnectorSyncStageLibrary,
+    ConnectorSyncStageLocation,
     Library,
     LibraryRoot,
     MediaFile,
@@ -24,10 +27,12 @@ from backend.app.schemas.connectors import (
     ConnectorConnectionCreate,
     ConnectorConnectionRead,
     ConnectorConnectionUpdate,
+    ConnectorLibraryLinkBatchUpdate,
     ConnectorLibraryRead,
     ConnectorLocationRead,
 )
 from backend.app.services.connector_credentials import (
+    delete_connector_secret,
     read_connector_secret,
     write_connector_secret,
 )
@@ -38,11 +43,23 @@ from backend.app.services.connector_pathing import (
     normalize_target_subpath,
 )
 from backend.app.services.connector_registry import connector_registry
+from backend.app.services.connector_security import (
+    contains_sensitive_connector_key,
+    public_connector_payload,
+)
 from backend.app.services.stats_cache import stats_cache
+
+
+def is_legacy_default_connection(connection: ConnectorConnection) -> bool:
+    return bool(
+        connection.provider == "jellyfin"
+        and (connection.config or {}).get("legacy_default") is True
+    )
 
 
 def serialize_connector_connection(db: Session, connection: ConnectorConnection) -> ConnectorConnectionRead:
     payload = ConnectorConnectionRead.model_validate(connection)
+    payload.config = public_connector_payload(payload.config)
     payload.has_secret = bool(read_connector_secret(db, connection.id))
     return payload
 
@@ -78,6 +95,7 @@ def mirror_legacy_jellyfin_connection(
         "playback_events": True,
         "images": True,
     }
+    connection.config = {**(connection.config or {}), "legacy_default": True}
     if secret:
         write_connector_secret(db, connection.id, secret)
     db.commit()
@@ -91,6 +109,12 @@ def create_connector_connection(
     provider = payload.provider.strip().casefold()
     if provider not in connector_registry.providers():
         raise ValueError(f"Unsupported connector provider: {payload.provider}")
+    if (payload.config or {}).get("legacy_default") is not None:
+        raise ValueError("legacy_default is a reserved connector setting")
+    if contains_sensitive_connector_key(payload.config):
+        raise ValueError("Secrets must be supplied through the dedicated secret field")
+    if provider == "jellyfin" and payload.name.strip() == "Jellyfin":
+        raise ValueError("The name Jellyfin is reserved for the migrated standard connection")
     connection = ConnectorConnection(
         provider=provider,
         name=payload.name.strip(),
@@ -118,6 +142,16 @@ def update_connector_connection(
     connection: ConnectorConnection,
     payload: ConnectorConnectionUpdate,
 ) -> ConnectorConnection:
+    if payload.config is not None and payload.config.get("legacy_default") is not None:
+        raise ValueError("legacy_default is a reserved connector setting")
+    if payload.config is not None and contains_sensitive_connector_key(payload.config):
+        raise ValueError("Secrets must be supplied through the dedicated secret field")
+    if (
+        payload.name is not None
+        and connection.provider == "jellyfin"
+        and payload.name.strip() == "Jellyfin"
+    ):
+        raise ValueError("The name Jellyfin is reserved for the migrated standard connection")
     for field in ("name", "base_url", "config", "enabled", "sync_interval_minutes"):
         value = getattr(payload, field)
         if value is not None:
@@ -133,13 +167,72 @@ def update_connector_connection(
     return connection
 
 
-def delete_connector_connection(db: Session, connection: ConnectorConnection) -> None:
+def update_legacy_default_connection(
+    db: Session,
+    connection: ConnectorConnection,
+    legacy: JellyfinConnection,
+    payload: ConnectorConnectionUpdate,
+    *,
+    external_secret_available: bool = False,
+) -> ConnectorConnection:
+    if not is_legacy_default_connection(connection):
+        raise ValueError("Connector connection is not the migrated Jellyfin connection")
+    if payload.name is not None and payload.name.strip() != "Jellyfin":
+        raise ValueError("The migrated Jellyfin connection cannot be renamed")
+    if payload.base_url is not None:
+        connection.base_url = payload.base_url.strip()
+        legacy.base_url = connection.base_url
+    if payload.enabled is not None:
+        connection.enabled = payload.enabled
+        legacy.enabled = payload.enabled
+    if payload.sync_interval_minutes is not None:
+        connection.sync_interval_minutes = payload.sync_interval_minutes
+        legacy.sync_interval_minutes = payload.sync_interval_minutes
+    if payload.config is not None:
+        if contains_sensitive_connector_key(payload.config):
+            raise ValueError("Secrets must be supplied through the dedicated secret field")
+        connection.config = {**payload.config, "legacy_default": True}
+    else:
+        connection.config = {**(connection.config or {}), "legacy_default": True}
+    if payload.secret is not None:
+        normalized = payload.secret.strip()
+        legacy.api_key = normalized
+        if normalized:
+            write_connector_secret(db, connection.id, normalized)
+        else:
+            delete_connector_secret(db, connection.id)
+    effective_secret = bool(
+        read_connector_secret(db, connection.id)
+        or legacy.api_key.strip()
+        or external_secret_available
+    )
+    if connection.enabled and (not connection.base_url or not effective_secret):
+        db.rollback()
+        raise ValueError("Jellyfin URL and API key are required before enabling sync")
+    db.commit()
+    db.refresh(connection)
+    return connection
+
+
+def delete_connector_connection(
+    db: Session,
+    connection: ConnectorConnection,
+    *,
+    commit: bool = True,
+) -> None:
     connection_id = connection.id
+    for stage_model in (
+        ConnectorSyncStageItem,
+        ConnectorSyncStageLocation,
+        ConnectorSyncStageLibrary,
+    ):
+        db.execute(delete(stage_model).where(stage_model.connection_id == connection_id))
     db.delete(connection)
-    db.commit()
-    stats_cache.invalidate(str(id(db.get_bind())))
+    db.flush()
     _refresh_preferred_connections(db)
-    db.commit()
+    if commit:
+        db.commit()
+        stats_cache.invalidate(str(id(db.get_bind())))
 
 
 def list_connector_libraries(db: Session, connection_id: int) -> list[ConnectorLibraryRead]:
@@ -170,7 +263,10 @@ def list_connector_libraries(db: Session, connection_id: int) -> list[ConnectorL
         links_by_library[connector_library_id].append(library_id)
     return [
         ConnectorLibraryRead(
-            **ConnectorLibraryRead.model_validate(library).model_dump(exclude={"locations", "linked_library_ids"}),
+            **ConnectorLibraryRead.model_validate(library).model_dump(
+                exclude={"locations", "linked_library_ids", "provider_payload"}
+            ),
+            provider_payload=public_connector_payload(library.provider_payload or {}),
             locations=locations_by_library[library.id],
             linked_library_ids=sorted(links_by_library[library.id]),
         )
@@ -219,7 +315,11 @@ def replace_connector_bindings(
         if source.key != location.key and not source.key.startswith(f"{location.key}/"):
             raise ValueError("Binding source prefixes must be inside their external library location")
         target_subpath = normalize_target_subpath(binding.target_subpath)
-        tie_key = (binding.location_id, source.key, binding.priority)
+        tie_key = (
+            locations[binding.location_id].connector_library_id,
+            source.key,
+            binding.priority,
+        )
         if binding.active and tie_key in tie_keys:
             raise ValueError("Equivalent active binding rules are not allowed")
         tie_keys.add(tie_key)
@@ -278,14 +378,23 @@ def replace_connector_bindings(
             ),
         )
     )
-    for connector_library_id, library_id in derived_pairs:
-        exists = db.scalar(
-            select(ConnectorLibraryLink.id).where(
-                ConnectorLibraryLink.connector_library_id == connector_library_id,
-                ConnectorLibraryLink.library_id == library_id,
+    existing_link_pairs = set(
+        db.execute(
+            select(
+                ConnectorLibraryLink.connector_library_id,
+                ConnectorLibraryLink.library_id,
+            ).where(
+                ConnectorLibraryLink.connector_library_id.in_(
+                    {
+                        connector_library_id
+                        for connector_library_id, _library_id in derived_pairs
+                    }
+                )
             )
         )
-        if exists is None:
+    ) if derived_pairs else set()
+    for connector_library_id, library_id in derived_pairs:
+        if (connector_library_id, library_id) not in existing_link_pairs:
             db.add(
                 ConnectorLibraryLink(
                     connector_library_id=connector_library_id,
@@ -296,8 +405,107 @@ def replace_connector_bindings(
     db.commit()
     _refresh_preferred_connections(db)
     db.commit()
-    recompute_connector_matches(db, connection_id=connection_id)
     return result
+
+
+def replace_connector_library_links(
+    db: Session,
+    connection_id: int,
+    payload: ConnectorLibraryLinkBatchUpdate,
+) -> list[ConnectorLibraryRead]:
+    if db.get(ConnectorConnection, connection_id) is None:
+        raise LookupError("Connector connection not found")
+    connector_library_ids = {entry.connector_library_id for entry in payload.links}
+    owned_ids = set(
+        db.scalars(
+            select(ConnectorLibrary.id).where(
+                ConnectorLibrary.connection_id == connection_id,
+                ConnectorLibrary.id.in_(connector_library_ids),
+            )
+        )
+    ) if connector_library_ids else set()
+    if owned_ids != connector_library_ids:
+        raise ValueError("Every connector library must belong to the connection")
+    desired_pairs = {
+        (entry.connector_library_id, library_id)
+        for entry in payload.links
+        for library_id in entry.library_ids
+    }
+    library_ids = {library_id for _connector_library_id, library_id in desired_pairs}
+    existing_library_ids = set(
+        db.scalars(select(Library.id).where(Library.id.in_(library_ids)))
+    ) if library_ids else set()
+    if existing_library_ids != library_ids:
+        raise ValueError("Every link must reference an existing MediaLyze library")
+
+    current_links = list(
+        db.scalars(
+            select(ConnectorLibraryLink)
+            .join(ConnectorLibrary)
+            .where(ConnectorLibrary.connection_id == connection_id)
+        )
+    )
+    current_by_pair = {
+        (link.connector_library_id, link.library_id): link
+        for link in current_links
+    }
+    derived_pairs = set(
+        db.execute(
+            select(
+                ConnectorLibraryLocation.connector_library_id,
+                LibraryRoot.library_id,
+            )
+            .join(
+                ConnectorRootBinding,
+                ConnectorRootBinding.location_id == ConnectorLibraryLocation.id,
+            )
+            .join(
+                ConnectorLibrary,
+                ConnectorLibrary.id == ConnectorLibraryLocation.connector_library_id,
+            )
+            .join(
+                LibraryRoot,
+                LibraryRoot.id == ConnectorRootBinding.library_root_id,
+            )
+            .where(
+                ConnectorLibrary.connection_id == connection_id,
+                ConnectorRootBinding.active.is_(True),
+            )
+        )
+    )
+    for pair, link in current_by_pair.items():
+        if link.link_method == "manual" and pair not in desired_pairs:
+            if pair in derived_pairs:
+                link.link_method = "derived"
+            else:
+                db.delete(link)
+    for pair in desired_pairs:
+        link = current_by_pair.get(pair)
+        if link is None:
+            db.add(
+                ConnectorLibraryLink(
+                    connector_library_id=pair[0],
+                    library_id=pair[1],
+                    link_method="manual",
+                )
+            )
+        else:
+            # An explicit user selection remains durable even if a binding
+            # that originally derived the same link is later removed.
+            link.link_method = "manual"
+    for pair in derived_pairs - set(current_by_pair) - desired_pairs:
+        db.add(
+            ConnectorLibraryLink(
+                connector_library_id=pair[0],
+                library_id=pair[1],
+                link_method="derived",
+            )
+        )
+    db.commit()
+    _refresh_preferred_connections(db)
+    db.commit()
+    stats_cache.invalidate(str(id(db.get_bind())))
+    return list_connector_libraries(db, connection_id)
 
 
 def _refresh_preferred_connections(db: Session) -> None:
@@ -343,6 +551,11 @@ def set_manual_connector_match(db: Session, item: ConnectorItem, media_file_id: 
         existing.status = "matched"
     item.match_status = "matched"
     item.mismatch_reason = None
+    item.suggested_media_file_id = None
+    item.resolved_library_root_id = media_file.library_root_id
+    item.resolved_relative_path = media_file.relative_path
+    item.resolved_relative_path_key = media_file.relative_path.casefold()
+    item.resolved_binding_id = None
     db.commit()
     stats_cache.invalidate(str(id(db.get_bind())))
     return existing
@@ -352,11 +565,22 @@ def remove_manual_connector_match(db: Session, item: ConnectorItem) -> bool:
     match = db.scalar(
         select(ConnectorMediaMatch).where(ConnectorMediaMatch.connector_item_id == item.id)
     )
-    if match is None:
-        return False
-    db.delete(match)
-    item.match_status = "unmapped"
-    item.mismatch_reason = "manual_match_removed"
+    if match is not None:
+        db.delete(match)
+    item.match_status = "ignored"
+    item.mismatch_reason = "manually_ignored"
+    item.suggested_media_file_id = None
     db.commit()
-    recompute_connector_matches(db, connection_id=item.connection_id)
+    stats_cache.invalidate(str(id(db.get_bind())))
     return True
+
+
+def restore_automatic_connector_match(db: Session, item: ConnectorItem) -> None:
+    item.match_status = "unmapped"
+    item.mismatch_reason = None
+    db.commit()
+    recompute_connector_matches(
+        db,
+        connection_id=item.connection_id,
+        connector_item_ids={item.id},
+    )

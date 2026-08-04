@@ -44,7 +44,11 @@ def _library_id(folder: dict) -> str:
 
 class JellyfinConnectorAdapter:
     provider = "jellyfin"
-    capabilities = frozenset({"users", "user_states", "playback_events", "images"})
+    # The generic adapter currently synchronizes only the catalog. Optional
+    # users, playback, and authenticated image routes remain capabilities of
+    # the migrated legacy-default connection until they move behind this
+    # adapter as well.
+    capabilities = frozenset()
 
     def __init__(self, connection: ConnectorConnection, secret: str, cancellation_check=None) -> None:
         self.client = JellyfinClient(

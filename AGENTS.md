@@ -82,7 +82,7 @@ Open or clearly future-facing work includes:
 
 * improved broken-file reporting and diagnostics
 * additional future analysis and recommendation workflows
-* a Plex adapter; the connector core is implemented, but Plex transport, DTO normalization, and provider-specific UI configuration are not
+* a Plex adapter; the connector core and descriptor-driven configuration UI are implemented, but Plex transport, DTO normalization, descriptor registration, and provider-specific tests are not
 * generalization of Jellyfin-specific users, playback events, and image behavior to every connector provider
 * removal of the deprecated `/api/jellyfin/*` compatibility facade and legacy Jellyfin tables; both intentionally remain during the first connector release
 
@@ -199,9 +199,9 @@ Actual implementation:
 * startup no longer auto-queues quality-recompute backfill jobs; recomputation is queued only from explicit follow-up actions such as library profile updates
 * old `queued` and `running` jobs from previous processes are canceled during startup instead of being resumed
 * startup also runs one history-retention maintenance pass, APScheduler registers a daily history-retention maintenance job, and deferred SQLite compaction is retried automatically once scans are idle
-* connector sync jobs are persisted and single-flight per connection; different connections can run concurrently on the maintenance executor
-* connector sync uses connection/run-scoped staging and an atomic successful promote, while cancellation or failure preserves the last live snapshot
-* startup cancels orphaned connector jobs; scan changes trigger targeted connector rematching across connections
+* connector sync and binding-recompute jobs are persisted and single-flight per connection; different connections run concurrently on a dedicated connector executor without occupying scan or maintenance workers
+* connector sync uses connection/run-scoped staging and an atomic successful promote, while cancellation or failure preserves the last live snapshot; queued jobs are claimed atomically
+* startup cancels orphaned connector jobs and removes abandoned connector staging rows; scan changes compare pre/post root locators so additions, modifications, deletions, ignores, and renames trigger targeted connector rematching across connections
 * the migrated standard Jellyfin connection keeps the legacy users/playback/image sync active and mirrors its catalog into the provider-neutral tables with Shadow Mode counters
 
 ## 3.6 Scan Logs
@@ -724,6 +724,7 @@ Important file contract concepts:
 ## 9.7 Connectors
 
 * `GET /api/connectors/providers`
+* `GET /api/connectors/provider-descriptors`
 * `GET /api/connectors`
 * `POST /api/connectors`
 * `GET /api/connectors/{connection_id}`
@@ -734,14 +735,18 @@ Important file contract concepts:
 * `POST /api/connectors/{connection_id}/sync/cancel`
 * `GET /api/connectors/{connection_id}/sync/status`
 * `GET /api/connectors/{connection_id}/libraries`
+* `PUT /api/connectors/{connection_id}/library-links`
 * `GET /api/connectors/{connection_id}/locations`
 * `GET /api/connectors/{connection_id}/bindings`
 * `PUT /api/connectors/{connection_id}/bindings`
 * `GET /api/connectors/{connection_id}/items`
+* `GET /api/connectors/{connection_id}/item-status-summary`
+* `GET /api/connectors/{connection_id}/items/{item_id}/provider-payload`
 * `PUT /api/connectors/{connection_id}/items/{item_id}/match`
 * `DELETE /api/connectors/{connection_id}/items/{item_id}/match`
+* `POST /api/connectors/{connection_id}/items/{item_id}/automatic-match`
 
-Important connector invariants and the provider contract are canonical in `docs/connectors.md`. Connector credentials are write-only through the API. Binding replacement is validated before writing. Existing `/api/jellyfin/*` endpoints remain as a deprecated compatibility surface for the migrated standard Jellyfin connection.
+Important connector invariants and the provider contract are canonical in `docs/connectors.md`. Connector credentials are write-only through the API, secret-like config is rejected, normal DTOs omit raw item payloads, and diagnostic payloads are sanitized. Binding and manual library-link replacement are validated before writing. Deleting a match persists `ignored`; automatic matching resumes only through the explicit endpoint. Existing `/api/jellyfin/*` endpoints remain as a deprecated compatibility surface for the migrated standard Jellyfin connection.
 
 ## 9.8 Scan Job Contract
 

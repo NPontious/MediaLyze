@@ -13,6 +13,21 @@ class ConnectorServerInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class ConnectorConfigurationField:
+    key: str
+    input_type: str = "text"
+    required: bool = False
+    secret: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectorProviderDescriptor:
+    provider: str
+    configuration_fields: tuple[ConnectorConfigurationField, ...] = ()
+    optional_capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RemoteLocation:
     path: str
 

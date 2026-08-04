@@ -523,12 +523,16 @@ def reconstruct_history_from_media_files(
             jellyfin_added_dates = {
                 media_file_id: date_created
                 for media_file_id, date_created in db.execute(
-                    select(JellyfinMediaMatch.media_file_id, JellyfinItem.date_created)
+                    select(
+                        JellyfinMediaMatch.media_file_id,
+                        func.min(JellyfinItem.date_created),
+                    )
                     .join(JellyfinItem, JellyfinItem.id == JellyfinMediaMatch.jellyfin_item_id)
                     .where(
                         JellyfinMediaMatch.status == "matched",
                         JellyfinItem.date_created.is_not(None),
                     )
+                    .group_by(JellyfinMediaMatch.media_file_id)
                 ).all()
                 if date_created is not None
             }
@@ -539,7 +543,10 @@ def reconstruct_history_from_media_files(
             jellyfin_added_dates = {
                 media_file_id: date_created
                 for media_file_id, date_created in db.execute(
-                    select(ConnectorMediaMatch.media_file_id, ConnectorItem.date_created)
+                    select(
+                        ConnectorMediaMatch.media_file_id,
+                        func.min(ConnectorItem.date_created),
+                    )
                     .join(
                         ConnectorItem,
                         ConnectorItem.id == ConnectorMediaMatch.connector_item_id,
@@ -549,6 +556,7 @@ def reconstruct_history_from_media_files(
                         ConnectorMediaMatch.status == "matched",
                         ConnectorItem.date_created.is_not(None),
                     )
+                    .group_by(ConnectorMediaMatch.media_file_id)
                 ).all()
                 if date_created is not None
             }

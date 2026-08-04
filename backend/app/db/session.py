@@ -122,6 +122,22 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "size_bytes": "ALTER TABLE connector_sync_stage_items ADD COLUMN size_bytes INTEGER",
         "duration_seconds": "ALTER TABLE connector_sync_stage_items ADD COLUMN duration_seconds FLOAT",
     },
+    "connector_items": {
+        "resolved_library_root_id": (
+            "ALTER TABLE connector_items ADD COLUMN resolved_library_root_id INTEGER "
+            "REFERENCES library_roots(id) ON DELETE SET NULL"
+        ),
+        "resolved_relative_path": "ALTER TABLE connector_items ADD COLUMN resolved_relative_path VARCHAR(2048)",
+        "resolved_relative_path_key": "ALTER TABLE connector_items ADD COLUMN resolved_relative_path_key VARCHAR(2048)",
+        "resolved_binding_id": (
+            "ALTER TABLE connector_items ADD COLUMN resolved_binding_id INTEGER "
+            "REFERENCES connector_root_bindings(id) ON DELETE SET NULL"
+        ),
+    },
+    "connector_sync_jobs": {
+        "job_type": "ALTER TABLE connector_sync_jobs ADD COLUMN job_type VARCHAR(24) NOT NULL DEFAULT 'sync'",
+        "sync_run_id": "ALTER TABLE connector_sync_jobs ADD COLUMN sync_run_id VARCHAR(64)",
+    },
     "media_files": {
         "library_root_id": "ALTER TABLE media_files ADD COLUMN library_root_id INTEGER",
         "last_seen_at": "ALTER TABLE media_files ADD COLUMN last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -368,6 +384,10 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
         "ON media_file_history (library_id, relative_path, captured_at)"
     ),
     "CREATE INDEX IF NOT EXISTS ix_media_file_history_captured_at ON media_file_history (captured_at)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_connector_items_resolved_locator "
+        "ON connector_items (resolved_library_root_id, resolved_relative_path_key)"
+    ),
     (
         "CREATE INDEX IF NOT EXISTS ix_media_file_history_root_path_captured_at "
         "ON media_file_history (library_root_id, relative_path, captured_at)"
@@ -978,15 +998,18 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
                 last_error, last_sync_started_at, last_sync_finished_at,
                 last_successful_sync_at, created_at, updated_at
             )
-            SELECT 'jellyfin', 'Jellyfin', base_url, '{}',
+            SELECT 'jellyfin', 'Jellyfin', base_url, :config,
                    :capabilities,
                    enabled, sync_interval_minutes, server_name, server_version, last_status,
                    last_error, last_sync_started_at, last_sync_finished_at,
                    last_successful_sync_at, created_at, updated_at
-            FROM jellyfin_connection WHERE id = 1
+            FROM jellyfin_connection
+            WHERE id = 1
+              AND (COALESCE(base_url, '') != '' OR COALESCE(api_key, '') != '' OR enabled = 1)
             """
         ),
         {
+            "config": json.dumps({"legacy_default": True}),
             "capabilities": json.dumps(
                 {
                     "users": True,
@@ -999,12 +1022,28 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
     )
     connector_id = connection.execute(
         text(
-            "SELECT id FROM connector_connections "
-            "WHERE provider = 'jellyfin' AND name = 'Jellyfin' ORDER BY id LIMIT 1"
+            "SELECT connector_connections.id FROM connector_connections "
+            "WHERE provider = 'jellyfin' AND name = 'Jellyfin' "
+            "AND (json_extract(COALESCE(config, '{}'), '$.legacy_default') = 1 "
+            "OR EXISTS (SELECT 1 FROM jellyfin_connection "
+            "WHERE jellyfin_connection.id = 1 "
+            "AND (COALESCE(jellyfin_connection.base_url, '') != '' "
+            "OR COALESCE(jellyfin_connection.api_key, '') != '' "
+            "OR jellyfin_connection.enabled = 1))) "
+            "ORDER BY connector_connections.id LIMIT 1"
         )
     ).scalar_one_or_none()
     if connector_id is None:
         return
+
+    connection.execute(
+        text(
+            "UPDATE connector_connections "
+            "SET config = json_set(COALESCE(config, '{}'), '$.legacy_default', json('true')) "
+            "WHERE id = :connection_id"
+        ),
+        {"connection_id": connector_id},
+    )
 
     if _sqlite_has_table(connection, "connector_credentials"):
         connection.execute(

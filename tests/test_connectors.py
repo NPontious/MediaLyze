@@ -37,23 +37,32 @@ from backend.app.schemas.connectors import (
     ConnectorBindingBatchUpdate,
     ConnectorBindingWrite,
     ConnectorConnectionCreate,
+    ConnectorLibraryLinkBatchUpdate,
+    ConnectorLibraryLinkWrite,
 )
 from backend.app.services.connector_contract import RemoteItem
 from backend.app.services.connector_matching import recompute_connector_matches
 from backend.app.services.connector_pathing import normalize_connector_path, normalize_target_subpath
 from backend.app.services.connector_service import (
     create_connector_connection,
+    remove_manual_connector_match,
     replace_connector_bindings,
+    replace_connector_library_links,
+    restore_automatic_connector_match,
     serialize_connector_connection,
     set_manual_connector_match,
 )
 from backend.app.services.connector_sync import (
     create_or_get_connector_sync_job,
+    claim_connector_sync_job,
     _stage_item_row,
     _upsert_stage_items,
     promote_connector_staging,
     recover_orphaned_connector_sync_jobs,
+    request_connector_sync_cancellation,
+    run_connector_recompute,
 )
+from backend.app.services.connector_security import redact_connector_error
 from backend.app.utils.time import utc_now
 
 
@@ -282,6 +291,42 @@ def test_connector_startup_recovery_cancels_orphaned_jobs() -> None:
         assert job.finished_at is not None
 
 
+def test_canceled_queued_connector_job_cannot_be_claimed() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection = ConnectorConnection(provider="jellyfin", name="Canceled")
+        db.add(connection)
+        db.commit()
+        job, _accepted = create_or_get_connector_sync_job(db, connection.id)
+
+        canceled = request_connector_sync_cancellation(db, connection.id, job.id)
+
+        assert canceled is not None
+        assert canceled.status == JobStatus.canceled
+        assert claim_connector_sync_job(db, job.id) is None
+
+
+def test_startup_recovery_removes_abandoned_connector_staging_rows() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection = ConnectorConnection(provider="jellyfin", name="Staging recovery")
+        db.add(connection)
+        db.commit()
+        db.add(
+            ConnectorSyncStageLibrary(
+                sync_run_id="abandoned",
+                connection_id=connection.id,
+                remote_id="movies",
+                name="Movies",
+                last_synced_at=utc_now(),
+            )
+        )
+        db.commit()
+
+        assert recover_orphaned_connector_sync_jobs(db) == 0
+        assert db.scalar(select(func.count()).select_from(ConnectorSyncStageLibrary)) == 0
+
+
 def test_connector_secret_is_write_only_in_serialized_contract() -> None:
     _engine, factory = _session_factory()
     with factory() as db:
@@ -299,6 +344,170 @@ def test_connector_secret_is_write_only_in_serialized_contract() -> None:
         assert response["has_secret"] is True
         assert "secret" not in response
         assert "do-not-return" not in str(response)
+
+
+def test_connector_config_rejects_secret_fields_and_errors_are_redacted() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db, pytest.raises(ValueError, match="dedicated secret field"):
+        create_connector_connection(
+            db,
+            ConnectorConnectionCreate(
+                provider="jellyfin",
+                name="Unsafe",
+                config={"nested": {"api_key": "do-not-store"}},
+            ),
+        )
+    error = redact_connector_error(
+        RuntimeError("request failed token=do-not-log at http://user:password@example.test"),
+        secrets=("do-not-log",),
+    )
+    assert "do-not-log" not in error
+    assert "password" not in error
+    assert "***" in error
+
+
+def test_deleted_media_locator_recomputes_previously_matched_item(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, library, root, remote_library, location = _connector_graph(db, str(tmp_path))
+        media = MediaFile(
+            library_id=library.id,
+            library_root_id=root.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=123,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+        )
+        item = ConnectorItem(
+            connection_id=connection.id,
+            connector_library_id=remote_library.id,
+            remote_id="deleted",
+            item_type="Movie",
+            remote_path="/srv/media/movie.mkv",
+            title="Deleted",
+        )
+        db.add_all([
+            ConnectorRootBinding(
+                location_id=location.id,
+                library_root_id=root.id,
+                source_prefix="/srv/media",
+                normalized_source_prefix="/srv/media",
+            ),
+            media,
+            item,
+        ])
+        db.commit()
+        recompute_connector_matches(db, connection_id=connection.id)
+        assert item.match_status == "matched"
+
+        db.delete(media)
+        db.commit()
+        recompute_connector_matches(
+            db,
+            media_file_locators={(root.id, "movie.mkv")},
+        )
+
+        assert item.match_status == "no_local_file"
+        assert db.scalar(
+            select(ConnectorMediaMatch).where(ConnectorMediaMatch.connector_item_id == item.id)
+        ) is None
+
+
+def test_manual_unmatch_is_persistent_until_automatic_matching_is_restored(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, library, root, remote_library, location = _connector_graph(db, str(tmp_path))
+        media = MediaFile(
+            library_id=library.id,
+            library_root_id=root.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=123,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+        )
+        item = ConnectorItem(
+            connection_id=connection.id,
+            connector_library_id=remote_library.id,
+            remote_id="ignored",
+            item_type="Movie",
+            remote_path="/srv/media/movie.mkv",
+            title="Ignored",
+        )
+        db.add_all([
+            ConnectorRootBinding(
+                location_id=location.id,
+                library_root_id=root.id,
+                source_prefix="/srv/media",
+                normalized_source_prefix="/srv/media",
+            ),
+            media,
+            item,
+        ])
+        db.commit()
+        recompute_connector_matches(db, connection_id=connection.id)
+
+        assert remove_manual_connector_match(db, item) is True
+        recompute_connector_matches(db, connection_id=connection.id)
+        assert item.match_status == "ignored"
+
+        restore_automatic_connector_match(db, item)
+        assert item.match_status == "matched"
+
+
+def test_manual_library_links_are_many_to_many_and_durable(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, first, _root, remote_library, _location = _connector_graph(db, str(tmp_path))
+        second = Library(
+            name="Archive",
+            path=str(tmp_path / "archive"),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(second)
+        db.commit()
+
+        libraries = replace_connector_library_links(
+            db,
+            connection.id,
+            ConnectorLibraryLinkBatchUpdate(
+                links=[
+                    ConnectorLibraryLinkWrite(
+                        connector_library_id=remote_library.id,
+                        library_ids=[first.id, second.id],
+                    )
+                ]
+            ),
+        )
+
+        assert libraries[0].linked_library_ids == [first.id, second.id]
+        assert first.preferred_connector_connection_id == connection.id
+        assert second.preferred_connector_connection_id == connection.id
+
+
+def test_connector_recompute_runs_as_persisted_job(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, _library, _root, _remote_library, _location = _connector_graph(db, str(tmp_path))
+        db.commit()
+        job, accepted = create_or_get_connector_sync_job(
+            db,
+            connection.id,
+            trigger_source="binding",
+            job_type="recompute",
+        )
+        assert accepted is True
+        assert claim_connector_sync_job(db, job.id) is not None
+
+        assert run_connector_recompute(db, job.id) == {}
+        db.refresh(job)
+        assert job.status == JobStatus.completed
+        assert job.job_type == "recompute"
 
 
 def test_connector_promote_can_roll_back_without_replacing_live_snapshot() -> None:

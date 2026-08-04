@@ -7,11 +7,13 @@ All notable changes to this project will be documented in this file.
 ### ✨ New
 
 - add a provider-neutral, multi-connection connector layer with stable root-relative file identity, editable root aliases, Jellyfin migration and Shadow Mode, atomic staged synchronization, deterministic location-to-root bindings, manual matches, preferred metadata connections, external file sources, compatibility APIs, and an extensible adapter contract for future providers
+- complete connector hardening with a dedicated concurrent executor, atomic job claiming and staging recovery, bulk root-locator matching, deletion-aware scan rematching, persisted background recompute jobs, durable ignored items, editable many-to-many library links, provider descriptors/capabilities, preferred file metadata, and connector diagnostics in Settings
 - add a Storage Map main navigation view with MediaLyze-native summary cards, a viewport-filling size-proportional folder/file treemap, edge-faded adaptive labels that remain visible down to a single usable line, fast rich metadata hover cards, streamlined header and treemap chrome, folder drill-down with a direct contextual overlay navigation control, file-detail navigation, grouped coloring options for video codec, resolution, dynamic range, frame rate, video bit depth, audio codec, channels, audio bitrate, audio language, subtitle availability/language, container, file size, duration, overall bitrate, quality, and analysis status, storage-weighted organic multi-color folder gradients that reveal mixed contents, dark-theme-safe per-tile colors, SDR fallback labeling for analyzed video files without an explicit HDR value, consistently inset select chevrons, and a Jellyfin/file-name switch for linked libraries
 - add three-day update reminders for stable Docker and desktop installations with an explicit `Hide automatic update reminders` opt-out, release-body changelogs, installation-wide desktop reminder persistence, and architecture-aware installer availability
 
 ### 🔒 Security
 
+- keep connector credentials out of provider config, persisted provider payloads, normal API DTOs, job errors, and logs through dedicated validation and recursive redaction
 - update the Electron packaging toolchain, React Router, Vite, PostCSS, and transitive YAML tooling to resolve current Dependabot advisories
 - harden desktop installer downloads with immutable release URLs, strict asset and redirect validation, explicit save destinations, temporary files, size and SHA-256 verification, and cancel-safe cleanup
 

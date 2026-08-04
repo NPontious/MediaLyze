@@ -305,6 +305,11 @@ class ConnectorItem(TimestampMixin, Base):
         Index("ix_connector_items_library", "connector_library_id"),
         Index("ix_connector_items_match_status", "connection_id", "match_status"),
         Index("ix_connector_items_remote_path", "connection_id", "normalized_remote_path"),
+        Index(
+            "ix_connector_items_resolved_locator",
+            "resolved_library_root_id",
+            "resolved_relative_path_key",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -336,6 +341,14 @@ class ConnectorItem(TimestampMixin, Base):
     mismatch_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     suggested_media_file_id: Mapped[int | None] = mapped_column(
         ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_library_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("library_roots.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_relative_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    resolved_relative_path_key: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    resolved_binding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connector_root_bindings.id", ondelete="SET NULL"), nullable=True
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
@@ -379,6 +392,8 @@ class ConnectorSyncJob(Base):
         SqlEnum(JobStatus, native_enum=False), default=JobStatus.queued, nullable=False
     )
     trigger_source: Mapped[str] = mapped_column(String(16), default="manual", nullable=False)
+    job_type: Mapped[str] = mapped_column(String(24), default="sync", nullable=False)
+    sync_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     active_lock: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cancellation_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
@@ -397,7 +412,9 @@ class ConnectorSyncStageLibrary(Base):
     __tablename__ = "connector_sync_stage_libraries"
 
     sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    connection_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
     remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     media_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -409,7 +426,9 @@ class ConnectorSyncStageLocation(Base):
     __tablename__ = "connector_sync_stage_locations"
 
     sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    connection_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
     library_remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     normalized_path: Mapped[str] = mapped_column(String(4096), primary_key=True)
     remote_path: Mapped[str] = mapped_column(String(4096), nullable=False)
@@ -419,7 +438,9 @@ class ConnectorSyncStageItem(Base):
     __tablename__ = "connector_sync_stage_items"
 
     sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    connection_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
     remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     library_remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_type: Mapped[str] = mapped_column(String(64), nullable=False)

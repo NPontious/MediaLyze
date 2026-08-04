@@ -36,4 +36,4 @@ flowchart LR
     M --> O["API and file overlays"]
 ```
 
-The connector core owns connections, remote catalogs, mappings, synchronization, and matches. Provider adapters own transport and response normalization. The MediaLyze scanner remains the sole owner of local paths and file identities. Jellyfin user, playback, and image data remain provider-specific compatibility extensions during the first connector release.
+The connector core owns connections, provider descriptors, credentials, remote catalogs, mappings, synchronization, background recompute jobs, and matches. Provider adapters own transport and response normalization. The matcher prepares bindings once, persists resolved root locators, and performs bulk indexed matching. The MediaLyze scanner remains the sole owner of local paths and file identities and reports pre/post root locators so deleted, ignored, and renamed files also trigger targeted rematching. Connector work has a dedicated executor separate from scan and maintenance work. Jellyfin user, playback, and image data remain provider-specific compatibility extensions during the first connector release.

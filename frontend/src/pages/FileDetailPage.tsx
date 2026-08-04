@@ -1961,8 +1961,9 @@ export function FileDetailPage() {
             {connectorSourcesError ? <p className="notice error">{connectorSourcesError}</p> : null}
             {(connectorSources ?? []).map((source) => (
               <article className="file-external-source-card" key={`${source.connection_id}-${source.connector_item_id}`}>
-                <div><span className="badge">{source.provider}</span><strong>{source.title}</strong></div>
+                <div><span className="badge">{source.provider}</span>{source.preferred ? <span className="badge">{t("connectors.preferred")}</span> : null}<strong>{source.title}</strong></div>
                 <span>{source.connection_name} · {source.item_type}</span>
+                {source.overview ? <p>{source.overview}</p> : null}
                 {source.remote_path ? <code>{source.remote_path}</code> : null}
                 <small>{source.match_method}</small>
               </article>

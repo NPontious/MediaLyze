@@ -9,22 +9,32 @@ import {
   type ConnectorBinding,
   type ConnectorBindingWrite,
   type ConnectorConnection,
+  type ConnectorItem,
   type ConnectorLibrary,
+  type ConnectorProviderDescriptor,
+  type ConnectorSyncJob,
   type LibrarySummary,
 } from "../lib/api";
 
 type ConnectorCatalog = {
   libraries: ConnectorLibrary[];
   bindings: ConnectorBinding[];
+  items: ConnectorItem[];
+  itemTotal: number;
+  statusSummary: Record<string, number>;
+  job: ConnectorSyncJob | null;
 };
 
 export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?: () => void }) {
   const { t } = useTranslation();
   const [connections, setConnections] = useState<ConnectorConnection[]>([]);
   const [providers, setProviders] = useState<string[]>([]);
+  const [providerDescriptors, setProviderDescriptors] = useState<ConnectorProviderDescriptor[]>([]);
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [catalogs, setCatalogs] = useState<Record<number, ConnectorCatalog>>({});
   const [drafts, setDrafts] = useState<Record<number, Record<number, ConnectorBindingWrite>>>({});
+  const [linkDrafts, setLinkDrafts] = useState<Record<number, Record<number, number[]>>>({});
+  const [manualMatchIds, setManualMatchIds] = useState<Record<number, string>>({});
   const [advanced, setAdvanced] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<string | null>(null);
@@ -35,26 +45,40 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [secret, setSecret] = useState("");
+  const [createConfig, setCreateConfig] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
-    const [nextConnections, nextProviders, nextLibraries] = await Promise.all([
+    const [nextConnections, nextProviderDescriptors, nextLibraries] = await Promise.all([
       api.connectors(),
-      api.connectorProviders(),
+      api.connectorProviderDescriptors(),
       api.libraries(),
     ]);
     const entries = await Promise.all(nextConnections.map(async (connection) => {
-      const [remoteLibraries, bindings] = await Promise.all([
+      const [remoteLibraries, bindings, itemPage, statusSummary, job] = await Promise.all([
         api.connectorLibraries(connection.id),
         api.connectorBindings(connection.id),
+        api.connectorItems(connection.id, undefined, 0, 50, true),
+        api.connectorItemStatusSummary(connection.id),
+        api.connectorSyncStatus(connection.id),
       ]);
-      return [connection.id, { libraries: remoteLibraries, bindings }] as const;
+      return [connection.id, {
+        libraries: remoteLibraries,
+        bindings,
+        items: itemPage.items,
+        itemTotal: itemPage.total,
+        statusSummary,
+        job,
+      }] as const;
     }));
     const nextCatalogs = Object.fromEntries(entries) as Record<number, ConnectorCatalog>;
     const nextDrafts: Record<number, Record<number, ConnectorBindingWrite>> = {};
+    const nextLinkDrafts: Record<number, Record<number, number[]>> = {};
     for (const connection of nextConnections) {
       const catalog = nextCatalogs[connection.id];
       nextDrafts[connection.id] = {};
+      nextLinkDrafts[connection.id] = {};
       for (const remoteLibrary of catalog.libraries) {
+        nextLinkDrafts[connection.id][remoteLibrary.id] = remoteLibrary.linked_library_ids;
         for (const location of remoteLibrary.locations) {
           const binding = catalog.bindings.find((candidate) => candidate.location_id === location.id);
           nextDrafts[connection.id][location.id] = binding
@@ -81,16 +105,48 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
       }
     }
     setConnections(nextConnections);
-    setProviders(nextProviders);
+    setProviderDescriptors(nextProviderDescriptors);
+    setProviders(nextProviderDescriptors.map((descriptor) => descriptor.provider));
     setLibraries(nextLibraries);
     setCatalogs(nextCatalogs);
     setDrafts(nextDrafts);
+    setLinkDrafts(nextLinkDrafts);
   }, []);
 
   useEffect(() => {
     setLoading(true);
     load().catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false));
   }, [load]);
+
+  useEffect(() => {
+    if (connections.length === 0) return undefined;
+    const timer = window.setInterval(() => {
+      void Promise.all(connections.map(async (connection) => {
+        const [job, statusSummary, itemPage] = await Promise.all([
+          api.connectorSyncStatus(connection.id),
+          api.connectorItemStatusSummary(connection.id),
+          api.connectorItems(connection.id, undefined, 0, 50, true),
+        ]);
+        return [connection.id, job, statusSummary, itemPage] as const;
+      })).then((updates) => {
+        setCatalogs((current) => {
+          const next = { ...current };
+          for (const [connectionId, job, statusSummary, itemPage] of updates) {
+            if (!next[connectionId]) continue;
+            next[connectionId] = {
+              ...next[connectionId],
+              job,
+              statusSummary,
+              items: itemPage.items,
+              itemTotal: itemPage.total,
+            };
+          }
+          return next;
+        });
+      }).catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [connections]);
 
   const rootOptions = useMemo(() => libraries.flatMap((library) =>
     (library.roots ?? []).map((root) => ({
@@ -118,11 +174,13 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
         name: name.trim() || provider,
         base_url: baseUrl.trim(),
         secret: secret.trim(),
+        config: createConfig,
         enabled: false,
       });
       setName("");
       setBaseUrl("");
       setSecret("");
+      setCreateConfig({});
       setCreateOpen(false);
       await load();
       setNotice(t("connectors.created"));
@@ -132,6 +190,10 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
       setPending(null);
     }
   }
+
+  const selectedProviderDescriptor = providerDescriptors.find(
+    (descriptor) => descriptor.provider === provider,
+  );
 
   async function updateConnection(connection: ConnectorConnection, update: Parameters<typeof api.updateConnector>[1]) {
     setPending(`connection-${connection.id}`);
@@ -193,6 +255,49 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     }
   }
 
+  async function saveLinks(connectionId: number) {
+    setPending(`links-${connectionId}`);
+    setError(null);
+    try {
+      const links = Object.entries(linkDrafts[connectionId] ?? {}).map(
+        ([connectorLibraryId, libraryIds]) => ({
+          connector_library_id: Number(connectorLibraryId),
+          library_ids: libraryIds,
+        }),
+      );
+      await api.updateConnectorLibraryLinks(connectionId, links);
+      await load();
+      onCatalogChanged?.();
+      setNotice(t("connectors.linksSaved"));
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function updateItemMatch(connectionId: number, item: ConnectorItem, action: "ignore" | "automatic" | "manual") {
+    setPending(`item-${item.id}`);
+    setError(null);
+    try {
+      if (action === "ignore") {
+        await api.ignoreConnectorItem(connectionId, item.id);
+      } else if (action === "automatic") {
+        await api.restoreAutomaticConnectorItemMatch(connectionId, item.id);
+      } else {
+        const mediaFileId = Number(manualMatchIds[item.id]);
+        if (!Number.isInteger(mediaFileId) || mediaFileId < 1) return;
+        await api.matchConnectorItem(connectionId, item.id, mediaFileId);
+      }
+      await load();
+      onCatalogChanged?.();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     <div className="settings-sidebar-stack connector-settings-stack">
       <AsyncPanel title={t("connectors.title")} loading={loading} error={error}>
@@ -208,8 +313,21 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
             <div className="connector-form-grid">
               <label><span>{t("connectors.provider")}</span><select value={provider} onChange={(event) => setProvider(event.target.value)}>{providers.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
               <label><span>{t("connectors.name")}</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-              <label><span>{t("connectors.serverUrl")}</span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
-              <label><span>{t("connectors.secret")}</span><input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} /></label>
+              {(selectedProviderDescriptor?.configuration_fields ?? []).map((field) => (
+                <label key={field.key}>
+                  <span>{field.key === "base_url" ? t("connectors.serverUrl") : field.secret ? t("connectors.secret") : field.key}</span>
+                  <input
+                    type={field.input_type === "password" ? "password" : field.input_type === "url" ? "url" : "text"}
+                    required={field.required}
+                    value={field.key === "base_url" ? baseUrl : field.secret ? secret : createConfig[field.key] ?? ""}
+                    onChange={(event) => {
+                      if (field.key === "base_url") setBaseUrl(event.target.value);
+                      else if (field.secret) setSecret(event.target.value);
+                      else setCreateConfig((current) => ({ ...current, [field.key]: event.target.value }));
+                    }}
+                  />
+                </label>
+              ))}
             </div>
             <button type="button" disabled={pending === "create" || !baseUrl.trim()} onClick={() => void createConnection()}>{t("connectors.create")}</button>
           </section>
@@ -223,8 +341,13 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
                 <header><div><span className="badge">{connection.provider}</span><h3><Server aria-hidden="true" /> {connection.name}</h3></div><span className={`connector-status status-${connection.last_status}`}>{connection.last_status}</span></header>
                 <div className="connector-form-grid">
                   <label><span>{t("connectors.name")}</span><input defaultValue={connection.name} onBlur={(event) => event.target.value !== connection.name && void updateConnection(connection, { name: event.target.value })} /></label>
-                  <label><span>{t("connectors.serverUrl")}</span><input defaultValue={connection.base_url} onBlur={(event) => event.target.value !== connection.base_url && void updateConnection(connection, { base_url: event.target.value })} /></label>
-                  <label><span>{t("connectors.secret")}</span><input type="password" placeholder={connection.has_secret ? t("connectors.secretConfigured") : ""} onBlur={(event) => event.target.value && void updateConnection(connection, { secret: event.target.value })} /></label>
+                  {(providerDescriptors.find((descriptor) => descriptor.provider === connection.provider)?.configuration_fields ?? []).map((field) => field.key === "base_url" ? (
+                    <label key={field.key}><span>{t("connectors.serverUrl")}</span><input type="url" defaultValue={connection.base_url} onBlur={(event) => event.target.value !== connection.base_url && void updateConnection(connection, { base_url: event.target.value })} /></label>
+                  ) : field.secret ? (
+                    <label key={field.key}><span>{t("connectors.secret")}</span><input type="password" placeholder={connection.has_secret ? t("connectors.secretConfigured") : ""} onBlur={(event) => event.target.value && void updateConnection(connection, { secret: event.target.value })} /></label>
+                  ) : (
+                    <label key={field.key}><span>{field.key}</span><input type={field.input_type} defaultValue={String(connection.config[field.key] ?? "")} onBlur={(event) => void updateConnection(connection, { config: { ...connection.config, [field.key]: event.target.value } })} /></label>
+                  ))}
                   <label><span>{t("connectors.syncInterval")}</span><input type="number" min={5} defaultValue={connection.sync_interval_minutes} onBlur={(event) => Number(event.target.value) !== connection.sync_interval_minutes && void updateConnection(connection, { sync_interval_minutes: Number(event.target.value) })} /></label>
                 </div>
                 <div className="jellyfin-actions">
@@ -234,8 +357,45 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
                   <button type="button" className="secondary small" onClick={() => void runAction(connection, "cancel")}><CircleStop aria-hidden="true" /> {t("connectors.cancel")}</button>
                   <button type="button" className="secondary small danger" onClick={() => void runAction(connection, "delete")}><Trash2 aria-hidden="true" /> {t("connectors.delete")}</button>
                 </div>
+                <div className="connector-capability-list" aria-label={t("connectors.capabilities")}>
+                  {Object.entries(connection.capabilities).filter(([, enabled]) => enabled).length ? Object.entries(connection.capabilities).filter(([, enabled]) => enabled).map(([capability]) => <span className="badge" key={capability}>{capability}</span>) : <span className="field-hint">{t("connectors.catalogOnly")}</span>}
+                </div>
+                {catalog?.job ? (
+                  <div className={`notice compact${["failed", "canceled"].includes(catalog.job.status) ? " warning" : ""}`}>
+                    <strong>{catalog.job.job_type === "recompute" ? t("connectors.recompute") : t("connectors.sync")}</strong>
+                    {` · ${catalog.job.status} · ${catalog.job.progress_phase ?? "-"}`}
+                    {catalog.job.progress_total ? ` · ${catalog.job.progress_current}/${catalog.job.progress_total}` : ""}
+                    {catalog.job.error ? <span>{` · ${catalog.job.error}`}</span> : null}
+                  </div>
+                ) : null}
                 {catalog?.libraries.length ? (
                   <div className="connector-mapping-shell">
+                    <div className="connector-logical-links">
+                      <h4>{t("connectors.libraryLinks")}</h4>
+                      <p>{t("connectors.libraryLinksDescription")}</p>
+                      {catalog.libraries.map((remoteLibrary) => (
+                        <label key={remoteLibrary.id}>
+                          <span>{remoteLibrary.name}</span>
+                          <select
+                            multiple
+                            value={(linkDrafts[connection.id]?.[remoteLibrary.id] ?? []).map(String)}
+                            onChange={(event) => {
+                              const libraryIds = Array.from(event.currentTarget.selectedOptions, (option) => Number(option.value));
+                              setLinkDrafts((current) => ({
+                                ...current,
+                                [connection.id]: {
+                                  ...current[connection.id],
+                                  [remoteLibrary.id]: libraryIds,
+                                },
+                              }));
+                            }}
+                          >
+                            {libraries.map((library) => <option key={library.id} value={library.id}>{library.name}</option>)}
+                          </select>
+                        </label>
+                      ))}
+                      <button type="button" disabled={pending === `links-${connection.id}`} onClick={() => void saveLinks(connection.id)}>{t("connectors.saveLibraryLinks")}</button>
+                    </div>
                     <div className="connector-mapping-heading"><div><h4>{t("connectors.mappingTitle")}</h4><p>{t("connectors.mappingDescription")}</p></div><label><input type="checkbox" checked={advanced} onChange={(event) => setAdvanced(event.target.checked)} /> {t("connectors.advanced")}</label></div>
                     <div className="connector-mapping-table-wrap">
                       <table className="connector-mapping-table"><thead><tr><th>{t("connectors.externalLibrary")}</th><th>{t("connectors.location")}</th><th>{t("connectors.localRoot")}</th>{advanced ? <><th>{t("connectors.sourcePrefix")}</th><th>{t("connectors.targetSubpath")}</th><th>{t("connectors.caseMode")}</th><th>{t("connectors.priority")}</th></> : null}<th>{t("connectors.status")}</th></tr></thead><tbody>
@@ -248,6 +408,29 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
                     <button type="button" disabled={pending === `bindings-${connection.id}`} onClick={() => void saveBindings(connection.id)}>{t("connectors.saveMappings")}</button>
                   </div>
                 ) : <p className="field-hint">{t("connectors.syncForLibraries")}</p>}
+                {catalog && Object.keys(catalog.statusSummary).length ? (
+                  <div className="connector-item-diagnostics">
+                    <h4>{t("connectors.itemDiagnostics")}</h4>
+                    <div className="connector-capability-list">
+                      {Object.entries(catalog.statusSummary).sort(([left], [right]) => left.localeCompare(right)).map(([status, count]) => <span className={`badge${status === "matched" ? "" : " warning"}`} key={status}>{status}: {count}</span>)}
+                    </div>
+                    <div className="connector-mapping-table-wrap">
+                      <table className="connector-mapping-table">
+                        <thead><tr><th>{t("connectors.item")}</th><th>{t("connectors.remotePath")}</th><th>{t("connectors.status")}</th><th>{t("connectors.manualFileId")}</th><th>{t("connectors.actions")}</th></tr></thead>
+                        <tbody>{catalog.items.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.title}<small>{item.item_type}</small></td>
+                            <td><code>{item.remote_path ?? "-"}</code></td>
+                            <td><span className={`badge${item.match_status === "matched" ? "" : " warning"}`}>{item.match_status}</span>{item.mismatch_reason ? <small>{item.mismatch_reason}</small> : null}</td>
+                            <td><input type="number" min={1} value={manualMatchIds[item.id] ?? ""} onChange={(event) => setManualMatchIds((current) => ({ ...current, [item.id]: event.target.value }))} /></td>
+                            <td><div className="jellyfin-actions"><button type="button" className="secondary small" disabled={pending === `item-${item.id}`} onClick={() => void updateItemMatch(connection.id, item, "manual")}>{t("connectors.setMatch")}</button>{item.match_status === "ignored" ? <button type="button" className="secondary small" onClick={() => void updateItemMatch(connection.id, item, "automatic")}>{t("connectors.automatic")}</button> : <button type="button" className="secondary small" onClick={() => void updateItemMatch(connection.id, item, "ignore")}>{t("connectors.ignore")}</button>}</div></td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                    {catalog.itemTotal > catalog.items.length ? <p className="field-hint">{t("connectors.showingItems", { shown: catalog.items.length, total: catalog.itemTotal })}</p> : null}
+                  </div>
+                ) : null}
               </section>
             );
           })}

@@ -22,7 +22,11 @@ from backend.app.api.deps import get_app_settings, get_db_session
 from backend.app.api.routes import router
 from backend.app.core.config import Settings
 from backend.app.db.base import Base
+from backend.app.db.session import init_db
 from backend.app.models.entities import (
+    ConnectorConnection,
+    ConnectorItem,
+    ConnectorMediaMatch,
     HistoryAddedDateSource,
     JellyfinConnection,
     JellyfinItem,
@@ -168,6 +172,102 @@ def _add_media(db: Session, root: Path, relative_path: str = "Movie.mkv") -> Med
     db.add(media)
     db.commit()
     return media
+
+
+def test_file_overlay_uses_the_preferred_jellyfin_connector_metadata(
+    db: Session,
+    tmp_path: Path,
+) -> None:
+    media = _add_media(db, tmp_path)
+    connection = ConnectorConnection(
+        provider="jellyfin",
+        name="Secondary",
+        base_url="http://secondary",
+    )
+    db.add(connection)
+    db.flush()
+    item = ConnectorItem(
+        connection_id=connection.id,
+        remote_id="secondary-item",
+        item_type="Movie",
+        title="Preferred title",
+        overview="Preferred overview",
+        provider_ids={"Imdb": "tt123"},
+        match_status="matched",
+    )
+    db.add(item)
+    db.flush()
+    db.add(
+        ConnectorMediaMatch(
+            connector_item_id=item.id,
+            media_file_id=media.id,
+            match_method="manual",
+            confidence=1.0,
+            status="matched",
+        )
+    )
+    media.library.preferred_connector_connection_id = connection.id
+    db.commit()
+
+    payload = _client(db).get(f"/api/files/{media.id}/jellyfin").json()
+
+    assert payload["match"] is None
+    assert payload["item"]["title"] == "Preferred title"
+    assert payload["item"]["overview"] == "Preferred overview"
+    assert payload["item"]["provider_ids"] == {"Imdb": "tt123"}
+
+
+def test_generic_standard_jellyfin_crud_updates_and_clears_legacy_state(
+    db: Session,
+    tmp_path: Path,
+) -> None:
+    legacy = JellyfinConnection(id=1)
+    standard = ConnectorConnection(
+        provider="jellyfin",
+        name="Jellyfin",
+        config={"legacy_default": True},
+    )
+    db.add_all([legacy, standard])
+    db.commit()
+    client = _client(
+        db,
+        Settings(config_path=tmp_path / "config", media_root=tmp_path / "media"),
+    )
+
+    response = client.patch(
+        f"/api/connectors/{standard.id}",
+        json={
+            "base_url": "http://jellyfin.local",
+            "secret": "secret",
+            "enabled": True,
+            "sync_interval_minutes": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    db.refresh(legacy)
+    assert legacy.base_url == "http://jellyfin.local"
+    assert legacy.api_key == "secret"
+    assert legacy.enabled is True
+    assert legacy.sync_interval_minutes == 30
+
+    response = client.delete(f"/api/connectors/{standard.id}")
+
+    assert response.status_code == 204
+    db.expire_all()
+    assert db.get(ConnectorConnection, standard.id) is None
+    db.refresh(legacy)
+    assert legacy.base_url == ""
+    assert legacy.api_key == ""
+    assert legacy.enabled is False
+    init_db(db.get_bind())
+    db.expire_all()
+    assert db.scalar(
+        select(ConnectorConnection).where(
+            ConnectorConnection.provider == "jellyfin",
+            ConnectorConnection.name == "Jellyfin",
+        )
+    ) is None
 
 
 def test_library_file_rows_include_metadata_only_for_matched_jellyfin_items(db: Session, tmp_path: Path) -> None:
@@ -714,6 +814,7 @@ def test_runtime_deduplicates_manual_and_scheduled_jellyfin_syncs(
     runtime.started = True
     runtime.lock = Lock()
     runtime.maintenance_executor = executor
+    runtime.connector_executor = executor
     monkeypatch.setattr("backend.app.services.runtime.SessionLocal", factory)
 
     manual = runtime.request_jellyfin_sync(JellyfinSyncTriggerSource.manual)

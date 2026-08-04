@@ -321,6 +321,56 @@ export type ConnectorBindingWrite = Omit<ConnectorBinding, "id" | "normalized_so
   id?: number;
 };
 
+export type ConnectorItem = {
+  id: number;
+  connection_id: number;
+  connector_library_id: number | null;
+  remote_id: string;
+  item_type: string;
+  remote_path: string | null;
+  title: string;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  match_status: string;
+  mismatch_reason: string | null;
+  suggested_media_file_id: number | null;
+  last_synced_at: string | null;
+};
+
+export type ConnectorItemPage = {
+  total: number;
+  offset: number;
+  limit: number;
+  items: ConnectorItem[];
+};
+
+export type ConnectorSyncJob = {
+  id: number;
+  connection_id: number;
+  job_type: string;
+  sync_run_id: string | null;
+  status: string;
+  trigger_source: string;
+  cancellation_requested: boolean;
+  progress_phase: string | null;
+  progress_detail: string | null;
+  progress_current: number;
+  progress_total: number | null;
+  error: string | null;
+  sync_summary: Record<string, unknown>;
+};
+
+export type ConnectorProviderDescriptor = {
+  provider: string;
+  configuration_fields: Array<{
+    key: string;
+    input_type: string;
+    required: boolean;
+    secret: boolean;
+  }>;
+  optional_capabilities: string[];
+};
+
 export type FileConnectorSource = {
   connection_id: number;
   connection_name: string;
@@ -331,6 +381,15 @@ export type FileConnectorSource = {
   item_type: string;
   remote_path: string | null;
   match_method: string;
+  preferred: boolean;
+  original_title: string | null;
+  series_name: string | null;
+  season_name: string | null;
+  date_created: string | null;
+  premiere_date: string | null;
+  production_year: number | null;
+  overview: string | null;
+  provider_ids: Record<string, unknown>;
   provider_payload: Record<string, unknown>;
 };
 
@@ -2085,6 +2144,8 @@ export const api = {
       body: JSON.stringify({ path }),
     }),
   connectorProviders: () => request<string[]>("/connectors/providers"),
+  connectorProviderDescriptors: () =>
+    request<ConnectorProviderDescriptor[]>("/connectors/provider-descriptors"),
   connectors: () => request<ConnectorConnection[]>("/connectors"),
   createConnector: (payload: {
     provider: string;
@@ -2093,6 +2154,7 @@ export const api = {
     secret?: string;
     enabled?: boolean;
     sync_interval_minutes?: number;
+    config?: Record<string, unknown>;
   }) => request<ConnectorConnection>("/connectors", { method: "POST", body: JSON.stringify(payload) }),
   updateConnector: (id: number, payload: Partial<{
     name: string;
@@ -2118,25 +2180,46 @@ export const api = {
       `/connectors/${id}/sync/cancel${jobId ? `?job_id=${jobId}` : ""}`,
       { method: "POST" },
     ),
-  connectorSyncStatus: (id: number) => request<{
-    id: number;
-    connection_id: number;
-    status: string;
-    trigger_source: string;
-    cancellation_requested: boolean;
-    progress_phase: string | null;
-    progress_detail: string | null;
-    progress_current: number;
-    progress_total: number | null;
-    error: string | null;
-    sync_summary: Record<string, unknown>;
-  } | null>(`/connectors/${id}/sync/status`),
+  connectorSyncStatus: (id: number) =>
+    request<ConnectorSyncJob | null>(`/connectors/${id}/sync/status`),
   connectorLibraries: (id: number) => request<ConnectorLibrary[]>(`/connectors/${id}/libraries`),
+  updateConnectorLibraryLinks: (
+    id: number,
+    links: Array<{ connector_library_id: number; library_ids: number[] }>,
+  ) => request<ConnectorLibrary[]>(`/connectors/${id}/library-links`, {
+    method: "PUT",
+    body: JSON.stringify({ links }),
+  }),
   connectorBindings: (id: number) => request<ConnectorBinding[]>(`/connectors/${id}/bindings`),
   updateConnectorBindings: (id: number, bindings: ConnectorBindingWrite[]) =>
     request<ConnectorBinding[]>(`/connectors/${id}/bindings`, {
       method: "PUT",
       body: JSON.stringify({ bindings }),
+    }),
+  connectorItems: (
+    id: number,
+    status?: string,
+    offset = 0,
+    limit = 100,
+    attentionOnly = false,
+  ) => {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (status) params.set("status", status);
+    if (attentionOnly) params.set("attention_only", "true");
+    return request<ConnectorItemPage>(`/connectors/${id}/items?${params.toString()}`);
+  },
+  connectorItemStatusSummary: (id: number) =>
+    request<Record<string, number>>(`/connectors/${id}/item-status-summary`),
+  matchConnectorItem: (connectionId: number, itemId: number, mediaFileId: number) =>
+    request(`/connectors/${connectionId}/items/${itemId}/match`, {
+      method: "PUT",
+      body: JSON.stringify({ media_file_id: mediaFileId }),
+    }),
+  ignoreConnectorItem: (connectionId: number, itemId: number) =>
+    request<void>(`/connectors/${connectionId}/items/${itemId}/match`, { method: "DELETE" }),
+  restoreAutomaticConnectorItemMatch: (connectionId: number, itemId: number) =>
+    request<void>(`/connectors/${connectionId}/items/${itemId}/automatic-match`, {
+      method: "POST",
     }),
   jellyfinConnection: () => request<JellyfinConnection>("/jellyfin/connection"),
   updateJellyfinConnection: (payload: {

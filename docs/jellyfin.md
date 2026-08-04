@@ -8,7 +8,7 @@ Create a dedicated Jellyfin API key and make the server reachable from the Media
 
 Secrets entered in Settings are stored locally in MediaLyze's SQLite database but never returned by the API or written to logs. Protect `CONFIG_PATH` so only the MediaLyze service account can read it. `JELLYFIN_API_KEY_FILE` remains available for the migrated standard connection named `Jellyfin`; a file-backed key takes precedence there and does not apply to additional Jellyfin connections.
 
-Connection configuration is separate from activation. Each connection has its own URL, schedule, enabled state, capabilities, status, catalog, mappings, and sync job. Removing a connection deletes only its connector-owned cache and mapping data. It cannot remove a secret maintained in an external file and never deletes MediaLyze libraries or files.
+Connection configuration is separate from activation. Each connection has its own URL, schedule, enabled state, capabilities, status, catalog, mappings, and sync job. The generic and legacy settings APIs mirror the marked standard connection, so they are not two independent configurations. Removing the standard connection clears both compatibility and connector state atomically; an empty legacy singleton does not recreate it on restart. It cannot remove a secret maintained in an external file and never deletes MediaLyze libraries or files.
 
 ## Libraries, locations, and path mappings
 
@@ -32,7 +32,7 @@ Only enabled users contribute playback information. Disabling a user removes tha
 
 ## Synchronization, migration, and Shadow Mode
 
-Generic connections use persisted, single-flight, connection-scoped jobs. Validated pages are written to run-scoped staging tables and promoted atomically only after a complete successful fetch. Failure or cancellation discards the current run and preserves the last successful catalog. Different connections may synchronize concurrently.
+Generic connections use persisted, single-flight, connection-scoped jobs. Binding changes use the same job model with `job_type=recompute`. Validated pages are written to run-scoped staging tables and promoted atomically only after a complete successful fetch. Failure or cancellation discards the current run and preserves the last successful catalog. Startup removes abandoned staging rows. All Jellyfin connector work runs on the dedicated connector executor, and different connections may synchronize concurrently without consuming scan or maintenance capacity.
 
 On upgrade, MediaLyze idempotently creates the standard `provider=jellyfin`, `name=Jellyfin` connection and backfills the legacy catalog, locations, links, matches, credentials, and unambiguous path rules. Existing Jellyfin tables are intentionally retained. Standard legacy syncs mirror their catalog into connector tables and execute both matchers. Job summaries report `same_match`, `old_only`, `new_only`, `different_media_file`, `ambiguous`, and `unmapped` counters so unexplained differences can be diagnosed before the compatibility facade is removed in a later release.
 
@@ -40,6 +40,8 @@ Startup cancels orphaned connector jobs rather than promoting partial state. Rem
 
 ```bash
 .venv/bin/python benchmarks/benchmark_jellyfin_bulk_promote.py
+.venv/bin/python benchmarks/benchmark_connector_bulk_promote.py
+.venv/bin/python benchmarks/benchmark_connector_matching.py
 ```
 
 The automated contract tests cover Jellyfin 10.10 and 10.11 response shapes. A running Jellyfin server exposes its exact API documentation at `/api-docs/swagger/index.html`; verify other versions with Test connection and a complete sync.
