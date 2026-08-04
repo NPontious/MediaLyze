@@ -18,7 +18,7 @@ COPY backend ./backend
 RUN pip wheel --no-cache-dir --no-deps --wheel-dir /wheels .
 
 FROM python:3.12-alpine AS runtime
-ARG APP_VERSION=0.17.1
+ARG APP_VERSION=0.17.2
 ARG SOURCE_REPO="https://github.com/NPontious/MediaLyze"
 
 LABEL name="MediaLyze"

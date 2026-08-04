@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.17.2
+
+>2026-08-03
+
+### 🐛 Fixed
+
+- relax video metadata limits check to prevent excessive conditional statuses for missing ffprobe data
+
 ## v0.17.1
 
 >2026-08-03
