@@ -12,26 +12,41 @@ from backend.app.models.entities import (
     ConnectorItem,
     ConnectorLibrary,
     ConnectorLibraryLocation,
+    ConnectorPlaybackEvent,
     ConnectorSyncJob,
     ConnectorSyncStageItem,
     ConnectorSyncStageLibrary,
     ConnectorSyncStageLocation,
+    ConnectorSyncStagePlaybackEvent,
+    ConnectorSyncStageUser,
+    ConnectorSyncStageUserData,
+    ConnectorUser,
+    ConnectorUserItemData,
     JobStatus,
     JellyfinConnection,
     JellyfinItem,
     JellyfinLibrary,
+    JellyfinPlaybackEvent,
+    JellyfinUser,
+    JellyfinUserItemData,
 )
 from backend.app.db.types import UTCDateTime
-from backend.app.services.connector_contract import RemoteItem, RemoteLibrary
+from backend.app.services.connector_contract import RemoteItem, RemoteLibrary, RemoteUser
 from backend.app.services.connector_credentials import read_connector_secret
 from backend.app.services.connector_matching import recompute_connector_matches
+from backend.app.services.connector_mapping import (
+    project_automatic_mapping_to_legacy,
+    reconcile_connector_mappings,
+)
 from backend.app.services.connector_pathing import normalize_connector_path
 from backend.app.services.connector_registry import connector_registry
 from backend.app.services.connector_security import (
     public_connector_payload,
     redact_connector_error,
 )
+from backend.app.services.connector_service import is_legacy_default_connection
 from backend.app.services.stats_cache import stats_cache
+from backend.app.services.jellyfin_matching import recompute_jellyfin_matches
 from backend.app.utils.time import utc_now
 
 
@@ -150,6 +165,9 @@ def recover_orphaned_connector_sync_jobs(db: Session) -> int:
     # No connector workers are active during startup recovery. Any remaining
     # staging rows therefore belong to an interrupted or obsolete run.
     for model in (
+        ConnectorSyncStagePlaybackEvent,
+        ConnectorSyncStageUserData,
+        ConnectorSyncStageUser,
         ConnectorSyncStageItem,
         ConnectorSyncStageLocation,
         ConnectorSyncStageLibrary,
@@ -298,6 +316,25 @@ def _upsert_stage_items(db: Session, rows: list[dict]) -> None:
             },
         ),
         rows,
+    )
+
+
+def _upsert_stage_rows(db: Session, model, rows: list[dict], conflict_columns: list) -> None:
+    if not rows:
+        return
+    statement = sqlite_insert(model).values(rows)
+    excluded = statement.excluded
+    conflict_names = {column.name for column in conflict_columns}
+    update_columns = {
+        column.name: getattr(excluded, column.name)
+        for column in model.__table__.columns
+        if column.name not in conflict_names
+    }
+    db.execute(
+        statement.on_conflict_do_update(
+            index_elements=conflict_columns,
+            set_=update_columns,
+        )
     )
 
 
@@ -521,6 +558,124 @@ def promote_connector_staging(
     }
 
 
+def promote_connector_playback_staging(
+    db: Session,
+    run_id: str,
+    connection_id: int,
+) -> dict[str, int]:
+    staged_users = list(
+        db.scalars(
+            select(ConnectorSyncStageUser).where(
+                ConnectorSyncStageUser.sync_run_id == run_id,
+                ConnectorSyncStageUser.connection_id == connection_id,
+            )
+        )
+    )
+    live_users = {
+        user.remote_id: user
+        for user in db.scalars(
+            select(ConnectorUser).where(ConnectorUser.connection_id == connection_id)
+        )
+    }
+    desired_user_ids: set[str] = set()
+    for staged in staged_users:
+        desired_user_ids.add(staged.remote_id)
+        user = live_users.get(staged.remote_id)
+        if user is None:
+            user = ConnectorUser(
+                connection_id=connection_id,
+                remote_id=staged.remote_id,
+                enabled_for_sync=True,
+            )
+            db.add(user)
+        user.name = staged.name
+        user.last_synced_at = staged.last_synced_at
+    stale_user_ids = [
+        user.id for remote_id, user in live_users.items() if remote_id not in desired_user_ids
+    ]
+    if stale_user_ids:
+        db.execute(delete(ConnectorUser).where(ConnectorUser.id.in_(stale_user_ids)))
+    db.flush()
+
+    users_by_remote = {
+        user.remote_id: user
+        for user in db.scalars(
+            select(ConnectorUser).where(ConnectorUser.connection_id == connection_id)
+        )
+    }
+    items_by_remote = {
+        item.remote_id: item
+        for item in db.scalars(
+            select(ConnectorItem).where(ConnectorItem.connection_id == connection_id)
+        )
+    }
+    db.execute(
+        delete(ConnectorUserItemData).where(
+            ConnectorUserItemData.connector_user_id.in_(
+                select(ConnectorUser.id).where(ConnectorUser.connection_id == connection_id)
+            )
+        )
+    )
+    db.execute(
+        delete(ConnectorPlaybackEvent).where(
+            ConnectorPlaybackEvent.connection_id == connection_id
+        )
+    )
+    user_data_count = 0
+    for staged in db.scalars(
+        select(ConnectorSyncStageUserData).where(
+            ConnectorSyncStageUserData.sync_run_id == run_id,
+            ConnectorSyncStageUserData.connection_id == connection_id,
+        )
+    ):
+        user = users_by_remote.get(staged.user_remote_id)
+        item = items_by_remote.get(staged.item_remote_id)
+        if user is None or item is None or not user.enabled_for_sync:
+            continue
+        db.add(
+            ConnectorUserItemData(
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                play_count=staged.play_count,
+                played=staged.played,
+                playback_position_ticks=staged.playback_position_ticks,
+                last_played_date=staged.last_played_date,
+                is_favorite=staged.is_favorite,
+                last_synced_at=staged.last_synced_at,
+            )
+        )
+        user_data_count += 1
+
+    playback_count = 0
+    for staged in db.scalars(
+        select(ConnectorSyncStagePlaybackEvent).where(
+            ConnectorSyncStagePlaybackEvent.sync_run_id == run_id,
+            ConnectorSyncStagePlaybackEvent.connection_id == connection_id,
+        )
+    ):
+        user = users_by_remote.get(staged.user_remote_id)
+        item = items_by_remote.get(staged.item_remote_id)
+        if user is None or item is None or not user.enabled_for_sync:
+            continue
+        db.add(
+            ConnectorPlaybackEvent(
+                connection_id=connection_id,
+                remote_event_id=staged.remote_event_id,
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                played_at=staged.played_at,
+                last_synced_at=staged.last_synced_at,
+            )
+        )
+        playback_count += 1
+    db.flush()
+    return {
+        "users": len(staged_users),
+        "user_states": user_data_count,
+        "playback_events": playback_count,
+    }
+
+
 def cleanup_connector_staging(
     db: Session,
     run_id: str,
@@ -528,7 +683,14 @@ def cleanup_connector_staging(
     *,
     commit: bool = True,
 ) -> None:
-    for model in (ConnectorSyncStageItem, ConnectorSyncStageLocation, ConnectorSyncStageLibrary):
+    for model in (
+        ConnectorSyncStagePlaybackEvent,
+        ConnectorSyncStageUserData,
+        ConnectorSyncStageUser,
+        ConnectorSyncStageItem,
+        ConnectorSyncStageLocation,
+        ConnectorSyncStageLibrary,
+    ):
         db.execute(
             delete(model).where(
                 model.sync_run_id == run_id,
@@ -597,8 +759,157 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
             cancellation()
             _upsert_stage_items(db, item_batch)
             db.commit()
+            remote_users: list[RemoteUser] = []
+            if "users" in adapter.capabilities:
+                _update_progress(db, job, "users", 0)
+                iter_users = getattr(adapter, "iter_users", None)
+                if not callable(iter_users):
+                    raise ValueError("Connector advertises users without implementing user sync")
+                remote_users = list(iter_users())
+                now = utc_now()
+                _upsert_stage_rows(
+                    db,
+                    ConnectorSyncStageUser,
+                    [
+                        {
+                            "sync_run_id": run_id,
+                            "connection_id": connection.id,
+                            "remote_id": user.remote_id,
+                            "name": user.name,
+                            "last_synced_at": now,
+                        }
+                        for user in remote_users
+                    ],
+                    [
+                        ConnectorSyncStageUser.sync_run_id,
+                        ConnectorSyncStageUser.connection_id,
+                        ConnectorSyncStageUser.remote_id,
+                    ],
+                )
+                db.commit()
+
+            stored_user_selection = dict(
+                db.execute(
+                    select(ConnectorUser.remote_id, ConnectorUser.enabled_for_sync).where(
+                        ConnectorUser.connection_id == connection.id,
+                    )
+                ).all()
+            )
+            enabled_users = [
+                user
+                for user in remote_users
+                if stored_user_selection.get(user.remote_id, True)
+            ]
+            if "user_states" in adapter.capabilities and enabled_users:
+                _update_progress(db, job, "user_states", 0)
+                iter_user_item_data = getattr(adapter, "iter_user_item_data", None)
+                if not callable(iter_user_item_data):
+                    raise ValueError("Connector advertises user states without implementing them")
+                state_batch: list[dict] = []
+                state_count = 0
+                for state_count, state in enumerate(iter_user_item_data(enabled_users), start=1):
+                    state_batch.append(
+                        {
+                            "sync_run_id": run_id,
+                            "connection_id": connection.id,
+                            "item_remote_id": state.item_remote_id,
+                            "user_remote_id": state.user_remote_id,
+                            "play_count": state.play_count,
+                            "played": state.played,
+                            "playback_position_ticks": state.playback_position_ticks,
+                            "last_played_date": state.last_played_date,
+                            "is_favorite": state.is_favorite,
+                            "last_synced_at": utc_now(),
+                        }
+                    )
+                    if len(state_batch) >= 500:
+                        cancellation()
+                        _upsert_stage_rows(
+                            db,
+                            ConnectorSyncStageUserData,
+                            state_batch,
+                            [
+                                ConnectorSyncStageUserData.sync_run_id,
+                                ConnectorSyncStageUserData.connection_id,
+                                ConnectorSyncStageUserData.item_remote_id,
+                                ConnectorSyncStageUserData.user_remote_id,
+                            ],
+                        )
+                        state_batch.clear()
+                        db.commit()
+                        _update_progress(db, job, "user_states", state_count)
+                _upsert_stage_rows(
+                    db,
+                    ConnectorSyncStageUserData,
+                    state_batch,
+                    [
+                        ConnectorSyncStageUserData.sync_run_id,
+                        ConnectorSyncStageUserData.connection_id,
+                        ConnectorSyncStageUserData.item_remote_id,
+                        ConnectorSyncStageUserData.user_remote_id,
+                    ],
+                )
+                db.commit()
+
+            if "playback_events" in adapter.capabilities and enabled_users:
+                _update_progress(db, job, "playback_events", 0)
+                iter_playback_events = getattr(adapter, "iter_playback_events", None)
+                if not callable(iter_playback_events):
+                    raise ValueError("Connector advertises playback events without implementing them")
+                event_batch: list[dict] = []
+                event_count = 0
+                for event_count, event in enumerate(
+                    iter_playback_events(enabled_users, min_date=None),
+                    start=1,
+                ):
+                    event_batch.append(
+                        {
+                            "sync_run_id": run_id,
+                            "connection_id": connection.id,
+                            "remote_event_id": event.remote_event_id,
+                            "item_remote_id": event.item_remote_id,
+                            "user_remote_id": event.user_remote_id,
+                            "played_at": event.played_at,
+                            "last_synced_at": utc_now(),
+                        }
+                    )
+                    if len(event_batch) >= 500:
+                        cancellation()
+                        _upsert_stage_rows(
+                            db,
+                            ConnectorSyncStagePlaybackEvent,
+                            event_batch,
+                            [
+                                ConnectorSyncStagePlaybackEvent.sync_run_id,
+                                ConnectorSyncStagePlaybackEvent.connection_id,
+                                ConnectorSyncStagePlaybackEvent.remote_event_id,
+                            ],
+                        )
+                        event_batch.clear()
+                        db.commit()
+                        _update_progress(db, job, "playback_events", event_count)
+                _upsert_stage_rows(
+                    db,
+                    ConnectorSyncStagePlaybackEvent,
+                    event_batch,
+                    [
+                        ConnectorSyncStagePlaybackEvent.sync_run_id,
+                        ConnectorSyncStagePlaybackEvent.connection_id,
+                        ConnectorSyncStagePlaybackEvent.remote_event_id,
+                    ],
+                )
+                db.commit()
         _update_progress(db, job, "promoting", item_count)
         summary = promote_connector_staging(db, run_id, connection.id, commit=False)
+        summary.update(promote_connector_playback_staging(db, run_id, connection.id))
+        job.progress_phase = "mapping"
+        job.heartbeat_at = utc_now()
+        db.flush()
+        summary["mapping"] = reconcile_connector_mappings(
+            db,
+            connection.id,
+            commit=False,
+        )
         job.progress_phase = "matching"
         job.progress_current = item_count
         job.heartbeat_at = utc_now()
@@ -609,6 +920,12 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
             cancellation_check=lambda: _check_cancellation(db, job_id),
             commit=False,
         )
+        if is_legacy_default_connection(connection):
+            summary["legacy_projection"] = project_automatic_mapping_to_legacy(
+                db,
+                connection.id,
+            )
+            recompute_jellyfin_matches(db, commit=False)
         cleanup_connector_staging(db, run_id, connection.id, commit=False)
         finished = utc_now()
         job = db.get(ConnectorSyncJob, job_id)
@@ -659,16 +976,27 @@ def run_connector_recompute(db: Session, job_id: int) -> dict[str, int]:
     if db.get(ConnectorConnection, job.connection_id) is None:
         raise ValueError("Connector connection not found")
     try:
-        job.progress_phase = "matching"
+        job.progress_phase = "mapping"
         job.progress_current = 0
         job.heartbeat_at = utc_now()
         db.commit()
+        mapping = reconcile_connector_mappings(
+            db,
+            job.connection_id,
+            commit=False,
+        )
+        job.progress_phase = "matching"
+        db.flush()
         matching = recompute_connector_matches(
             db,
             connection_id=job.connection_id,
             cancellation_check=lambda: _check_cancellation(db, job_id),
             commit=False,
         )
+        connection = db.get(ConnectorConnection, job.connection_id)
+        if connection is not None and is_legacy_default_connection(connection):
+            project_automatic_mapping_to_legacy(db, connection.id)
+            recompute_jellyfin_matches(db, commit=False)
         _check_cancellation(db, job_id)
         job = db.get(ConnectorSyncJob, job_id)
         job.status = JobStatus.completed
@@ -676,7 +1004,7 @@ def run_connector_recompute(db: Session, job_id: int) -> dict[str, int]:
         job.finished_at = utc_now()
         job.progress_phase = "completed"
         job.progress_current = sum(matching.values())
-        job.sync_summary = {"matching": matching}
+        job.sync_summary = {"mapping": mapping, "matching": matching}
         db.commit()
         stats_cache.invalidate(str(id(db.get_bind())))
         return matching
@@ -836,6 +1164,103 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
     for remote_id, library in live_libraries.items():
         if remote_id not in desired_library_ids:
             db.delete(library)
+    db.flush()
+
+    connector_users = {
+        user.remote_id: user
+        for user in db.scalars(
+            select(ConnectorUser).where(ConnectorUser.connection_id == connection.id)
+        )
+    }
+    desired_user_ids: set[str] = set()
+    for legacy_user in db.scalars(select(JellyfinUser)):
+        desired_user_ids.add(legacy_user.jellyfin_user_id)
+        user = connector_users.get(legacy_user.jellyfin_user_id)
+        if user is None:
+            user = ConnectorUser(
+                connection_id=connection.id,
+                remote_id=legacy_user.jellyfin_user_id,
+            )
+            db.add(user)
+        user.name = legacy_user.name
+        user.enabled_for_sync = legacy_user.enabled_for_sync
+        user.last_synced_at = legacy_user.last_synced_at
+    db.flush()
+    users_by_remote = {
+        user.remote_id: user
+        for user in db.scalars(
+            select(ConnectorUser).where(ConnectorUser.connection_id == connection.id)
+        )
+    }
+    items_by_remote = {
+        item.remote_id: item
+        for item in db.scalars(
+            select(ConnectorItem).where(ConnectorItem.connection_id == connection.id)
+        )
+    }
+    db.execute(
+        delete(ConnectorUserItemData).where(
+            ConnectorUserItemData.connector_user_id.in_(
+                select(ConnectorUser.id).where(ConnectorUser.connection_id == connection.id)
+            )
+        )
+    )
+    db.execute(
+        delete(ConnectorPlaybackEvent).where(
+            ConnectorPlaybackEvent.connection_id == connection.id
+        )
+    )
+    for legacy_data, legacy_item in db.execute(
+        select(JellyfinUserItemData, JellyfinItem).join(
+            JellyfinItem, JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id
+        )
+    ):
+        user = users_by_remote.get(legacy_data.jellyfin_user_id)
+        item = items_by_remote.get(legacy_item.jellyfin_item_id)
+        if user is None or item is None or not user.enabled_for_sync:
+            continue
+        db.add(
+            ConnectorUserItemData(
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                play_count=legacy_data.play_count,
+                played=legacy_data.played,
+                playback_position_ticks=legacy_data.playback_position_ticks,
+                last_played_date=legacy_data.last_played_date,
+                is_favorite=legacy_data.is_favorite,
+                last_synced_at=legacy_data.last_synced_at,
+            )
+        )
+    for legacy_event, legacy_item in db.execute(
+        select(JellyfinPlaybackEvent, JellyfinItem).join(
+            JellyfinItem, JellyfinItem.id == JellyfinPlaybackEvent.jellyfin_item_id
+        )
+    ):
+        user = users_by_remote.get(legacy_event.jellyfin_user_id)
+        item = items_by_remote.get(legacy_item.jellyfin_item_id)
+        if user is None or item is None or not user.enabled_for_sync:
+            continue
+        db.add(
+            ConnectorPlaybackEvent(
+                connection_id=connection.id,
+                remote_event_id=str(legacy_event.jellyfin_activity_id),
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                played_at=legacy_event.played_at,
+                last_synced_at=legacy_event.last_synced_at,
+            )
+        )
+    stale_connector_user_ids = [
+        user.id
+        for remote_id, user in connector_users.items()
+        if remote_id not in desired_user_ids
+    ]
+    if stale_connector_user_ids:
+        db.execute(delete(ConnectorUser).where(ConnectorUser.id.in_(stale_connector_user_ids)))
     db.commit()
-    matching = recompute_connector_matches(db, connection_id=connection.id)
+    reconcile_connector_mappings(db, connection.id, commit=False)
+    matching = recompute_connector_matches(db, connection_id=connection.id, commit=False)
+    project_automatic_mapping_to_legacy(db, connection.id)
+    recompute_jellyfin_matches(db, commit=False)
+    db.commit()
     return connection.id, matching

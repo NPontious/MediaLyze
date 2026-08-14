@@ -45,7 +45,6 @@ def recompute_connector_matches(
             db.scalars(
                 select(ConnectorMediaMatch.connector_item_id).where(
                     ConnectorMediaMatch.media_file_id.in_(requested_file_ids),
-                    ConnectorMediaMatch.match_method != "manual",
                 )
             )
         ) if requested_file_ids else set()
@@ -77,20 +76,10 @@ def recompute_connector_matches(
 
     items = list(db.scalars(item_query.order_by(ConnectorItem.id)))
     item_ids = {item.id for item in items}
-    manual_matches = {
-        match.connector_item_id: match
-        for match in db.scalars(
-            select(ConnectorMediaMatch).where(
-                ConnectorMediaMatch.connector_item_id.in_(item_ids),
-                ConnectorMediaMatch.match_method == "manual",
-            )
-        )
-    }
     if item_ids:
         db.execute(
             delete(ConnectorMediaMatch).where(
                 ConnectorMediaMatch.connector_item_id.in_(item_ids),
-                ConnectorMediaMatch.match_method != "manual",
             )
         )
 
@@ -99,15 +88,6 @@ def recompute_connector_matches(
     for index, item in enumerate(items):
         if cancellation_check and index % 250 == 0:
             cancellation_check()
-        if item.id in manual_matches:
-            item.match_status = "matched"
-            item.mismatch_reason = None
-            result["manual_preserved"] += 1
-            continue
-        item.suggested_media_file_id = None
-        if item.match_status == "ignored":
-            result["ignored"] += 1
-            continue
         if item.item_type.casefold() not in SUPPORTED_ITEM_TYPES:
             item.resolved_library_root_id = None
             item.resolved_relative_path = None
@@ -209,10 +189,9 @@ def recompute_connector_matches(
             continue
 
         filename = PurePosixPath(locator.relative_path).name.casefold()
-        suggestions = list(by_filename.get(filename, []))
         suggestions = [
             candidate
-            for candidate in suggestions
+            for candidate in by_filename.get(filename, [])
             if (item.size_bytes is None or candidate.size_bytes == item.size_bytes)
             and (
                 item.duration_seconds is None
@@ -220,10 +199,8 @@ def recompute_connector_matches(
                 or abs(candidate.duration_seconds - item.duration_seconds) <= 3
             )
         ]
-        if len(suggestions) == 1:
-            item.suggested_media_file_id = suggestions[0].id
         item.match_status = "ambiguous_file" if len(suggestions) > 1 else "no_local_file"
-        item.mismatch_reason = "suggested_metadata_match" if len(suggestions) == 1 else item.match_status
+        item.mismatch_reason = item.match_status
         result[item.match_status] += 1
 
     if commit:

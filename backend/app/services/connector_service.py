@@ -8,20 +8,18 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.entities import (
     ConnectorConnection,
-    ConnectorItem,
     ConnectorLibrary,
     ConnectorLibraryLink,
     ConnectorLibraryLocation,
-    ConnectorMediaMatch,
     ConnectorRootBinding,
     ConnectorSyncStageItem,
     ConnectorSyncStageLibrary,
     ConnectorSyncStageLocation,
     Library,
     LibraryRoot,
-    MediaFile,
     JellyfinConnection,
 )
+from backend.app.utils.time import utc_now
 from backend.app.schemas.connectors import (
     ConnectorBindingBatchUpdate,
     ConnectorConnectionCreate,
@@ -36,7 +34,6 @@ from backend.app.services.connector_credentials import (
     read_connector_secret,
     write_connector_secret,
 )
-from backend.app.services.connector_matching import recompute_connector_matches
 from backend.app.services.connector_pathing import (
     binding_source_key,
     normalize_connector_path,
@@ -120,8 +117,17 @@ def create_connector_connection(
         name=payload.name.strip(),
         base_url=payload.base_url.strip(),
         config=payload.config,
-        capabilities={},
+        capabilities={
+            capability: True
+            for capability in (
+                connector_registry.descriptor(provider).optional_capabilities
+                if connector_registry.descriptor(provider) is not None
+                else ()
+            )
+        },
         enabled=payload.enabled,
+        path_mapping_mode=payload.path_mapping_mode,
+        library_mapping_mode=payload.library_mapping_mode,
         sync_interval_minutes=payload.sync_interval_minutes,
     )
     db.add(connection)
@@ -152,10 +158,29 @@ def update_connector_connection(
         and payload.name.strip() == "Jellyfin"
     ):
         raise ValueError("The name Jellyfin is reserved for the migrated standard connection")
-    for field in ("name", "base_url", "config", "enabled", "sync_interval_minutes"):
+    previous_path_mode = str(getattr(connection.path_mapping_mode, "value", connection.path_mapping_mode))
+    for field in (
+        "name",
+        "base_url",
+        "config",
+        "enabled",
+        "sync_interval_minutes",
+        "path_mapping_mode",
+        "library_mapping_mode",
+    ):
         value = getattr(payload, field)
         if value is not None:
             setattr(connection, field, value.strip() if isinstance(value, str) else value)
+    next_path_mode = str(getattr(connection.path_mapping_mode, "value", connection.path_mapping_mode))
+    if previous_path_mode != "manual" and next_path_mode == "manual":
+        for binding in db.scalars(
+            select(ConnectorRootBinding)
+            .join(ConnectorLibraryLocation)
+            .join(ConnectorLibrary)
+            .where(ConnectorLibrary.connection_id == connection.id)
+        ):
+            binding.origin = "manual"
+            binding.verification_status = "verified"
     if payload.secret is not None:
         write_connector_secret(db, connection.id, payload.secret)
     try:
@@ -188,12 +213,31 @@ def update_legacy_default_connection(
     if payload.sync_interval_minutes is not None:
         connection.sync_interval_minutes = payload.sync_interval_minutes
         legacy.sync_interval_minutes = payload.sync_interval_minutes
+    previous_path_mode = str(
+        getattr(connection.path_mapping_mode, "value", connection.path_mapping_mode)
+    )
+    if payload.path_mapping_mode is not None:
+        connection.path_mapping_mode = payload.path_mapping_mode
+    if payload.library_mapping_mode is not None:
+        connection.library_mapping_mode = payload.library_mapping_mode
     if payload.config is not None:
         if contains_sensitive_connector_key(payload.config):
             raise ValueError("Secrets must be supplied through the dedicated secret field")
         connection.config = {**payload.config, "legacy_default": True}
     else:
         connection.config = {**(connection.config or {}), "legacy_default": True}
+    next_path_mode = str(
+        getattr(connection.path_mapping_mode, "value", connection.path_mapping_mode)
+    )
+    if previous_path_mode != "manual" and next_path_mode == "manual":
+        for binding in db.scalars(
+            select(ConnectorRootBinding)
+            .join(ConnectorLibraryLocation)
+            .join(ConnectorLibrary)
+            .where(ConnectorLibrary.connection_id == connection.id)
+        ):
+            binding.origin = "manual"
+            binding.verification_status = "verified"
     if payload.secret is not None:
         normalized = payload.secret.strip()
         legacy.api_key = normalized
@@ -229,7 +273,7 @@ def delete_connector_connection(
         db.execute(delete(stage_model).where(stage_model.connection_id == connection_id))
     db.delete(connection)
     db.flush()
-    _refresh_preferred_connections(db)
+    refresh_preferred_connections(db)
     if commit:
         db.commit()
         stats_cache.invalidate(str(id(db.get_bind())))
@@ -282,6 +326,8 @@ def replace_connector_bindings(
     connection = db.get(ConnectorConnection, connection_id)
     if connection is None:
         raise LookupError("Connector connection not found")
+    if str(getattr(connection.path_mapping_mode, "value", connection.path_mapping_mode)) != "manual":
+        raise PermissionError("Path mappings can only be edited in manual mode")
     location_ids = {binding.location_id for binding in payload.bindings}
     locations = {
         location.id: location
@@ -336,6 +382,11 @@ def replace_connector_bindings(
                 "case_mode": binding.case_mode,
                 "priority": binding.priority,
                 "active": binding.active,
+                "origin": "manual",
+                "confidence": 1.0,
+                "evidence_count": 0,
+                "verification_status": "verified",
+                "last_verified_at": utc_now(),
             }
         )
 
@@ -403,7 +454,7 @@ def replace_connector_bindings(
                 )
             )
     db.commit()
-    _refresh_preferred_connections(db)
+    refresh_preferred_connections(db)
     db.commit()
     return result
 
@@ -413,8 +464,11 @@ def replace_connector_library_links(
     connection_id: int,
     payload: ConnectorLibraryLinkBatchUpdate,
 ) -> list[ConnectorLibraryRead]:
-    if db.get(ConnectorConnection, connection_id) is None:
+    connection = db.get(ConnectorConnection, connection_id)
+    if connection is None:
         raise LookupError("Connector connection not found")
+    if str(getattr(connection.library_mapping_mode, "value", connection.library_mapping_mode)) != "manual":
+        raise PermissionError("Library assignments can only be edited in manual mode")
     connector_library_ids = {entry.connector_library_id for entry in payload.links}
     owned_ids = set(
         db.scalars(
@@ -486,13 +540,11 @@ def replace_connector_library_links(
                 ConnectorLibraryLink(
                     connector_library_id=pair[0],
                     library_id=pair[1],
-                    link_method="manual",
+                    link_method="derived" if pair in derived_pairs else "manual",
                 )
             )
         else:
-            # An explicit user selection remains durable even if a binding
-            # that originally derived the same link is later removed.
-            link.link_method = "manual"
+            link.link_method = "derived" if pair in derived_pairs else "manual"
     for pair in derived_pairs - set(current_by_pair) - desired_pairs:
         db.add(
             ConnectorLibraryLink(
@@ -502,13 +554,13 @@ def replace_connector_library_links(
             )
         )
     db.commit()
-    _refresh_preferred_connections(db)
+    refresh_preferred_connections(db)
     db.commit()
     stats_cache.invalidate(str(id(db.get_bind())))
     return list_connector_libraries(db, connection_id)
 
 
-def _refresh_preferred_connections(db: Session) -> None:
+def refresh_preferred_connections(db: Session) -> None:
     libraries = list(db.scalars(select(Library)))
     for library in libraries:
         connection_ids = set(
@@ -525,62 +577,3 @@ def _refresh_preferred_connections(db: Session) -> None:
             library.preferred_connector_connection_id = next(iter(connection_ids))
         elif library.preferred_connector_connection_id not in connection_ids:
             library.preferred_connector_connection_id = None
-
-
-def set_manual_connector_match(db: Session, item: ConnectorItem, media_file_id: int) -> ConnectorMediaMatch:
-    media_file = db.get(MediaFile, media_file_id)
-    if media_file is None:
-        raise ValueError("Media file not found")
-    existing = db.scalar(
-        select(ConnectorMediaMatch).where(ConnectorMediaMatch.connector_item_id == item.id)
-    )
-    if existing is None:
-        existing = ConnectorMediaMatch(
-            connector_item_id=item.id,
-            media_file_id=media_file_id,
-            match_method="manual",
-            confidence=1.0,
-            status="matched",
-        )
-        db.add(existing)
-    else:
-        existing.media_file_id = media_file_id
-        existing.binding_id = None
-        existing.match_method = "manual"
-        existing.confidence = 1.0
-        existing.status = "matched"
-    item.match_status = "matched"
-    item.mismatch_reason = None
-    item.suggested_media_file_id = None
-    item.resolved_library_root_id = media_file.library_root_id
-    item.resolved_relative_path = media_file.relative_path
-    item.resolved_relative_path_key = media_file.relative_path.casefold()
-    item.resolved_binding_id = None
-    db.commit()
-    stats_cache.invalidate(str(id(db.get_bind())))
-    return existing
-
-
-def remove_manual_connector_match(db: Session, item: ConnectorItem) -> bool:
-    match = db.scalar(
-        select(ConnectorMediaMatch).where(ConnectorMediaMatch.connector_item_id == item.id)
-    )
-    if match is not None:
-        db.delete(match)
-    item.match_status = "ignored"
-    item.mismatch_reason = "manually_ignored"
-    item.suggested_media_file_id = None
-    db.commit()
-    stats_cache.invalidate(str(id(db.get_bind())))
-    return True
-
-
-def restore_automatic_connector_match(db: Session, item: ConnectorItem) -> None:
-    item.match_status = "unmapped"
-    item.mismatch_reason = None
-    db.commit()
-    recompute_connector_matches(
-        db,
-        connection_id=item.connection_id,
-        connector_item_ids={item.id},
-    )

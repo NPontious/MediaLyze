@@ -222,11 +222,6 @@ class JellyfinSyncStatusRead(JellyfinConnectionRead):
     user_count: int = 0
 
 
-class JellyfinMatchCreate(BaseModel):
-    jellyfin_item_id: int
-    media_file_id: int
-
-
 class JellyfinMatchRead(BaseModel):
     id: int
     media_file_id: int
@@ -296,8 +291,6 @@ class JellyfinFileOverlayRead(BaseModel):
 
 class JellyfinUnmatchedRead(BaseModel):
     item: JellyfinItemRead
-    suggested_media_file_id: int | None = None
-    suggested_media_file_name: str | None = None
 
 
 class JellyfinSyncStartRead(BaseModel):

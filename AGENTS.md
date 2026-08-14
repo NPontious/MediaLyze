@@ -82,8 +82,8 @@ Open or clearly future-facing work includes:
 
 * improved broken-file reporting and diagnostics
 * additional future analysis and recommendation workflows
-* a Plex adapter; the connector core and descriptor-driven configuration UI are implemented, but Plex transport, DTO normalization, descriptor registration, and provider-specific tests are not
-* generalization of Jellyfin-specific users, playback events, and image behavior to every connector provider
+* a Plex adapter; the connector core and shared accordion UI are implemented and Plex appears as a disabled `Soon™` option, but Plex transport, DTO normalization, descriptor registration, and provider-specific tests are not
+* generalization of provider image behavior beyond the preferred/standard Jellyfin connection
 * removal of the deprecated `/api/jellyfin/*` compatibility facade and legacy Jellyfin tables; both intentionally remain during the first connector release
 
 These items should be treated as backlog, not current behavior.
@@ -541,8 +541,9 @@ Implemented UI behavior includes:
 * a file-detail `Preview` panel that can attempt in-browser playback for video and audio files, plus a direct file download action with explicit warnings that playback and download performance are not optimized yet
 * persistent app theme preference
 * persistent local UI state for selected statistics, per-dashboard and per-library statistic-panel layouts, analyzed-files column widths, file-detail panel layout, and some panel/section visibility
-* Connector Settings with multiple connection cards, provider-specific configuration, sync controls, a Location-to-Root mapping matrix, advanced prefix/target/case/priority rules, and preferred connector selection per MediaLyze library
+* shared Connector Settings accordions for multiple Jellyfin connections, with lazy connection details, a collapsed searchable `Analyzed users` selector, generic lifecycle controls, capability-gated playback-user selection, active-job polling, and a disabled Plex `Soon™` add option; central bindings and item diagnostics remain deferred
 * file-detail External sources that return all matched provider items while retaining Jellyfin compatibility fields
+* a file-detail playback timeline that combines all matched capable connections without cross-server deduplication and labels events by connection when multiple sources contribute
 
 UI catalog maintenance rule:
 
@@ -735,6 +736,8 @@ Important file contract concepts:
 * `POST /api/connectors/{connection_id}/sync/cancel`
 * `GET /api/connectors/{connection_id}/sync/status`
 * `GET /api/connectors/{connection_id}/libraries`
+* `GET /api/connectors/{connection_id}/users`
+* `PUT /api/connectors/{connection_id}/users`
 * `PUT /api/connectors/{connection_id}/library-links`
 * `GET /api/connectors/{connection_id}/locations`
 * `GET /api/connectors/{connection_id}/bindings`
@@ -745,6 +748,7 @@ Important file contract concepts:
 * `PUT /api/connectors/{connection_id}/items/{item_id}/match`
 * `DELETE /api/connectors/{connection_id}/items/{item_id}/match`
 * `POST /api/connectors/{connection_id}/items/{item_id}/automatic-match`
+* `GET /api/files/{file_id}/connector-playback`
 
 Important connector invariants and the provider contract are canonical in `docs/connectors.md`. Connector credentials are write-only through the API, secret-like config is rejected, normal DTOs omit raw item payloads, and diagnostic payloads are sanitized. Binding and manual library-link replacement are validated before writing. Deleting a match persists `ignored`; automatic matching resumes only through the explicit endpoint. Existing `/api/jellyfin/*` endpoints remain as a deprecated compatibility surface for the migrated standard Jellyfin connection.
 
@@ -791,11 +795,17 @@ Current logical schema includes:
 * `connector_library_links`
 * `connector_root_bindings`
 * `connector_items`
+* `connector_users`
+* `connector_user_item_data`
+* `connector_playback_events`
 * `connector_media_matches`
 * `connector_sync_jobs`
 * `connector_sync_stage_libraries`
 * `connector_sync_stage_locations`
 * `connector_sync_stage_items`
+* `connector_sync_stage_users`
+* `connector_sync_stage_user_data`
+* `connector_sync_stage_playback_events`
 
 Important post-`0.0.1` additions that must be treated as real schema surface:
 
@@ -862,7 +872,7 @@ Implemented frontend structure:
 * `frontend/src/lib/scan-jobs.tsx` manages active scan polling state
 * page modules under `frontend/src/pages/` implement dashboard, settings/libraries, library detail, and file detail views, including separate comparison-data loading on dashboard and library pages; the Settings page also exposes history-retention controls and `GET /api/history-storage` forecast data
 * `frontend/src/lib/desktop.ts` exposes the optional Electron preload bridge used by desktop builds
-* `frontend/src/components/ConnectorSettingsPanel.tsx` implements multi-connection configuration and the Location-to-Root mapping matrix
+* `frontend/src/components/ConnectorSettingsPanel.tsx` implements the shared multi-connection accordions, lifecycle controls, capability-gated user selection, and add-provider dialog; central Location-to-Root bindings and item diagnostics remain deferred
 
 Desktop packaging structure:
 

@@ -30,7 +30,6 @@ import { AsyncPanel } from "../components/AsyncPanel";
 import { CheckIcon } from "../components/CheckIcon";
 import { CompatibilityProfilesPanel } from "../components/CompatibilityProfilesPanel";
 import { ConnectorSettingsPanel } from "../components/ConnectorSettingsPanel";
-import { JellyfinLibraryPathMappings } from "../components/JellyfinLibraryPathMappings";
 import { CopyIcon } from "../components/CopyIcon";
 import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
@@ -52,7 +51,6 @@ import {
   type HistoryAddedDateSource,
   type HistoryStorage,
   type JellyfinLibrary,
-  type JellyfinPathMapping,
   type LibraryType,
   type LibrarySummary,
   type PathInspection,
@@ -860,9 +858,6 @@ export function LibrariesPage() {
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [libraryIdentityForms, setLibraryIdentityForms] = useState<Record<number, LibraryIdentityForm>>({});
   const [libraryIdentityPending, setLibraryIdentityPending] = useState<Record<number, boolean>>({});
-  const [jellyfinLinkPending, setJellyfinLinkPending] = useState<Record<number, boolean>>({});
-  const [jellyfinPathMappings, setJellyfinPathMappings] = useState<JellyfinPathMapping[]>([]);
-  const [jellyfinPathMappingsError, setJellyfinPathMappingsError] = useState<string | null>(null);
   const [selectedJellyfinLibraryId, setSelectedJellyfinLibraryId] = useState<number | null>(null);
   const [isRunningFullScanAll, setIsRunningFullScanAll] = useState(false);
   const [isCreateLibraryDialogOpen, setIsCreateLibraryDialogOpen] = useState(false);
@@ -981,7 +976,6 @@ export function LibrariesPage() {
   const persistedResolutionCategories = useRef<ResolutionCategory[]>(normalizeResolutionCategories(appSettings.resolution_categories));
   const ignorePatternsRequestId = useRef(0);
   const ignorePatternsSuccessId = useRef(0);
-  const jellyfinPathMappingsLoadedRef = useRef(false);
   const qualityProfilesLoadedRef = useRef(false);
   const recentScanJobsLoadedRef = useRef(false);
   const historyStorageLoadedRef = useRef(false);
@@ -1516,26 +1510,6 @@ export function LibrariesPage() {
       void loadJellyfinLibraries().catch(() => undefined);
     }
   }, [activeSettingsPanelId, jellyfinLibrariesLoaded, loadJellyfinLibraries]);
-
-  useEffect(() => {
-    if (activeSettingsPanelId !== "configuredLibraries" || jellyfinPathMappingsLoadedRef.current) {
-      return;
-    }
-    let active = true;
-    api.jellyfinPathMappings()
-      .then((mappings) => {
-        if (!active) return;
-        jellyfinPathMappingsLoadedRef.current = true;
-        setJellyfinPathMappings(mappings);
-        setJellyfinPathMappingsError(null);
-      })
-      .catch((reason: Error) => {
-        if (active) setJellyfinPathMappingsError(reason.message);
-      });
-    return () => {
-      active = false;
-    };
-  }, [activeSettingsPanelId]);
 
   useEffect(() => {
     if (activeSettingsPanelId !== "qualityProfiles" || qualityProfilesLoadedRef.current) {
@@ -2084,69 +2058,6 @@ export function LibrariesPage() {
     } finally {
       setIsSavingPathDialog(false);
     }
-  }
-
-  async function updateLibraryJellyfinLink(library: LibrarySummary, jellyfinLibraryId: number | null) {
-    const current = jellyfinLibraries.find((candidate) => candidate.linked_library_id === library.id);
-    const selected = jellyfinLibraries.find((candidate) => candidate.id === jellyfinLibraryId);
-    if ((current?.id ?? null) === jellyfinLibraryId) return;
-    setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: true }));
-    setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
-    try {
-      let updatedLink: JellyfinLibrary | null = null;
-      if (jellyfinLibraryId === null) {
-        if (current) await api.updateJellyfinLibraryLink(current.id, null);
-      } else {
-        updatedLink = await api.updateJellyfinLibraryLink(jellyfinLibraryId, library.id);
-      }
-      for (const candidate of libraries) {
-        if (candidate.id === library.id) {
-          upsertLibrary({
-            ...candidate,
-            linked_jellyfin_library: updatedLink
-              ? {
-                  id: updatedLink.id,
-                  name: updatedLink.name,
-                  last_synced_at: updatedLink.last_synced_at,
-                }
-              : null,
-          });
-        } else if (selected?.linked_library_id === candidate.id) {
-          upsertLibrary({ ...candidate, linked_jellyfin_library: null });
-        }
-      }
-      await loadJellyfinLibraries(true);
-    } catch (reason) {
-      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
-    } finally {
-      setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: false }));
-    }
-  }
-
-  function applyJellyfinPathMappingChange(mapping: JellyfinPathMapping | null, removedId?: number) {
-    if (mapping) {
-      setJellyfinPathMappings((current) => {
-        const exists = current.some((candidate) => candidate.id === mapping.id);
-        return exists
-          ? current.map((candidate) => candidate.id === mapping.id ? mapping : candidate)
-          : [...current, mapping];
-      });
-    } else if (removedId !== undefined) {
-      setJellyfinPathMappings((current) => current.filter((candidate) => candidate.id !== removedId));
-    }
-    setJellyfinPathMappingsError(null);
-    void loadJellyfinLibraries(true).catch(() => undefined);
-  }
-
-  async function applyJellyfinPathMappingBatchChange(mappings: JellyfinPathMapping[]) {
-    setJellyfinPathMappings((current) => {
-      const updatedById = new Map(mappings.map((mapping) => [mapping.id, mapping]));
-      const merged = current.map((mapping) => updatedById.get(mapping.id) ?? mapping);
-      const knownIds = new Set(current.map((mapping) => mapping.id));
-      return [...merged, ...mappings.filter((mapping) => !knownIds.has(mapping.id))];
-    });
-    setJellyfinPathMappingsError(null);
-    await loadJellyfinLibraries(true);
   }
 
   function selectJellyfinLibraryForCreation(jellyfinLibrary: JellyfinLibrary) {
@@ -5005,6 +4916,7 @@ export function LibrariesPage() {
           </div>
           <select
             id={typeInputId}
+            className="settings-choice-input"
             value={form.type}
             onChange={(event) => setForm((current) => ({ ...current, type: event.target.value as LibraryType | "" }))}
             required
@@ -5771,9 +5683,6 @@ export function LibrariesPage() {
                 const isDeletingLibrary = Boolean(deletingLibraryIds[library.id]);
                 const activeLibraryScanJob = activeJobs.find((job) => job.library_id === library.id);
                 const areLibrarySettingsExpanded = Boolean(expandedLibrarySettings[library.id]);
-                const linkedJellyfinLibrary = jellyfinLibraries.find(
-                  (candidate) => candidate.linked_library_id === library.id,
-                );
                 const librarySettingsToggle = (
                   <button
                     type="button"
@@ -6031,48 +5940,20 @@ export function LibrariesPage() {
                     <div className="library-settings-body" id={`library-settings-body-${library.id}`}>
                       <section className="library-settings-section">
                         <div className="library-settings-section-heading">
-                          <h4>{t("libraries.sections.jellyfin.title")}</h4>
-                          <p>{t("libraries.sections.jellyfin.description")}</p>
+                          <h4>{t("connectors.libraryStatus.title")}</h4>
+                          <p>{t("connectors.libraryStatus.description")}</p>
                         </div>
                         <div className="library-settings-section-grid is-single-column">
-                          <div className="field">
-                            <label htmlFor={`jellyfin-library-link-${library.id}`}>{t("jellyfin.associatedJellyfinLibrary")}</label>
-                            <select
-                              id={`jellyfin-library-link-${library.id}`}
-                              className="settings-choice-input"
-                              value={linkedJellyfinLibrary?.id ?? ""}
-                              disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
-                              onChange={(event) => void updateLibraryJellyfinLink(
-                                library,
-                                event.target.value ? Number(event.target.value) : null,
-                              )}
-                            >
-                              <option value="">{t("jellyfin.noAssociatedLibrary")}</option>
-                              {jellyfinLibraries.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.name}{candidate.linked_library_id && candidate.linked_library_id !== library.id
-                                    ? ` (${candidate.linked_library_name})`
-                                    : ""}
-                                </option>
-                              ))}
-                            </select>
+                          <div className="connector-library-status-list">
+                            {(library.connector_links ?? []).map((link) => (
+                              <div className="connector-library-status-row" key={`${link.connection_id}-${link.connector_library_id}`}>
+                                <div><strong>{link.connection_name}</strong><span>{link.provider} · {link.connector_library_name}</span></div>
+                                <span className="badge">{link.link_method}</span>
+                                <Link className="secondary small connector-action-button" to={`/settings?section=jellyfin#connector-${link.connection_id}`}>{t("connectors.libraryStatus.openConnector")}<SquareArrowOutUpRight aria-hidden="true" /></Link>
+                              </div>
+                            ))}
+                            {!(library.connector_links?.length) ? <div className="notice">{t("connectors.libraryStatus.unassigned")}</div> : null}
                           </div>
-                          {linkedJellyfinLibrary ? (
-                            <JellyfinLibraryPathMappings
-                              jellyfinLibrary={linkedJellyfinLibrary}
-                              mappings={jellyfinPathMappings}
-                              suggestedTargets={(library.roots?.length
-                                ? library.roots.map((root) => root.path)
-                                : [library.path]
-                              )}
-                              disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
-                              loadError={jellyfinPathMappingsError}
-                              onChanged={applyJellyfinPathMappingChange}
-                              onBatchChanged={applyJellyfinPathMappingBatchChange}
-                              sectionId={`library-path-mapping-${library.id}`}
-                              focused={targetLibraryId === library.id && focusedSettingsControl === "path-mapping"}
-                            />
-                          ) : null}
                         </div>
                       </section>
 
@@ -6538,6 +6419,7 @@ export function LibrariesPage() {
                   <label>
                     <span>{t("libraries.patternRecognition.modeLabel")}</span>
                     <select
+                      className="settings-choice-input"
                       value={patternRecognitionInputs.show_season_patterns.recognition_mode}
                       disabled={isSavingPatternRecognition}
                       onChange={(event) =>

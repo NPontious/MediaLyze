@@ -94,12 +94,7 @@ def recompute_jellyfin_matches(
 ) -> dict[str, int]:
     mappings = list(db.scalars(select(JellyfinPathMapping).where(JellyfinPathMapping.enabled.is_(True))))
     mapping_accessibility: dict[int, bool] = {}
-    manual_matches = list(
-        db.scalars(select(JellyfinMediaMatch).where(JellyfinMediaMatch.match_method == "manual"))
-    )
-    manual_item_ids = {match.jellyfin_item_id for match in manual_matches}
-    manual_media_file_ids = {match.media_file_id for match in manual_matches}
-    claimed_media_file_ids = set(manual_media_file_ids)
+    claimed_media_file_ids: set[int] = set()
     media_query = select(MediaFile).options(selectinload(MediaFile.library), selectinload(MediaFile.library_root))
     if media_file_ids is not None:
         media_query = media_query.where(MediaFile.id.in_(media_file_ids))
@@ -110,31 +105,27 @@ def recompute_jellyfin_matches(
     for media_file in media_files:
         if cancellation_check is not None:
             cancellation_check()
-        if media_file.id in manual_media_file_ids:
-            continue
         exact_paths[_absolute_media_path(media_file)].append(media_file)
         filenames[media_file.filename.casefold()].append(media_file)
 
     if media_file_ids is None:
-        db.execute(delete(JellyfinMediaMatch).where(JellyfinMediaMatch.match_method == "path"))
+        db.execute(delete(JellyfinMediaMatch))
         items = list(db.scalars(select(JellyfinItem)))
     else:
         previously_matched_item_ids = set(
             db.scalars(
                 select(JellyfinMediaMatch.jellyfin_item_id).where(
                     JellyfinMediaMatch.media_file_id.in_(media_file_ids),
-                    JellyfinMediaMatch.match_method == "path",
                 )
             )
         )
         db.execute(
             delete(JellyfinMediaMatch).where(
                 JellyfinMediaMatch.media_file_id.in_(media_file_ids),
-                JellyfinMediaMatch.match_method == "path",
             )
         )
         items = []
-        for candidate in db.scalars(select(JellyfinItem).where(JellyfinItem.match_status != "ignored")):
+        for candidate in db.scalars(select(JellyfinItem)):
             mapped_path, _ = apply_path_mappings(candidate.path or "", mappings)
             if candidate.id in previously_matched_item_ids or normalize_jellyfin_path(mapped_path) in exact_paths:
                 items.append(candidate)
@@ -149,13 +140,6 @@ def recompute_jellyfin_matches(
             db.commit()
         if cancellation_check is not None:
             cancellation_check()
-        if item.match_status == "ignored":
-            continue
-        if item.id in manual_item_ids:
-            item.match_status = "matched"
-            item.mismatch_reason = None
-            continue
-        item.suggested_media_file_id = None
         item_type = item.item_type.casefold()
         if item_type not in SUPPORTED_ITEM_TYPES:
             item.match_status = "unmatched"
@@ -220,10 +204,7 @@ def recompute_jellyfin_matches(
                 if abs(float(runtime_ticks) / 10_000_000 - candidate.duration_seconds) > 3:
                     continue
             suggestions.append(candidate)
-        if len(suggestions) == 1:
-            item.suggested_media_file_id = suggestions[0].id
-            item.mismatch_reason = "suggested_metadata_match"
-        elif len(suggestions) > 1:
+        if len(suggestions) > 1:
             item.mismatch_reason = "ambiguous"
         else:
             item.mismatch_reason = "no_local_file"

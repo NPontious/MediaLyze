@@ -66,6 +66,11 @@ class JobStatus(str, Enum):
     failed = "failed"
 
 
+class ConnectorMappingMode(str, Enum):
+    automatic = "automatic"
+    manual = "manual"
+
+
 class ScanTriggerSource(str, Enum):
     manual = "manual"
     scheduled = "scheduled"
@@ -202,6 +207,16 @@ class ConnectorConnection(TimestampMixin, Base):
     config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    path_mapping_mode: Mapped[ConnectorMappingMode] = mapped_column(
+        SqlEnum(ConnectorMappingMode, native_enum=False),
+        default=ConnectorMappingMode.automatic,
+        nullable=False,
+    )
+    library_mapping_mode: Mapped[ConnectorMappingMode] = mapped_column(
+        SqlEnum(ConnectorMappingMode, native_enum=False),
+        default=ConnectorMappingMode.automatic,
+        nullable=False,
+    )
     sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     server_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     server_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -295,6 +310,13 @@ class ConnectorRootBinding(TimestampMixin, Base):
     case_mode: Mapped[str] = mapped_column(String(16), default="sensitive", nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), default="automatic", nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    verification_status: Mapped[str] = mapped_column(
+        String(16), default="imported", nullable=False
+    )
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class ConnectorItem(TimestampMixin, Base):
@@ -374,6 +396,72 @@ class ConnectorMediaMatch(TimestampMixin, Base):
     match_method: Mapped[str] = mapped_column(String(32), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="matched", nullable=False)
+
+
+class ConnectorUser(TimestampMixin, Base):
+    __tablename__ = "connector_users"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "remote_id", name="uq_connector_users_connection_remote"),
+        Index("ix_connector_users_connection", "connection_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ConnectorUserItemData(Base):
+    __tablename__ = "connector_user_item_data"
+    __table_args__ = (
+        UniqueConstraint(
+            "connector_item_id", "connector_user_id", name="uq_connector_user_item_data"
+        ),
+        Index("ix_connector_user_item_data_user", "connector_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connector_item_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_items.id", ondelete="CASCADE"), nullable=False
+    )
+    connector_user_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_users.id", ondelete="CASCADE"), nullable=False
+    )
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    played: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class ConnectorPlaybackEvent(Base):
+    __tablename__ = "connector_playback_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id", "remote_event_id", name="uq_connector_playback_events_remote"
+        ),
+        Index("ix_connector_playback_events_item_played_at", "connector_item_id", "played_at"),
+        Index("ix_connector_playback_events_user", "connector_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    connector_item_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_items.id", ondelete="CASCADE"), nullable=False
+    )
+    connector_user_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_users.id", ondelete="CASCADE"), nullable=False
+    )
+    played_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
 
 
 class ConnectorSyncJob(Base):
@@ -464,6 +552,49 @@ class ConnectorSyncStageItem(Base):
     last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 
+class ConnectorSyncStageUser(Base):
+    __tablename__ = "connector_sync_stage_users"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class ConnectorSyncStageUserData(Base):
+    __tablename__ = "connector_sync_stage_user_data"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    item_remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    user_remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    played: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class ConnectorSyncStagePlaybackEvent(Base):
+    __tablename__ = "connector_sync_stage_playback_events"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    remote_event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    item_remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    played_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 
@@ -546,7 +677,7 @@ class JellyfinSyncStageUser(Base):
     sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
@@ -617,7 +748,7 @@ class JellyfinUser(TimestampMixin, Base):
 
     jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 

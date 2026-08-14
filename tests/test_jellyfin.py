@@ -27,6 +27,9 @@ from backend.app.models.entities import (
     ConnectorConnection,
     ConnectorItem,
     ConnectorMediaMatch,
+    ConnectorPlaybackEvent,
+    ConnectorUser,
+    ConnectorUserItemData,
     HistoryAddedDateSource,
     JellyfinConnection,
     JellyfinItem,
@@ -139,6 +142,19 @@ def _client(db: Session, settings: Settings | None = None) -> TestClient:
     if settings is not None:
         app.dependency_overrides[get_app_settings] = lambda: settings
     return TestClient(app)
+
+
+def _enable_manual_legacy_path_mapping(db: Session) -> None:
+    db.add(
+        ConnectorConnection(
+            provider="jellyfin",
+            name="Jellyfin",
+            config={"legacy_default": True},
+            path_mapping_mode="manual",
+            library_mapping_mode="automatic",
+        )
+    )
+    db.commit()
 
 
 def _add_media(db: Session, root: Path, relative_path: str = "Movie.mkv") -> MediaFile:
@@ -268,6 +284,100 @@ def test_generic_standard_jellyfin_crud_updates_and_clears_legacy_state(
             ConnectorConnection.name == "Jellyfin",
         )
     ) is None
+
+
+def test_connector_users_and_file_playback_are_connection_scoped(
+    db: Session,
+    tmp_path: Path,
+) -> None:
+    media = _add_media(db, tmp_path)
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    connections = [
+        ConnectorConnection(
+            provider="jellyfin",
+            name=name,
+            capabilities={"users": True, "user_states": True, "playback_events": True},
+        )
+        for name in ("Living Room", "Archive")
+    ]
+    db.add_all(connections)
+    db.flush()
+    for connection in connections:
+        item = ConnectorItem(
+            connection_id=connection.id,
+            remote_id="shared-item",
+            item_type="Movie",
+            title="Movie",
+        )
+        user = ConnectorUser(
+            connection_id=connection.id,
+            remote_id="shared-user",
+            name="Alice",
+            enabled_for_sync=True,
+        )
+        db.add_all([item, user])
+        db.flush()
+        db.add_all([
+            ConnectorMediaMatch(
+                connector_item_id=item.id,
+                media_file_id=media.id,
+                match_method="manual",
+                confidence=1.0,
+                status="matched",
+            ),
+            ConnectorUserItemData(
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                play_count=connection.id,
+                played=True,
+                last_played_date=now,
+            ),
+            ConnectorPlaybackEvent(
+                connection_id=connection.id,
+                remote_event_id="shared-event",
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                played_at=now,
+            ),
+        ])
+    db.commit()
+    client = _client(db)
+
+    payload = client.get(f"/api/files/{media.id}/connector-playback")
+
+    assert payload.status_code == 200
+    assert [source["connection_name"] for source in payload.json()] == ["Archive", "Living Room"]
+    assert {source["playback_events"][0]["remote_event_id"] for source in payload.json()} == {
+        "shared-event"
+    }
+    first_users = client.get(f"/api/connectors/{connections[0].id}/users")
+    assert first_users.status_code == 200
+    assert first_users.json()[0]["remote_id"] == "shared-user"
+
+    updated = client.put(
+        f"/api/connectors/{connections[0].id}/users",
+        json={"enabled_user_ids": []},
+    )
+    assert updated.status_code == 200
+    assert updated.json()[0]["enabled_for_sync"] is False
+    assert client.get(f"/api/connectors/{connections[1].id}/users").json()[0][
+        "enabled_for_sync"
+    ] is True
+
+
+def test_connector_user_api_rejects_missing_capability(db: Session) -> None:
+    connection = ConnectorConnection(
+        provider="catalog-only",
+        name="Catalog",
+        capabilities={},
+    )
+    db.add(connection)
+    db.commit()
+
+    response = _client(db).get(f"/api/connectors/{connection.id}/users")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Connector does not support users"
 
 
 def test_library_file_rows_include_metadata_only_for_matched_jellyfin_items(db: Session, tmp_path: Path) -> None:
@@ -952,6 +1062,7 @@ def test_manual_sync_returns_accepted_job_without_running_inline(db: Session) ->
 
 
 def test_mapping_change_returns_before_background_match_recompute(db: Session) -> None:
+    _enable_manual_legacy_path_mapping(db)
     library = JellyfinLibrary(
         name="Movies",
         locations=["/remote/movies"],
@@ -983,6 +1094,7 @@ def test_mapping_change_returns_before_background_match_recompute(db: Session) -
 
 
 def test_path_mapping_batch_is_atomic_and_queues_one_recompute(db: Session) -> None:
+    _enable_manual_legacy_path_mapping(db)
     first = JellyfinPathMapping(
         jellyfin_path_prefix="/remote/movies",
         medialyze_path_prefix="/media/movies",
@@ -1037,6 +1149,7 @@ def test_path_mapping_batch_is_atomic_and_queues_one_recompute(db: Session) -> N
 
 
 def test_path_mapping_batch_rolls_back_when_any_mapping_is_missing(db: Session) -> None:
+    _enable_manual_legacy_path_mapping(db)
     mapping = JellyfinPathMapping(
         jellyfin_path_prefix="/remote/movies",
         medialyze_path_prefix="/media/movies",
@@ -1197,13 +1310,9 @@ def test_sync_persists_separate_user_data(
             return items
 
     monkeypatch.setattr("backend.app.services.jellyfin_sync.JellyfinClient", FakeClient)
-    # Discover users first, then select both for the next synchronization.
-    run_jellyfin_sync(db)
-    for user in db.query(JellyfinUser).all():
-        user.enabled_for_sync = True
-    db.commit()
     run_jellyfin_sync(db)
 
+    assert all(user.enabled_for_sync for user in db.query(JellyfinUser).all())
     rows = list(db.scalars(select(JellyfinUserItemData).order_by(JellyfinUserItemData.jellyfin_user_id)))
     assert [(row.jellyfin_user_id, row.play_count) for row in rows] == [("u1", 1), ("u2", 3)]
 
@@ -1863,28 +1972,19 @@ def test_completed_user_sync_removes_items_missing_for_that_user(
     assert [(row.jellyfin_item_id, row.play_count) for row in rows] == [(first.id, 3)]
 
 
-def test_manual_match_reassignment_updates_displaced_item_status(db: Session, tmp_path: Path) -> None:
+def test_manual_match_endpoint_is_removed(db: Session, tmp_path: Path) -> None:
     media = _add_media(db, tmp_path / "manual-reassign")
     first = JellyfinItem(jellyfin_item_id="first", item_type="Movie", title="First")
-    second = JellyfinItem(jellyfin_item_id="second", item_type="Movie", title="Second")
-    db.add_all([first, second])
+    db.add(first)
     db.commit()
     client = _client(db)
 
-    assert client.post(
+    response = client.post(
         "/api/jellyfin/matches",
         json={"jellyfin_item_id": first.id, "media_file_id": media.id},
-    ).status_code == 201
-    assert client.post(
-        "/api/jellyfin/matches",
-        json={"jellyfin_item_id": second.id, "media_file_id": media.id},
-    ).status_code == 201
+    )
 
-    db.refresh(first)
-    db.refresh(second)
-    assert first.match_status == "unmatched"
-    assert first.mismatch_reason == "manual_match_reassigned"
-    assert second.match_status == "matched"
+    assert response.status_code == 404
 
 
 def test_path_matching_marks_duplicate_remote_path_as_conflict(db: Session, tmp_path: Path) -> None:

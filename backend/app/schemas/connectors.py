@@ -15,6 +15,8 @@ class ConnectorConnectionCreate(BaseModel):
     config: dict = Field(default_factory=dict)
     enabled: bool = False
     sync_interval_minutes: int = Field(default=60, ge=5, le=10080)
+    path_mapping_mode: Literal["automatic", "manual"] = "automatic"
+    library_mapping_mode: Literal["automatic", "manual"] = "automatic"
 
 
 
@@ -25,6 +27,8 @@ class ConnectorConnectionUpdate(BaseModel):
     config: dict | None = None
     enabled: bool | None = None
     sync_interval_minutes: int | None = Field(default=None, ge=5, le=10080)
+    path_mapping_mode: Literal["automatic", "manual"] | None = None
+    library_mapping_mode: Literal["automatic", "manual"] | None = None
 
 
 
@@ -38,6 +42,8 @@ class ConnectorConnectionRead(BaseModel):
     config: dict
     capabilities: dict
     enabled: bool
+    path_mapping_mode: str
+    library_mapping_mode: str
     sync_interval_minutes: int
     server_name: str | None
     server_version: str | None
@@ -120,6 +126,51 @@ class ConnectorBindingRead(BaseModel):
     case_mode: str
     priority: int
     active: bool
+    origin: str
+    confidence: float
+    evidence_count: int
+    verification_status: str
+    last_verified_at: UtcDateTime | None
+
+
+class ConnectorMappingRecommendationRead(BaseModel):
+    kind: Literal["create_library"] = "create_library"
+    suggested_name: str
+    suggested_type: str
+    reason: str
+    accessible_paths: list[str] = Field(default_factory=list)
+
+
+class ConnectorMappingLocationRead(BaseModel):
+    id: int
+    remote_path: str
+    bindings: list[ConnectorBindingRead] = Field(default_factory=list)
+
+
+class ConnectorMappingLibraryRead(BaseModel):
+    id: int
+    remote_id: str
+    name: str
+    media_type: str | None
+    linked_library_ids: list[int] = Field(default_factory=list)
+    required_library_ids: list[int] = Field(default_factory=list)
+    locations: list[ConnectorMappingLocationRead] = Field(default_factory=list)
+    recommendation: ConnectorMappingRecommendationRead | None = None
+
+
+class ConnectorMappingCoverageRead(BaseModel):
+    total_items: int = 0
+    matched_items: int = 0
+    attention_items: int = 0
+    matched_percent: float = 0.0
+
+
+class ConnectorMappingOverviewRead(BaseModel):
+    connection_id: int
+    path_mapping_mode: str
+    library_mapping_mode: str
+    coverage: ConnectorMappingCoverageRead
+    libraries: list[ConnectorMappingLibraryRead] = Field(default_factory=list)
 
 
 class ConnectorLibraryLinkWrite(BaseModel):
@@ -155,7 +206,6 @@ class ConnectorItemRead(BaseModel):
     duration_seconds: float | None
     match_status: str
     mismatch_reason: str | None
-    suggested_media_file_id: int | None
     last_synced_at: UtcDateTime | None
 
 
@@ -166,17 +216,50 @@ class ConnectorItemPageRead(BaseModel):
     items: list[ConnectorItemRead]
 
 
-class ConnectorManualMatchWrite(BaseModel):
-    media_file_id: int = Field(ge=1)
+class ConnectorUserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    remote_id: str
+    name: str
+    enabled_for_sync: bool
+    last_synced_at: UtcDateTime | None
 
 
-class ConnectorMatchRead(BaseModel):
+class ConnectorUsersUpdate(BaseModel):
+    enabled_user_ids: list[str] = Field(default_factory=list, max_length=10000)
+
+    @model_validator(mode="after")
+    def reject_duplicate_ids(self) -> "ConnectorUsersUpdate":
+        if len(self.enabled_user_ids) != len(set(self.enabled_user_ids)):
+            raise ValueError("Connector user ids must be unique")
+        return self
+
+
+class ConnectorPlaybackUserDataRead(BaseModel):
+    remote_user_id: str
+    user_name: str
+    play_count: int
+    played: bool
+    playback_position_ticks: int
+    last_played_date: UtcDateTime | None
+    is_favorite: bool
+
+
+class ConnectorPlaybackEventRead(BaseModel):
+    remote_event_id: str
+    remote_user_id: str
+    user_name: str
+    played_at: UtcDateTime
+
+
+class ConnectorPlaybackSourceRead(BaseModel):
+    connection_id: int
+    connection_name: str
+    provider: str
     connector_item_id: int
-    media_file_id: int
-    binding_id: int | None = None
-    match_method: str
-    confidence: float
-    status: str
+    user_data: list[ConnectorPlaybackUserDataRead] = Field(default_factory=list)
+    playback_events: list[ConnectorPlaybackEventRead] = Field(default_factory=list)
+    individual_playback_history_start_at: UtcDateTime | None = None
 
 
 class ConnectorSyncStartRead(BaseModel):

@@ -43,6 +43,35 @@ SessionLocal = sessionmaker(bind=ENGINE, autoflush=False, autocommit=False, expi
 
 
 SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
+    "connector_connections": {
+        "path_mapping_mode": (
+            "ALTER TABLE connector_connections ADD COLUMN path_mapping_mode "
+            "VARCHAR(16) NOT NULL DEFAULT 'automatic'"
+        ),
+        "library_mapping_mode": (
+            "ALTER TABLE connector_connections ADD COLUMN library_mapping_mode "
+            "VARCHAR(16) NOT NULL DEFAULT 'automatic'"
+        ),
+    },
+    "connector_root_bindings": {
+        "origin": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN origin "
+            "VARCHAR(16) NOT NULL DEFAULT 'imported'"
+        ),
+        "confidence": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN confidence FLOAT NOT NULL DEFAULT 1"
+        ),
+        "evidence_count": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN evidence_count INTEGER NOT NULL DEFAULT 0"
+        ),
+        "verification_status": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN verification_status "
+            "VARCHAR(16) NOT NULL DEFAULT 'imported'"
+        ),
+        "last_verified_at": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN last_verified_at DATETIME"
+        ),
+    },
     "libraries": {
         "last_scan_at": "ALTER TABLE libraries ADD COLUMN last_scan_at DATETIME",
         "scan_mode": "ALTER TABLE libraries ADD COLUMN scan_mode VARCHAR(16) NOT NULL DEFAULT 'manual'",
@@ -994,13 +1023,15 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
             """
             INSERT OR IGNORE INTO connector_connections (
                 provider, name, base_url, config, capabilities, enabled,
-                sync_interval_minutes, server_name, server_version, last_status,
+                sync_interval_minutes, path_mapping_mode, library_mapping_mode,
+                server_name, server_version, last_status,
                 last_error, last_sync_started_at, last_sync_finished_at,
                 last_successful_sync_at, created_at, updated_at
             )
             SELECT 'jellyfin', 'Jellyfin', base_url, :config,
                    :capabilities,
-                   enabled, sync_interval_minutes, server_name, server_version, last_status,
+                   enabled, sync_interval_minutes, 'automatic', 'automatic',
+                   server_name, server_version, last_status,
                    last_error, last_sync_started_at, last_sync_finished_at,
                    last_successful_sync_at, created_at, updated_at
             FROM jellyfin_connection
@@ -1147,7 +1178,7 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
                          WHEN jellyfin_items.match_status = 'ambiguous' THEN 'ambiguous_file'
                          ELSE COALESCE(jellyfin_items.mismatch_reason, 'unmapped')
                        END,
-                       jellyfin_items.mismatch_reason, jellyfin_items.suggested_media_file_id,
+                       jellyfin_items.mismatch_reason, NULL,
                        jellyfin_items.last_synced_at, jellyfin_items.created_at, jellyfin_items.updated_at
                 FROM jellyfin_items
                 LEFT JOIN jellyfin_libraries ON jellyfin_libraries.id = jellyfin_items.library_id
@@ -1184,6 +1215,82 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
             {"connection_id": connector_id},
         )
 
+    if _sqlite_has_table(connection, "jellyfin_users") and _sqlite_has_table(
+        connection, "connector_users"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_users (
+                    connection_id, remote_id, name, enabled_for_sync,
+                    last_synced_at, created_at, updated_at
+                )
+                SELECT :connection_id, jellyfin_user_id, name, enabled_for_sync,
+                       last_synced_at, created_at, updated_at
+                FROM jellyfin_users
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+    if _sqlite_has_table(connection, "jellyfin_user_item_data") and _sqlite_has_table(
+        connection, "connector_user_item_data"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_user_item_data (
+                    connector_item_id, connector_user_id, play_count, played,
+                    playback_position_ticks, last_played_date, is_favorite,
+                    last_synced_at
+                )
+                SELECT connector_items.id, connector_users.id,
+                       jellyfin_user_item_data.play_count,
+                       jellyfin_user_item_data.played,
+                       jellyfin_user_item_data.playback_position_ticks,
+                       jellyfin_user_item_data.last_played_date,
+                       jellyfin_user_item_data.is_favorite,
+                       jellyfin_user_item_data.last_synced_at
+                FROM jellyfin_user_item_data
+                JOIN jellyfin_items
+                  ON jellyfin_items.id = jellyfin_user_item_data.jellyfin_item_id
+                JOIN connector_items
+                  ON connector_items.connection_id = :connection_id
+                 AND connector_items.remote_id = jellyfin_items.jellyfin_item_id
+                JOIN connector_users
+                  ON connector_users.connection_id = :connection_id
+                 AND connector_users.remote_id = jellyfin_user_item_data.jellyfin_user_id
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+    if _sqlite_has_table(connection, "jellyfin_playback_events") and _sqlite_has_table(
+        connection, "connector_playback_events"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_playback_events (
+                    connection_id, remote_event_id, connector_item_id,
+                    connector_user_id, played_at, last_synced_at
+                )
+                SELECT :connection_id, CAST(jellyfin_playback_events.jellyfin_activity_id AS TEXT),
+                       connector_items.id, connector_users.id,
+                       jellyfin_playback_events.played_at,
+                       jellyfin_playback_events.last_synced_at
+                FROM jellyfin_playback_events
+                JOIN jellyfin_items
+                  ON jellyfin_items.id = jellyfin_playback_events.jellyfin_item_id
+                JOIN connector_items
+                  ON connector_items.connection_id = :connection_id
+                 AND connector_items.remote_id = jellyfin_items.jellyfin_item_id
+                JOIN connector_users
+                  ON connector_users.connection_id = :connection_id
+                 AND connector_users.remote_id = jellyfin_playback_events.jellyfin_user_id
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+
     if _sqlite_has_table(connection, "connector_root_bindings"):
         for spec in _legacy_connector_binding_specs(connection):
             connection.execute(
@@ -1192,11 +1299,13 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
                     INSERT INTO connector_root_bindings (
                         location_id, library_root_id, source_prefix,
                         normalized_source_prefix, target_subpath, case_mode,
-                        priority, active, created_at, updated_at
+                        priority, active, origin, confidence, evidence_count,
+                        verification_status, last_verified_at, created_at, updated_at
                     )
                     SELECT :location_id, :library_root_id, :source_prefix,
                            :normalized_source_prefix, :target_subpath, 'insensitive',
-                           0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                           0, 1, 'automatic', 1, 0,
+                           'imported', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                     WHERE NOT EXISTS (
                         SELECT 1 FROM connector_root_bindings
                         WHERE location_id = :location_id
@@ -1253,6 +1362,47 @@ def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
                     }
                 )
             },
+        )
+
+
+def _remove_manual_item_matching_state(connection) -> None:
+    if _sqlite_has_table(connection, "connector_items"):
+        if _sqlite_has_table(connection, "connector_media_matches"):
+            connection.execute(
+                text(
+                    "UPDATE connector_items SET match_status = 'unmapped', mismatch_reason = NULL, "
+                    "suggested_media_file_id = NULL WHERE match_status = 'ignored' OR id IN ("
+                    "SELECT connector_item_id FROM connector_media_matches "
+                    "WHERE match_method = 'manual')"
+                )
+            )
+            connection.execute(
+                text("DELETE FROM connector_media_matches WHERE match_method = 'manual'")
+            )
+        connection.execute(
+            text("UPDATE connector_items SET suggested_media_file_id = NULL")
+        )
+    if _sqlite_has_table(connection, "jellyfin_items"):
+        if _sqlite_has_table(connection, "jellyfin_media_matches"):
+            connection.execute(
+                text(
+                    "UPDATE jellyfin_items SET match_status = 'unmatched', mismatch_reason = NULL, "
+                    "suggested_media_file_id = NULL WHERE match_status = 'ignored' OR id IN ("
+                    "SELECT jellyfin_item_id FROM jellyfin_media_matches "
+                    "WHERE match_method = 'manual')"
+                )
+            )
+            connection.execute(
+                text("DELETE FROM jellyfin_media_matches WHERE match_method = 'manual'")
+            )
+        connection.execute(text("UPDATE jellyfin_items SET suggested_media_file_id = NULL"))
+    if _sqlite_has_table(connection, "app_settings"):
+        connection.execute(
+            text(
+                "INSERT INTO app_settings (key, value) VALUES ('connector_mapping_migration', :value) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            ),
+            {"value": json.dumps({"version": 1, "status": "completed"})},
         )
 
 
@@ -1369,6 +1519,7 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
             )
 
         _migrate_legacy_jellyfin_to_connectors(connection)
+        _remove_manual_item_matching_state(connection)
 
         if _sqlite_has_table(connection, "libraries"):
             connection.execute(

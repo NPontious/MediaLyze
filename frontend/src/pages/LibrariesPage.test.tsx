@@ -15,7 +15,6 @@ import {
   type HistoryReconstructionResult,
   type HistoryStorage,
   type JellyfinLibrary,
-  type JellyfinPathMapping,
   type LibrarySummary,
   type PathInspection,
   type QualityProfileDefinition,
@@ -541,7 +540,7 @@ describe("LibrariesPage settings navigation", () => {
     expect(desktopNavigationQueries.getByRole("button", { name: "Quality profiles" })).toBeInTheDocument();
   });
 
-  it("expands and focuses a linked library from a matching-warning URL", async () => {
+  it("opens a linked library at the central connector status", async () => {
     const library = createLibrarySummary({ id: 3, name: "Movies" });
     const jellyfinLibrary = createJellyfinLibrary({
       linked_library_id: 3,
@@ -555,9 +554,8 @@ describe("LibrariesPage settings navigation", () => {
       initialEntry: "/settings?section=libraries&library=3&focus=path-mapping",
     });
 
-    expect(await screen.findByRole("heading", { name: "Jellyfin association" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Path mapping (optional)" }).closest(".library-jellyfin-path-mappings"))
-      .toHaveClass("is-focused");
+    expect(await screen.findByRole("heading", { name: "Connector assignments" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Path mapping (optional)" })).not.toBeInTheDocument();
   });
 });
 
@@ -726,7 +724,7 @@ describe("LibrariesPage ignore patterns", () => {
 
     renderPage({ activePanel: "patternRecognition" });
 
-    expect(await screen.findByDisplayValue("Folder depth")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Folder depth")).toHaveClass("settings-choice-input");
     expect(screen.getByLabelText("Series folder depth")).toHaveValue("1");
     expect(screen.getByLabelText("Season folder depth")).toHaveValue("2");
     expect(screen.queryByText("Series folder regexes")).not.toBeInTheDocument();
@@ -1637,185 +1635,19 @@ describe("LibrariesPage media type selection", () => {
 });
 
 describe("LibrariesPage Jellyfin library assignments", () => {
-  it("manages detected Jellyfin library assignments only in the Libraries panel", async () => {
+  it("shows connector assignments as status instead of a library-side editor", async () => {
     const medialyzeLibrary = createLibrarySummary();
     const jellyfinLibrary = createJellyfinLibrary();
     vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
     vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
-    const updateLink = vi.spyOn(api, "updateJellyfinLibraryLink").mockResolvedValue({
-      ...jellyfinLibrary,
-      linked_library_id: medialyzeLibrary.id,
-      linked_library_name: medialyzeLibrary.name,
-      link_method: "manual",
-      mapped_status: "linked",
-      data_scope: "linked",
-    });
-
     renderPage({ activePanel: "configuredLibraries" });
 
     await expandLibrarySettings();
-    const assignment = await screen.findByRole("combobox", { name: "Associated Jellyfin library" });
-    fireEvent.change(assignment, { target: { value: String(jellyfinLibrary.id) } });
-
-    await waitFor(() => expect(updateLink).toHaveBeenCalledWith(jellyfinLibrary.id, medialyzeLibrary.id));
-    expect(screen.getByRole("heading", { name: "Jellyfin association" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Connector assignments" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Associated Jellyfin library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Path mapping (optional)" })).not.toBeInTheDocument();
   });
 
-  it("prefills and automatically links a new library from an unassigned Jellyfin library", async () => {
-    const jellyfinLibrary = createJellyfinLibrary();
-    vi.spyOn(api, "libraries").mockResolvedValue([createLibrarySummary()]);
-    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
-    const created = createLibrarySummary({ id: 2, name: "Anime", type: "series", path: "media" });
-    const createLibrary = vi.spyOn(api, "createLibrary").mockResolvedValue(created);
-    const updateLink = vi.spyOn(api, "updateJellyfinLibraryLink").mockResolvedValue({
-      ...jellyfinLibrary,
-      linked_library_id: created.id,
-      linked_library_name: created.name,
-      link_method: "manual",
-      mapped_status: "linked",
-      data_scope: "linked",
-    });
-
-    renderPage({ activePanel: "configuredLibraries" });
-
-    await expandLibrarySettings();
-    expect(await screen.findByRole("option", { name: "Anime" })).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Add library" }));
-    const detectedLibraryOption = (await screen.findByText("12 Jellyfin items")).closest("button");
-    expect(detectedLibraryOption).not.toBeNull();
-    fireEvent.click(detectedLibraryOption as HTMLButtonElement);
-    expect(await screen.findByRole("heading", { name: "Add a detected Jellyfin library" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Name")).toHaveValue("Anime");
-    expect(screen.getByRole("combobox", { name: "Media type" })).toHaveValue("series");
-
-    fireEvent.click(screen.getByRole("button", { name: "Create library" }));
-
-    await waitFor(() => expect(createLibrary).toHaveBeenCalledWith(expect.objectContaining({ name: "Anime", type: "series" })));
-    await waitFor(() => expect(updateLink).toHaveBeenCalledWith(jellyfinLibrary.id, created.id));
-  });
-
-  it("activates, edits, and deactivates path mapping inside the associated MediaLyze library", async () => {
-    const medialyzeLibrary = createLibrarySummary();
-    const jellyfinLibrary = createJellyfinLibrary({
-      linked_library_id: medialyzeLibrary.id,
-      linked_library_name: medialyzeLibrary.name,
-      mapped_status: "linked",
-      data_scope: "linked",
-    });
-    vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
-    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
-    let persistedMapping: JellyfinPathMapping = {
-      id: 9,
-      jellyfin_path_prefix: "/jellyfin/anime",
-      medialyze_path_prefix: "/media/movies",
-      enabled: true,
-    };
-    const updateMappingsBatch = vi.spyOn(api, "updateJellyfinPathMappingsBatch").mockImplementation(async (mappings) => {
-      persistedMapping = {
-        id: mappings[0]?.id ?? persistedMapping.id,
-        jellyfin_path_prefix: mappings[0]?.jellyfin_path_prefix ?? persistedMapping.jellyfin_path_prefix,
-        medialyze_path_prefix: mappings[0]?.medialyze_path_prefix ?? persistedMapping.medialyze_path_prefix,
-        enabled: mappings[0]?.enabled ?? persistedMapping.enabled,
-      };
-      return [persistedMapping];
-    });
-    const updateMapping = vi.spyOn(api, "updateJellyfinPathMapping").mockImplementation(async (_id, payload) => {
-      persistedMapping = { ...persistedMapping, ...payload };
-      return persistedMapping;
-    });
-
-    renderPage({ activePanel: "configuredLibraries" });
-
-    await expandLibrarySettings();
-    expect(await screen.findByRole("heading", { name: "Path mapping (optional)" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Explain path mapping" }));
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("different mount points");
-    expect(screen.queryByRole("textbox", { name: "MediaLyze path" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("switch", { name: "Enable path mapping" }));
-    await waitFor(() => expect(updateMappingsBatch).toHaveBeenCalledWith([
-      {
-        jellyfin_path_prefix: "/jellyfin/anime",
-        medialyze_path_prefix: "/media/movies",
-        enabled: true,
-      },
-    ]));
-
-    expect(await screen.findByText("/jellyfin/anime")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Disable path mapping" })).toBeChecked();
-    expect(screen.getByRole("textbox", { name: "MediaLyze path" }))
-      .toHaveClass("settings-choice-input");
-    expect(screen.getByRole("textbox", { name: "MediaLyze path" })).toHaveValue("/media/movies");
-    fireEvent.change(screen.getByRole("textbox", { name: "MediaLyze path" }), {
-      target: { value: "/media/films" },
-    });
-    const saveMappingButton = screen.getByRole("button", { name: "Save mapping" });
-    expect(saveMappingButton).toHaveClass("is-dirty");
-    fireEvent.click(saveMappingButton);
-
-    await waitFor(() => expect(updateMapping).toHaveBeenCalledWith(9, {
-      jellyfin_path_prefix: "/jellyfin/anime",
-      medialyze_path_prefix: "/media/films",
-      enabled: true,
-    }));
-
-    fireEvent.click(screen.getByRole("switch", { name: "Disable path mapping" }));
-    await waitFor(() => expect(updateMappingsBatch).toHaveBeenLastCalledWith([
-      {
-        id: 9,
-        jellyfin_path_prefix: "/jellyfin/anime",
-        medialyze_path_prefix: "/media/films",
-        enabled: false,
-      },
-    ]));
-    expect(await screen.findByRole("switch", { name: "Enable path mapping" })).not.toBeChecked();
-    expect(screen.queryByRole("textbox", { name: "MediaLyze path" })).not.toBeInTheDocument();
-  });
-
-  it("shows a partial path-mapping state and enables all locations in one batch", async () => {
-    const medialyzeLibrary = createLibrarySummary();
-    const jellyfinLibrary = createJellyfinLibrary({
-      locations: ["/jellyfin/movies", "/jellyfin/archive"],
-      linked_library_id: medialyzeLibrary.id,
-      linked_library_name: medialyzeLibrary.name,
-      mapped_status: "linked",
-      data_scope: "linked",
-    });
-    const mappings: JellyfinPathMapping[] = [
-      {
-        id: 10,
-        jellyfin_path_prefix: "/jellyfin/movies",
-        medialyze_path_prefix: "/media/movies",
-        enabled: true,
-      },
-      {
-        id: 11,
-        jellyfin_path_prefix: "/jellyfin/archive",
-        medialyze_path_prefix: "/media/archive",
-        enabled: false,
-      },
-    ];
-    vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
-    vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
-    vi.mocked(api.jellyfinPathMappings).mockResolvedValue(mappings);
-    const updateBatch = vi.spyOn(api, "updateJellyfinPathMappingsBatch").mockResolvedValue(
-      mappings.map((mapping) => ({ ...mapping, enabled: true })),
-    );
-
-    renderPage({ activePanel: "configuredLibraries" });
-    await expandLibrarySettings();
-
-    expect(await screen.findByText("Partially enabled")).toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: "Enable path mapping" });
-    expect(toggle).toHaveAttribute("aria-checked", "mixed");
-    fireEvent.click(toggle);
-
-    await waitFor(() => expect(updateBatch).toHaveBeenCalledWith([
-      { ...mappings[0], enabled: true },
-      { ...mappings[1], enabled: true },
-    ]));
-    expect(await screen.findByText("Enabled")).toBeInTheDocument();
-  });
 });
 
 describe("LibrariesPage desktop mode", () => {
@@ -2312,7 +2144,8 @@ describe("LibrariesPage settings panels", () => {
     expect(screen.getByRole("button", { name: "Hide settings for Movies" })).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("/media/movies")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change path" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Associated Jellyfin library" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connector assignments" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Associated Jellyfin library" })).not.toBeInTheDocument();
 
     const detailsButton = await screen.findByRole("button", { name: "Show library details for Movies" });
     const titleMain = screen.getByRole("link", { name: "Movies" }).closest(".library-title-main") as HTMLElement | null;

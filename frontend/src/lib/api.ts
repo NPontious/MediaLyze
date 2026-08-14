@@ -274,6 +274,8 @@ export type ConnectorConnection = {
   capabilities: Record<string, boolean>;
   enabled: boolean;
   sync_interval_minutes: number;
+  path_mapping_mode: "automatic" | "manual";
+  library_mapping_mode: "automatic" | "manual";
   server_name: string | null;
   server_version: string | null;
   last_status: string;
@@ -315,10 +317,47 @@ export type ConnectorBinding = {
   case_mode: "sensitive" | "insensitive";
   priority: number;
   active: boolean;
+  origin: "automatic" | "manual" | string;
+  confidence: number;
+  evidence_count: number;
+  verification_status: "verified" | "stale" | "imported" | string;
+  last_verified_at: string | null;
 };
 
-export type ConnectorBindingWrite = Omit<ConnectorBinding, "id" | "normalized_source_prefix"> & {
+export type ConnectorBindingWrite = Omit<ConnectorBinding, "id" | "normalized_source_prefix" | "origin" | "confidence" | "evidence_count" | "verification_status" | "last_verified_at"> & {
   id?: number;
+};
+
+export type ConnectorMappingOverview = {
+  connection_id: number;
+  path_mapping_mode: "automatic" | "manual";
+  library_mapping_mode: "automatic" | "manual";
+  coverage: {
+    total_items: number;
+    matched_items: number;
+    attention_items: number;
+    matched_percent: number;
+  };
+  libraries: Array<{
+    id: number;
+    remote_id: string;
+    name: string;
+    media_type: string | null;
+    linked_library_ids: number[];
+    required_library_ids: number[];
+    locations: Array<{
+      id: number;
+      remote_path: string;
+      bindings: ConnectorBinding[];
+    }>;
+    recommendation: null | {
+      kind: "create_library";
+      suggested_name: string;
+      suggested_type: string;
+      reason: string;
+      accessible_paths: string[];
+    };
+  }>;
 };
 
 export type ConnectorItem = {
@@ -333,7 +372,6 @@ export type ConnectorItem = {
   duration_seconds: number | null;
   match_status: string;
   mismatch_reason: string | null;
-  suggested_media_file_id: number | null;
   last_synced_at: string | null;
 };
 
@@ -369,6 +407,36 @@ export type ConnectorProviderDescriptor = {
     secret: boolean;
   }>;
   optional_capabilities: string[];
+};
+
+export type ConnectorUser = {
+  remote_id: string;
+  name: string;
+  enabled_for_sync: boolean;
+  last_synced_at: string | null;
+};
+
+export type ConnectorPlaybackSource = {
+  connection_id: number;
+  connection_name: string;
+  provider: string;
+  connector_item_id: number;
+  user_data: Array<{
+    remote_user_id: string;
+    user_name: string;
+    play_count: number;
+    played: boolean;
+    playback_position_ticks: number;
+    last_played_date: string | null;
+    is_favorite: boolean;
+  }>;
+  playback_events: Array<{
+    remote_event_id: string;
+    remote_user_id: string;
+    user_name: string;
+    played_at: string;
+  }>;
+  individual_playback_history_start_at: string | null;
 };
 
 export type FileConnectorSource = {
@@ -2155,6 +2223,8 @@ export const api = {
     enabled?: boolean;
     sync_interval_minutes?: number;
     config?: Record<string, unknown>;
+    path_mapping_mode?: "automatic" | "manual";
+    library_mapping_mode?: "automatic" | "manual";
   }) => request<ConnectorConnection>("/connectors", { method: "POST", body: JSON.stringify(payload) }),
   updateConnector: (id: number, payload: Partial<{
     name: string;
@@ -2163,6 +2233,8 @@ export const api = {
     enabled: boolean;
     sync_interval_minutes: number;
     config: Record<string, unknown>;
+    path_mapping_mode: "automatic" | "manual";
+    library_mapping_mode: "automatic" | "manual";
   }>) => request<ConnectorConnection>(`/connectors/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteConnector: (id: number) => request<void>(`/connectors/${id}`, { method: "DELETE" }),
   testConnector: (id: number, payload: { base_url?: string; secret?: string } = {}) =>
@@ -2182,7 +2254,15 @@ export const api = {
     ),
   connectorSyncStatus: (id: number) =>
     request<ConnectorSyncJob | null>(`/connectors/${id}/sync/status`),
+  connectorUsers: (id: number) => request<ConnectorUser[]>(`/connectors/${id}/users`),
+  updateConnectorUsers: (id: number, enabledUserIds: string[]) =>
+    request<ConnectorUser[]>(`/connectors/${id}/users`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled_user_ids: enabledUserIds }),
+    }),
   connectorLibraries: (id: number) => request<ConnectorLibrary[]>(`/connectors/${id}/libraries`),
+  connectorMappingOverview: (id: number) =>
+    request<ConnectorMappingOverview>(`/connectors/${id}/mapping-overview`),
   updateConnectorLibraryLinks: (
     id: number,
     links: Array<{ connector_library_id: number; library_ids: number[] }>,
@@ -2210,17 +2290,16 @@ export const api = {
   },
   connectorItemStatusSummary: (id: number) =>
     request<Record<string, number>>(`/connectors/${id}/item-status-summary`),
-  matchConnectorItem: (connectionId: number, itemId: number, mediaFileId: number) =>
-    request(`/connectors/${connectionId}/items/${itemId}/match`, {
-      method: "PUT",
-      body: JSON.stringify({ media_file_id: mediaFileId }),
-    }),
-  ignoreConnectorItem: (connectionId: number, itemId: number) =>
-    request<void>(`/connectors/${connectionId}/items/${itemId}/match`, { method: "DELETE" }),
-  restoreAutomaticConnectorItemMatch: (connectionId: number, itemId: number) =>
-    request<void>(`/connectors/${connectionId}/items/${itemId}/automatic-match`, {
-      method: "POST",
-    }),
+  createLibraryForConnector: (
+    connectionId: number,
+    connectorLibraryId: number,
+    payload: { name: string; path: string; paths?: string[]; type: LibraryType; scan_mode?: string },
+  ) => request<LibrarySummary>(
+    `/connectors/${connectionId}/libraries/${connectorLibraryId}/create-medialyze-library`,
+    { method: "POST", body: JSON.stringify(payload) },
+  ),
+  fileConnectorPlayback: (fileId: string | number) =>
+    request<ConnectorPlaybackSource[]>(`/files/${fileId}/connector-playback`),
   jellyfinConnection: () => request<JellyfinConnection>("/jellyfin/connection"),
   updateJellyfinConnection: (payload: {
     base_url?: string;

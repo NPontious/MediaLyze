@@ -7,7 +7,7 @@
 - `backend/app/services/scanner.py` performs deterministic discovery and parallel `ffprobe` execution.
 - `backend/app/services/connector_contract.py` defines the provider-neutral adapter boundary and DTOs.
 - `backend/app/services/connector_sync.py` owns connection-scoped staging, atomic promotion, cancellation, and recovery.
-- `backend/app/services/connector_pathing.py` and `connector_matching.py` resolve remote paths to stable root-relative file identities.
+- `backend/app/services/connector_mapping.py` infers conservative connection-scoped mapping rules, while `connector_pathing.py` and `connector_matching.py` resolve them to stable root-relative file identities.
 
 ## Frontend
 
@@ -36,4 +36,4 @@ flowchart LR
     M --> O["API and file overlays"]
 ```
 
-The connector core owns connections, provider descriptors, credentials, remote catalogs, mappings, synchronization, background recompute jobs, and matches. Provider adapters own transport and response normalization. The matcher prepares bindings once, persists resolved root locators, and performs bulk indexed matching. The MediaLyze scanner remains the sole owner of local paths and file identities and reports pre/post root locators so deleted, ignored, and renamed files also trigger targeted rematching. Connector work has a dedicated executor separate from scan and maintenance work. Jellyfin user, playback, and image data remain provider-specific compatibility extensions during the first connector release.
+The connector core owns connections, provider descriptors, credentials, remote catalogs, mapping inference, synchronization, background recompute jobs, and exact-path matches. Provider adapters own transport and response normalization. The inference step derives only transformations supported by a conservative multi-asset corpus; it never persists file candidates. The matcher prepares bindings once, persists resolved root locators, and performs bulk indexed matching. The MediaLyze scanner remains the sole owner of local paths and file identities and reports pre/post root locators so additions, deletions, and renames enqueue connector remapping on the dedicated executor. Jellyfin image behavior remains a provider-specific compatibility extension during the first connector release.

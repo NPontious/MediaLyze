@@ -35,6 +35,7 @@ import { DownloadIcon, type DownloadIconHandle } from "../components/DownloadIco
 import { DuplicatePanelEmptyState } from "../components/DuplicatePanelEmptyState";
 import { LoaderCircleIcon } from "../components/LoaderCircleIcon";
 import {
+  ConnectorStreamingDetails,
   JellyfinCoverDetails,
   JellyfinOverviewBadges,
   JellyfinOverviewDetails,
@@ -50,6 +51,7 @@ import {
   type CompatibilityEvaluation,
   type CompatibilityProfile,
   type CompatibilityStatus,
+  type ConnectorPlaybackSource,
   type FileConnectorSource,
   type HardwareProfile,
   type JellyfinFileOverlay,
@@ -663,7 +665,7 @@ function buildAvailableFileDetailPanelIds(
   file: MediaFileDetail | null,
   qualityDetail: MediaFileQualityScoreDetail | null,
   compatibilityCount = 0,
-  hasJellyfinMatch = false,
+  hasConnectorSource = false,
   hasJellyfinCover = false,
 ): FileDetailPanelId[] {
   const ids: FileDetailPanelId[] = ["overview"];
@@ -676,7 +678,7 @@ function buildAvailableFileDetailPanelIds(
   if (compatibilityCount > 0) {
     ids.push("compatibility");
   }
-  if (hasJellyfinMatch) {
+  if (hasConnectorSource) {
     ids.push("jellyfin");
   }
   if (hasVideoMetadata(file)) {
@@ -1615,6 +1617,8 @@ export function FileDetailPage() {
   const [jellyfinError, setJellyfinError] = useState<string | null>(null);
   const [connectorSources, setConnectorSources] = useState<FileConnectorSource[] | null>(null);
   const [connectorSourcesError, setConnectorSourcesError] = useState<string | null>(null);
+  const [connectorPlayback, setConnectorPlayback] = useState<ConnectorPlaybackSource[] | null>(null);
+  const [connectorPlaybackError, setConnectorPlaybackError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activePanelState, setActivePanelState] = useState<{
     fileId: string;
@@ -1656,6 +1660,8 @@ export function FileDetailPage() {
 
   useEffect(() => {
     setRawProbeState({ fileId, status: "idle", error: null });
+    setConnectorPlayback(null);
+    setConnectorPlaybackError(null);
     api
       .file(fileId, { includeRawFfprobe: false })
       .then((payload) => {
@@ -1699,6 +1705,13 @@ export function FileDetailPage() {
         setConnectorSourcesError(null);
       })
       .catch((reason: Error) => setConnectorSourcesError(reason.message));
+    api
+      .fileConnectorPlayback(fileId)
+      .then((payload) => {
+        setConnectorPlayback(payload);
+        setConnectorPlaybackError(null);
+      })
+      .catch((reason: Error) => setConnectorPlaybackError(reason.message));
     Promise.all([
       api.hardwareProfiles(),
       api.softwareProfiles(),
@@ -1945,7 +1958,7 @@ export function FileDetailPage() {
     },
     jellyfin: {
       title: t("connectors.externalSources"),
-      loading: !jellyfinOverlay && !jellyfinError,
+      loading: (!connectorSources && !connectorSourcesError) || (!connectorPlayback && !connectorPlaybackError),
       error: jellyfinError,
       titleAddon: (
         <TooltipTrigger
@@ -1959,6 +1972,7 @@ export function FileDetailPage() {
         <div className="file-external-sources">
           <div className="file-external-source-list">
             {connectorSourcesError ? <p className="notice error">{connectorSourcesError}</p> : null}
+            {connectorPlaybackError ? <p className="notice error">{connectorPlaybackError}</p> : null}
             {(connectorSources ?? []).map((source) => (
               <article className="file-external-source-card" key={`${source.connection_id}-${source.connector_item_id}`}>
                 <div><span className="badge">{source.provider}</span>{source.preferred ? <span className="badge">{t("connectors.preferred")}</span> : null}<strong>{source.title}</strong></div>
@@ -1970,7 +1984,13 @@ export function FileDetailPage() {
             ))}
             {connectorSources?.length === 0 ? <p className="field-hint">{t("connectors.noExternalSources")}</p> : null}
           </div>
-          {jellyfinOverlay?.item ? (
+          {connectorPlayback?.length ? (
+            <ConnectorStreamingDetails
+              sources={connectorPlayback}
+              durationSeconds={file?.duration}
+              showAllPlaybacksWhenUnstacked={showAllPlaybacksWhenUnstacked}
+            />
+          ) : jellyfinOverlay?.item ? (
             <JellyfinStreamingDetails
               userData={jellyfinOverlay.user_data ?? []}
               playbackEvents={jellyfinOverlay.playback_events ?? []}
@@ -2079,10 +2099,10 @@ export function FileDetailPage() {
       file,
       qualityDetail,
       hardwareProfiles.length + softwareProfiles.length + combinationProfiles.length,
-      Boolean(jellyfinOverlay?.item),
+      Boolean(jellyfinOverlay?.item || connectorSources?.length || connectorPlayback?.length),
       Boolean(jellyfinOverlay?.item?.image_tags.Primary),
     ),
-    [combinationProfiles.length, file, hardwareProfiles.length, jellyfinOverlay?.item, qualityDetail, softwareProfiles.length],
+    [combinationProfiles.length, connectorPlayback?.length, connectorSources?.length, file, hardwareProfiles.length, jellyfinOverlay?.item, qualityDetail, softwareProfiles.length],
   );
   const navItems = FILE_DETAIL_NAV_ITEMS.filter((item) => availablePanelIds.includes(item.id));
   const normalizedActivePanelId = normalizeFileDetailPanelId(activePanelId, availablePanelIds);

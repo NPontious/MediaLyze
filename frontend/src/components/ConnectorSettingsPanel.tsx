@@ -1,189 +1,227 @@
-import { Check, CircleStop, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleStop,
+  FolderPlus,
+  Link2,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AsyncPanel } from "./AsyncPanel";
-import { JellyfinSettingsPanel } from "./JellyfinSettingsPanel";
+import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import {
   api,
-  type ConnectorBinding,
-  type ConnectorBindingWrite,
   type ConnectorConnection,
-  type ConnectorItem,
-  type ConnectorLibrary,
-  type ConnectorProviderDescriptor,
+  type ConnectorBindingWrite,
+  type ConnectorMappingOverview,
   type ConnectorSyncJob,
+  type ConnectorUser,
   type LibrarySummary,
 } from "../lib/api";
 
-type ConnectorCatalog = {
-  libraries: ConnectorLibrary[];
-  bindings: ConnectorBinding[];
-  items: ConnectorItem[];
-  itemTotal: number;
-  statusSummary: Record<string, number>;
-  job: ConnectorSyncJob | null;
+type ConnectionDraft = {
+  name: string;
+  baseUrl: string;
+  secret: string;
+  syncInterval: string;
 };
 
-export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?: () => void }) {
+function providerLabel(provider: string) {
+  return provider ? `${provider[0].toUpperCase()}${provider.slice(1)}` : provider;
+}
+
+function ConnectionUsers({ connection }: { connection: ConnectorConnection }) {
   const { t } = useTranslation();
-  const [connections, setConnections] = useState<ConnectorConnection[]>([]);
-  const [providers, setProviders] = useState<string[]>([]);
-  const [providerDescriptors, setProviderDescriptors] = useState<ConnectorProviderDescriptor[]>([]);
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
-  const [catalogs, setCatalogs] = useState<Record<number, ConnectorCatalog>>({});
-  const [drafts, setDrafts] = useState<Record<number, Record<number, ConnectorBindingWrite>>>({});
-  const [linkDrafts, setLinkDrafts] = useState<Record<number, Record<number, number[]>>>({});
-  const [manualMatchIds, setManualMatchIds] = useState<Record<number, string>>({});
-  const [advanced, setAdvanced] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [users, setUsers] = useState<ConnectorUser[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [provider, setProvider] = useState("jellyfin");
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [secret, setSecret] = useState("");
-  const [createConfig, setCreateConfig] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
-    const [nextConnections, nextProviderDescriptors, nextLibraries] = await Promise.all([
-      api.connectors(),
-      api.connectorProviderDescriptors(),
-      api.libraries(),
-    ]);
-    const entries = await Promise.all(nextConnections.map(async (connection) => {
-      const [remoteLibraries, bindings, itemPage, statusSummary, job] = await Promise.all([
-        api.connectorLibraries(connection.id),
-        api.connectorBindings(connection.id),
-        api.connectorItems(connection.id, undefined, 0, 50, true),
-        api.connectorItemStatusSummary(connection.id),
-        api.connectorSyncStatus(connection.id),
-      ]);
-      return [connection.id, {
-        libraries: remoteLibraries,
-        bindings,
-        items: itemPage.items,
-        itemTotal: itemPage.total,
-        statusSummary,
-        job,
-      }] as const;
-    }));
-    const nextCatalogs = Object.fromEntries(entries) as Record<number, ConnectorCatalog>;
-    const nextDrafts: Record<number, Record<number, ConnectorBindingWrite>> = {};
-    const nextLinkDrafts: Record<number, Record<number, number[]>> = {};
-    for (const connection of nextConnections) {
-      const catalog = nextCatalogs[connection.id];
-      nextDrafts[connection.id] = {};
-      nextLinkDrafts[connection.id] = {};
-      for (const remoteLibrary of catalog.libraries) {
-        nextLinkDrafts[connection.id][remoteLibrary.id] = remoteLibrary.linked_library_ids;
-        for (const location of remoteLibrary.locations) {
-          const binding = catalog.bindings.find((candidate) => candidate.location_id === location.id);
-          nextDrafts[connection.id][location.id] = binding
-            ? {
-                id: binding.id,
-                location_id: binding.location_id,
-                library_root_id: binding.library_root_id,
-                source_prefix: binding.source_prefix,
-                target_subpath: binding.target_subpath,
-                case_mode: binding.case_mode,
-                priority: binding.priority,
-                active: binding.active,
-              }
-            : {
-                location_id: location.id,
-                library_root_id: 0,
-                source_prefix: location.remote_path,
-                target_subpath: "",
-                case_mode: "sensitive",
-                priority: 0,
-                active: true,
-              };
-        }
-      }
-    }
-    setConnections(nextConnections);
-    setProviderDescriptors(nextProviderDescriptors);
-    setProviders(nextProviderDescriptors.map((descriptor) => descriptor.provider));
-    setLibraries(nextLibraries);
-    setCatalogs(nextCatalogs);
-    setDrafts(nextDrafts);
-    setLinkDrafts(nextLinkDrafts);
-  }, []);
-
-  useEffect(() => {
     setLoading(true);
-    load().catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false));
-  }, [load]);
-
-  useEffect(() => {
-    if (connections.length === 0) return undefined;
-    const timer = window.setInterval(() => {
-      void Promise.all(connections.map(async (connection) => {
-        const [job, statusSummary, itemPage] = await Promise.all([
-          api.connectorSyncStatus(connection.id),
-          api.connectorItemStatusSummary(connection.id),
-          api.connectorItems(connection.id, undefined, 0, 50, true),
-        ]);
-        return [connection.id, job, statusSummary, itemPage] as const;
-      })).then((updates) => {
-        setCatalogs((current) => {
-          const next = { ...current };
-          for (const [connectionId, job, statusSummary, itemPage] of updates) {
-            if (!next[connectionId]) continue;
-            next[connectionId] = {
-              ...next[connectionId],
-              job,
-              statusSummary,
-              items: itemPage.items,
-              itemTotal: itemPage.total,
-            };
-          }
-          return next;
-        });
-      }).catch(() => undefined);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [connections]);
-
-  const rootOptions = useMemo(() => libraries.flatMap((library) =>
-    (library.roots ?? []).map((root) => ({
-      id: root.id,
-      label: `${library.name} · ${root.display_name}`,
-      path: root.path,
-    }))), [libraries]);
-
-  function updateDraft(connectionId: number, locationId: number, update: Partial<ConnectorBindingWrite>) {
-    setDrafts((current) => ({
-      ...current,
-      [connectionId]: {
-        ...current[connectionId],
-        [locationId]: { ...current[connectionId]?.[locationId], ...update },
-      },
-    }));
-  }
-
-  async function createConnection() {
-    setPending("create");
     setError(null);
     try {
-      await api.createConnector({
-        provider,
-        name: name.trim() || provider,
-        base_url: baseUrl.trim(),
-        secret: secret.trim(),
-        config: createConfig,
-        enabled: false,
-      });
-      setName("");
-      setBaseUrl("");
-      setSecret("");
-      setCreateConfig({});
-      setCreateOpen(false);
+      setUsers(await api.connectorUsers(connection.id));
+      setLoaded(true);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [connection.id]);
+
+  useEffect(() => {
+    if (expanded && !loaded) void load();
+  }, [expanded, load, loaded]);
+
+  async function save(enabledIds: string[]) {
+    setPending(true);
+    setError(null);
+    try {
+      setUsers(await api.updateConnectorUsers(connection.id, enabledIds));
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const enabledIds = users.filter((user) => user.enabled_for_sync).map((user) => user.remote_id);
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const visibleUsers = (normalizedSearch
+    ? users.filter((user) => user.name.toLocaleLowerCase().includes(normalizedSearch))
+    : [...users]
+  ).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+  const selectedUsers = visibleUsers.filter((user) => user.enabled_for_sync);
+  const unselectedUsers = visibleUsers.filter((user) => !user.enabled_for_sync);
+
+  function renderGroup(group: "selected" | "unselected", groupUsers: ConnectorUser[]) {
+    if (!groupUsers.length) return null;
+    const headingId = `connector-${connection.id}-user-group-${group}`;
+    return (
+      <section className="jellyfin-user-group" aria-labelledby={headingId}>
+        <div className="jellyfin-user-group-heading">
+          <h5 id={headingId}>{t(`connectors.users.groups.${group}`)}</h5>
+          <span className="badge">{groupUsers.length}</span>
+        </div>
+        <div className="jellyfin-user-list">
+          {groupUsers.map((user) => (
+            <label key={user.remote_id}>
+              <input
+                type="checkbox"
+                checked={user.enabled_for_sync}
+                disabled={pending}
+                onChange={() => void save(
+                  user.enabled_for_sync
+                    ? enabledIds.filter((id) => id !== user.remote_id)
+                    : [...enabledIds, user.remote_id],
+                )}
+              />
+              <span>{user.name}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="connector-detail-section connector-users-section">
+      <button
+        type="button"
+        className="connector-users-toggle"
+        aria-expanded={expanded}
+        aria-controls={`connector-${connection.id}-users-body`}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <div>
+          <h4>{t("connectors.users.title")}</h4>
+          <p>{loaded ? t("connectors.users.summary", { selected: enabledIds.length, total: users.length }) : t("connectors.users.description")}</p>
+        </div>
+        {expanded ? <ChevronDown aria-hidden="true" className="nav-icon" /> : <ChevronRight aria-hidden="true" className="nav-icon" />}
+      </button>
+      {expanded ? (
+        <div className="connector-users-body" id={`connector-${connection.id}-users-body`}>
+          {loading ? <div className="progress is-indeterminate"><span /></div> : null}
+          {error ? <div className="alert" role="alert">{error}</div> : null}
+          {!loading && loaded && !users.length ? <div className="notice">{t("connectors.users.empty")}</div> : null}
+          {users.length ? (
+            <div className="jellyfin-user-selection" aria-busy={pending}>
+              <div className="jellyfin-user-selection-toolbar">
+                <label className="jellyfin-user-search">
+                  <Search aria-hidden="true" />
+                  <span className="sr-only">{t("connectors.users.searchLabel")}</span>
+                  <input type="search" value={search} placeholder={t("connectors.users.searchPlaceholder")} onChange={(event) => setSearch(event.target.value)} />
+                </label>
+                <div className="jellyfin-user-bulk-actions" role="group" aria-label={t("connectors.users.bulkActions")}>
+                  <button type="button" className="secondary small jellyfin-user-bulk-button" disabled={pending || enabledIds.length === users.length} onClick={() => void save(users.map((user) => user.remote_id))}>{t("connectors.users.selectAll")}</button>
+                  <button type="button" className="secondary small jellyfin-user-bulk-button" disabled={pending || enabledIds.length === 0} onClick={() => void save([])}>{t("connectors.users.selectNone")}</button>
+                </div>
+              </div>
+              {visibleUsers.length ? <div className="jellyfin-user-groups">{renderGroup("selected", selectedUsers)}{renderGroup("unselected", unselectedUsers)}</div> : <div className="notice">{t("connectors.users.searchEmpty")}</div>}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+type MappingSection = "libraries" | "paths";
+
+function ConnectionMappings({
+  connection,
+  onChanged,
+}: {
+  connection: ConnectorConnection;
+  onChanged: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState<Record<MappingSection, boolean>>({ libraries: false, paths: false });
+  const [overview, setOverview] = useState<ConnectorMappingOverview | null>(null);
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const [bindingDraft, setBindingDraft] = useState<ConnectorBindingWrite[]>([]);
+  const [linkDraft, setLinkDraft] = useState<Record<number, number[]>>({});
+  const [createDraft, setCreateDraft] = useState<Record<number, { name: string; type: string; path: string }>>({});
+  const [loading, setLoading] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [nextOverview, nextLibraries] = await Promise.all([
+        api.connectorMappingOverview(connection.id),
+        api.libraries(),
+      ]);
+      setOverview(nextOverview);
+      setLibraries(nextLibraries);
+      setBindingDraft(nextOverview.libraries.flatMap((library) => library.locations.flatMap((location) => location.bindings.map((binding) => ({
+        id: binding.id,
+        location_id: binding.location_id,
+        library_root_id: binding.library_root_id,
+        source_prefix: binding.source_prefix,
+        target_subpath: binding.target_subpath,
+        case_mode: binding.case_mode,
+        priority: binding.priority,
+        active: binding.active,
+      })))));
+      setLinkDraft(Object.fromEntries(nextOverview.libraries.map((library) => [library.id, library.linked_library_ids])));
+      setCreateDraft(Object.fromEntries(nextOverview.libraries.filter((library) => library.recommendation).map((library) => [library.id, {
+        name: library.recommendation!.suggested_name,
+        type: library.recommendation!.suggested_type,
+        path: library.recommendation!.accessible_paths[0] ?? "",
+      }])));
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [connection.id]);
+
+  useEffect(() => {
+    if ((expanded.libraries || expanded.paths) && !overview && !loading) void load();
+  }, [expanded, load, loading, overview]);
+
+  async function changeMode(kind: MappingSection, mode: "automatic" | "manual") {
+    setPending(`mode-${kind}`);
+    setError(null);
+    try {
+      await api.updateConnector(connection.id, kind === "paths" ? { path_mapping_mode: mode } : { library_mapping_mode: mode });
+      await onChanged();
       await load();
-      setNotice(t("connectors.created"));
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -191,16 +229,179 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     }
   }
 
-  const selectedProviderDescriptor = providerDescriptors.find(
-    (descriptor) => descriptor.provider === provider,
-  );
-
-  async function updateConnection(connection: ConnectorConnection, update: Parameters<typeof api.updateConnector>[1]) {
-    setPending(`connection-${connection.id}`);
+  async function saveBindings() {
+    setPending("bindings");
     setError(null);
     try {
-      await api.updateConnector(connection.id, update);
+      await api.updateConnectorBindings(connection.id, bindingDraft);
       await load();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function saveLinks() {
+    if (!overview) return;
+    setPending("links");
+    setError(null);
+    try {
+      await api.updateConnectorLibraryLinks(connection.id, overview.libraries.map((library) => ({
+        connector_library_id: library.id,
+        library_ids: linkDraft[library.id] ?? [],
+      })));
+      await load();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function createLibrary(connectorLibraryId: number) {
+    const draft = createDraft[connectorLibraryId];
+    if (!draft?.name.trim() || !draft.path.trim()) return;
+    setPending(`create-${connectorLibraryId}`);
+    setError(null);
+    try {
+      await api.createLibraryForConnector(connection.id, connectorLibraryId, {
+        name: draft.name.trim(),
+        path: draft.path.trim(),
+        paths: [draft.path.trim()],
+        type: draft.type as LibrarySummary["type"],
+        scan_mode: "manual",
+      });
+      await load();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const allLocations = overview?.libraries.flatMap((library) => library.locations.map((location) => ({ ...location, libraryName: library.name }))) ?? [];
+  const roots = libraries.flatMap((library) => (library.roots ?? []).map((root) => ({ ...root, libraryName: library.name })));
+
+  function sectionHeader(kind: MappingSection, title: string, description: string) {
+    const isExpanded = expanded[kind];
+    const mode = kind === "paths" ? connection.path_mapping_mode : connection.library_mapping_mode;
+    return (
+      <button type="button" className="connector-users-toggle" aria-expanded={isExpanded} onClick={() => setExpanded((current) => ({ ...current, [kind]: !current[kind] }))}>
+        <div><h4>{title}</h4><p>{description}</p></div>
+        <span className="connector-mapping-header-status"><span className="badge">{t(`connectors.mapping.mode.${mode}`)}</span>{isExpanded ? <ChevronDown className="nav-icon" /> : <ChevronRight className="nav-icon" />}</span>
+      </button>
+    );
+  }
+
+  function modeControl(kind: MappingSection) {
+    const mode = kind === "paths" ? connection.path_mapping_mode : connection.library_mapping_mode;
+    return (
+      <div className="connector-mapping-mode" role="group" aria-label={t(`connectors.mapping.${kind}.modeLabel`)}>
+        {(["automatic", "manual"] as const).map((candidate) => <button key={candidate} type="button" className={`secondary small connector-action-button${mode === candidate ? " active" : ""}`} aria-pressed={mode === candidate} disabled={pending !== null} onClick={() => void changeMode(kind, candidate)}>{t(`connectors.mapping.mode.${candidate}`)}</button>)}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <section className="connector-detail-section connector-mapping-section">
+        {sectionHeader("libraries", t("connectors.mapping.libraries.title"), t("connectors.mapping.libraries.description"))}
+        {expanded.libraries ? <div className="connector-mapping-body">
+          {modeControl("libraries")}
+          {loading ? <div className="progress is-indeterminate"><span /></div> : null}
+          {overview ? <div className="connector-mapping-summary"><strong>{t("connectors.mapping.coverage", { percent: overview.coverage.matched_percent })}</strong><span>{t("connectors.mapping.coverageItems", { matched: overview.coverage.matched_items, total: overview.coverage.total_items })}</span></div> : null}
+          {overview?.libraries.map((source) => <article className="connector-mapping-card" key={source.id}>
+            <div className="connector-mapping-card-heading"><strong>{source.name}</strong>{source.required_library_ids.length ? <span className="badge">{t("connectors.mapping.required")}</span> : null}</div>
+            <div className="connector-library-choice-list">
+              {libraries.map((library) => {
+                const required = source.required_library_ids.includes(library.id);
+                const checked = (linkDraft[source.id] ?? []).includes(library.id);
+                return <label key={library.id}><input type="checkbox" checked={checked} disabled={connection.library_mapping_mode === "automatic" || required || pending !== null} onChange={() => setLinkDraft((current) => ({ ...current, [source.id]: checked ? (current[source.id] ?? []).filter((id) => id !== library.id) : [...(current[source.id] ?? []), library.id] }))} /><span>{library.name}</span>{required ? <small>{t("connectors.mapping.requiredByPath")}</small> : null}</label>;
+              })}
+              {!libraries.length ? <span className="muted">{t("connectors.mapping.noLibraries")}</span> : null}
+            </div>
+            {source.recommendation && createDraft[source.id] ? <details className="connector-technical-details"><summary><FolderPlus aria-hidden="true" />{t("connectors.mapping.createRecommendation")}</summary><div className="connector-create-recommendation connector-form-grid"><label><span>{t("connectors.name")}</span><input className="settings-choice-input" value={createDraft[source.id].name} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], name: event.target.value } }))} /></label><label><span>{t("connectors.mapping.mediaType")}</span><select className="settings-choice-input" value={createDraft[source.id].type} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], type: event.target.value } }))}>{["movies", "series", "music", "audiobooks", "mixed", "other"].map((type) => <option key={type} value={type}>{t(`libraryTypes.${type}`, { defaultValue: type })}</option>)}</select></label><label><span>{t("connectors.mapping.localPath")}</span><input className="settings-choice-input" value={createDraft[source.id].path} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], path: event.target.value } }))} /></label><button type="button" className="secondary small connector-action-button" disabled={pending !== null || !createDraft[source.id].name.trim() || !createDraft[source.id].path.trim()} onClick={() => void createLibrary(source.id)}>{t("connectors.mapping.createLibrary")}</button></div></details> : null}
+          </article>)}
+          {connection.library_mapping_mode === "manual" && overview ? <button type="button" className="secondary small connector-action-button" disabled={pending !== null} onClick={() => void saveLinks()}>{t("connectors.mapping.saveAssignments")}</button> : null}
+        </div> : null}
+      </section>
+      <section className="connector-detail-section connector-mapping-section">
+        {sectionHeader("paths", t("connectors.mapping.paths.title"), t("connectors.mapping.paths.description"))}
+        {expanded.paths ? <div className="connector-mapping-body">
+          {modeControl("paths")}
+          {loading ? <div className="progress is-indeterminate"><span /></div> : null}
+          {bindingDraft.map((binding, index) => <article className="connector-mapping-card" key={binding.id ?? `new-${index}`}>
+            <div className="connector-mapping-row-main"><select className="settings-choice-input" value={binding.location_id} disabled={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, location_id: Number(event.target.value) } : row))}>{allLocations.map((location) => <option key={location.id} value={location.id}>{location.libraryName}: {location.remote_path}</option>)}</select><span aria-hidden="true">→</span><select className="settings-choice-input" value={binding.library_root_id} disabled={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, library_root_id: Number(event.target.value) } : row))}>{roots.map((root) => <option key={root.id} value={root.id}>{root.libraryName}: {root.display_name}</option>)}</select><span className={`badge mapping-${overview?.libraries.flatMap((library) => library.locations.flatMap((location) => location.bindings)).find((row) => row.id === binding.id)?.verification_status ?? "manual"}`}>{t(`connectors.mapping.status.${overview?.libraries.flatMap((library) => library.locations.flatMap((location) => location.bindings)).find((row) => row.id === binding.id)?.verification_status ?? "manual"}`)}</span></div>
+            <details className="connector-technical-details"><summary>{t("connectors.mapping.technicalFields")}</summary><div className="connector-form-grid"><label><span>{t("connectors.sourcePrefix")}</span><input className="settings-choice-input" value={binding.source_prefix} readOnly={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, source_prefix: event.target.value } : row))} /></label><label><span>{t("connectors.targetSubpath")}</span><input className="settings-choice-input" value={binding.target_subpath} readOnly={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, target_subpath: event.target.value } : row))} /></label><label><span>{t("connectors.caseMode")}</span><select className="settings-choice-input" value={binding.case_mode} disabled={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, case_mode: event.target.value as "sensitive" | "insensitive" } : row))}><option value="sensitive">{t("connectors.mapping.caseSensitive")}</option><option value="insensitive">{t("connectors.mapping.caseInsensitive")}</option></select></label><label><span>{t("connectors.priority")}</span><input className="settings-choice-input" type="number" value={binding.priority} readOnly={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, priority: Number(event.target.value) } : row))} /></label></div></details>
+            {connection.path_mapping_mode === "manual" ? <button type="button" className="secondary small danger connector-action-button" onClick={() => setBindingDraft((current) => current.filter((_row, rowIndex) => rowIndex !== index))}><Trash2 aria-hidden="true" />{t("common.remove")}</button> : null}
+          </article>)}
+          {!bindingDraft.length && !loading ? <div className="notice">{t("connectors.mapping.noMappings")}</div> : null}
+          {connection.path_mapping_mode === "manual" ? <div className="jellyfin-actions"><button type="button" className="secondary small connector-action-button" disabled={!allLocations.length || !roots.length || pending !== null} onClick={() => { const location = allLocations[0]; const root = roots[0]; if (location && root) setBindingDraft((current) => [...current, { location_id: location.id, library_root_id: root.id, source_prefix: location.remote_path, target_subpath: "", case_mode: "sensitive", priority: 0, active: true }]); }}><Plus aria-hidden="true" />{t("connectors.mapping.addMapping")}</button><button type="button" className="secondary small connector-action-button" disabled={pending !== null} onClick={() => void saveBindings()}>{t("connectors.mapping.saveMappings")}</button></div> : null}
+        </div> : null}
+      </section>
+      {error ? <div className="alert" role="alert">{error}</div> : null}
+    </>
+  );
+}
+
+function ConnectionCard({
+  connection,
+  job,
+  expanded,
+  onToggle,
+  onChanged,
+  onCatalogChanged,
+}: {
+  connection: ConnectorConnection;
+  job: ConnectorSyncJob | null;
+  expanded: boolean;
+  onToggle: () => void;
+  onChanged: () => Promise<void>;
+  onCatalogChanged?: () => void;
+}) {
+  const { t } = useTranslation();
+  const legacyDefault = connection.config.legacy_default === true;
+  const [draft, setDraft] = useState<ConnectionDraft>({
+    name: connection.name,
+    baseUrl: connection.base_url,
+    secret: "",
+    syncInterval: String(connection.sync_interval_minutes),
+  });
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft({
+      name: connection.name,
+      baseUrl: connection.base_url,
+      secret: "",
+      syncInterval: String(connection.sync_interval_minutes),
+    });
+  }, [connection.base_url, connection.name, connection.sync_interval_minutes]);
+
+  const interval = Number(draft.syncInterval);
+  const validInterval = Number.isInteger(interval) && interval >= 5 && interval <= 10080;
+  const dirty = draft.name.trim() !== connection.name
+    || draft.baseUrl.trim() !== connection.base_url
+    || Boolean(draft.secret.trim())
+    || (validInterval && interval !== connection.sync_interval_minutes);
+  const syncRunning = job?.status === "queued" || job?.status === "running";
+
+  async function save() {
+    setPending("save");
+    setError(null);
+    setNotice(null);
+    try {
+      await api.updateConnector(connection.id, {
+        ...(!legacyDefault ? { name: draft.name.trim() } : {}),
+        base_url: draft.baseUrl.trim(),
+        sync_interval_minutes: interval,
+        ...(draft.secret.trim() ? { secret: draft.secret.trim() } : {}),
+      });
+      setDraft((current) => ({ ...current, secret: "" }));
+      await onChanged();
       setNotice(t("connectors.saved"));
     } catch (reason) {
       setError((reason as Error).message);
@@ -209,27 +410,17 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     }
   }
 
-  async function runAction(connection: ConnectorConnection, action: "test" | "sync" | "cancel" | "delete") {
-    setPending(`${action}-${connection.id}`);
+  async function testConnection() {
+    setPending("test");
     setError(null);
+    setNotice(null);
     try {
-      if (action === "test") {
-        const result = await api.testConnector(connection.id);
-        if (!result.success) throw new Error(result.error || t("connectors.testFailed"));
-        setNotice(t("connectors.testSucceeded", { name: result.server_name || connection.name }));
-      } else if (action === "sync") {
-        await api.syncConnector(connection.id);
-        setNotice(t("connectors.syncQueued"));
-      } else if (action === "cancel") {
-        await api.cancelConnectorSync(connection.id);
-        setNotice(t("connectors.cancelRequested"));
-      } else {
-        if (!window.confirm(t("connectors.deleteConfirm", { name: connection.name }))) return;
-        await api.deleteConnector(connection.id);
-        setNotice(t("connectors.deleted"));
-      }
-      await load();
-      onCatalogChanged?.();
+      const result = await api.testConnector(connection.id, {
+        base_url: draft.baseUrl.trim(),
+        ...(draft.secret.trim() ? { secret: draft.secret.trim() } : {}),
+      });
+      if (!result.success) throw new Error(result.error || t("connectors.testFailed"));
+      setNotice(t("connectors.testSucceeded", { name: result.server_name || connection.name }));
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -237,17 +428,12 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     }
   }
 
-  async function saveBindings(connectionId: number) {
-    setPending(`bindings-${connectionId}`);
+  async function toggleEnabled() {
+    setPending("toggle");
     setError(null);
     try {
-      const values = Object.values(drafts[connectionId] ?? {}).filter(
-        (binding) => binding.library_root_id > 0,
-      );
-      await api.updateConnectorBindings(connectionId, values);
-      await load();
-      onCatalogChanged?.();
-      setNotice(t("connectors.bindingsSaved"));
+      await api.updateConnector(connection.id, { enabled: !connection.enabled });
+      await onChanged();
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -255,20 +441,14 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     }
   }
 
-  async function saveLinks(connectionId: number) {
-    setPending(`links-${connectionId}`);
+  async function syncNow() {
+    setPending("sync");
     setError(null);
+    setNotice(null);
     try {
-      const links = Object.entries(linkDrafts[connectionId] ?? {}).map(
-        ([connectorLibraryId, libraryIds]) => ({
-          connector_library_id: Number(connectorLibraryId),
-          library_ids: libraryIds,
-        }),
-      );
-      await api.updateConnectorLibraryLinks(connectionId, links);
-      await load();
-      onCatalogChanged?.();
-      setNotice(t("connectors.linksSaved"));
+      await api.syncConnector(connection.id);
+      setNotice(t("connectors.syncQueued"));
+      await onChanged();
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -276,20 +456,27 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     }
   }
 
-  async function updateItemMatch(connectionId: number, item: ConnectorItem, action: "ignore" | "automatic" | "manual") {
-    setPending(`item-${item.id}`);
+  async function cancelSync() {
+    setPending("cancel");
     setError(null);
     try {
-      if (action === "ignore") {
-        await api.ignoreConnectorItem(connectionId, item.id);
-      } else if (action === "automatic") {
-        await api.restoreAutomaticConnectorItemMatch(connectionId, item.id);
-      } else {
-        const mediaFileId = Number(manualMatchIds[item.id]);
-        if (!Number.isInteger(mediaFileId) || mediaFileId < 1) return;
-        await api.matchConnectorItem(connectionId, item.id, mediaFileId);
-      }
-      await load();
+      await api.cancelConnectorSync(connection.id, job?.id);
+      setNotice(t("connectors.cancelRequested"));
+      await onChanged();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(t("connectors.deleteConfirm", { name: connection.name }))) return;
+    setPending("delete");
+    setError(null);
+    try {
+      await api.deleteConnector(connection.id);
+      await onChanged();
       onCatalogChanged?.();
     } catch (reason) {
       setError((reason as Error).message);
@@ -299,147 +486,199 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
   }
 
   return (
-    <div className="settings-sidebar-stack connector-settings-stack">
-      <AsyncPanel title={t("connectors.title")} loading={loading} error={error}>
-        <div className="connector-panel-heading">
-          <p>{t("connectors.description")}</p>
-          <button type="button" className="secondary small" onClick={() => setCreateOpen((value) => !value)}>
-            <Plus aria-hidden="true" /> {t("connectors.addConnection")}
-          </button>
-        </div>
-        {notice ? <div className="notice success"><Check aria-hidden="true" /> {notice}</div> : null}
-        {createOpen ? (
-          <section className="connector-card connector-create-card">
-            <div className="connector-form-grid">
-              <label><span>{t("connectors.provider")}</span><select value={provider} onChange={(event) => setProvider(event.target.value)}>{providers.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-              <label><span>{t("connectors.name")}</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-              {(selectedProviderDescriptor?.configuration_fields ?? []).map((field) => (
-                <label key={field.key}>
-                  <span>{field.key === "base_url" ? t("connectors.serverUrl") : field.secret ? t("connectors.secret") : field.key}</span>
-                  <input
-                    type={field.input_type === "password" ? "password" : field.input_type === "url" ? "url" : "text"}
-                    required={field.required}
-                    value={field.key === "base_url" ? baseUrl : field.secret ? secret : createConfig[field.key] ?? ""}
-                    onChange={(event) => {
-                      if (field.key === "base_url") setBaseUrl(event.target.value);
-                      else if (field.secret) setSecret(event.target.value);
-                      else setCreateConfig((current) => ({ ...current, [field.key]: event.target.value }));
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-            <button type="button" disabled={pending === "create" || !baseUrl.trim()} onClick={() => void createConnection()}>{t("connectors.create")}</button>
-          </section>
-        ) : null}
-        <div className="connector-card-list">
-          {connections.length === 0 ? <p className="field-hint">{t("connectors.empty")}</p> : null}
-          {connections.map((connection) => {
-            const catalog = catalogs[connection.id];
-            return (
-              <section className="connector-card" key={connection.id}>
-                <header><div><span className="badge">{connection.provider}</span><h3><Server aria-hidden="true" /> {connection.name}</h3></div><span className={`connector-status status-${connection.last_status}`}>{connection.last_status}</span></header>
-                <div className="connector-form-grid">
-                  <label><span>{t("connectors.name")}</span><input defaultValue={connection.name} onBlur={(event) => event.target.value !== connection.name && void updateConnection(connection, { name: event.target.value })} /></label>
-                  {(providerDescriptors.find((descriptor) => descriptor.provider === connection.provider)?.configuration_fields ?? []).map((field) => field.key === "base_url" ? (
-                    <label key={field.key}><span>{t("connectors.serverUrl")}</span><input type="url" defaultValue={connection.base_url} onBlur={(event) => event.target.value !== connection.base_url && void updateConnection(connection, { base_url: event.target.value })} /></label>
-                  ) : field.secret ? (
-                    <label key={field.key}><span>{t("connectors.secret")}</span><input type="password" placeholder={connection.has_secret ? t("connectors.secretConfigured") : ""} onBlur={(event) => event.target.value && void updateConnection(connection, { secret: event.target.value })} /></label>
-                  ) : (
-                    <label key={field.key}><span>{field.key}</span><input type={field.input_type} defaultValue={String(connection.config[field.key] ?? "")} onBlur={(event) => void updateConnection(connection, { config: { ...connection.config, [field.key]: event.target.value } })} /></label>
-                  ))}
-                  <label><span>{t("connectors.syncInterval")}</span><input type="number" min={5} defaultValue={connection.sync_interval_minutes} onBlur={(event) => Number(event.target.value) !== connection.sync_interval_minutes && void updateConnection(connection, { sync_interval_minutes: Number(event.target.value) })} /></label>
-                </div>
-                <div className="jellyfin-actions">
-                  <button type="button" className="secondary small" onClick={() => void updateConnection(connection, { enabled: !connection.enabled })}>{connection.enabled ? t("connectors.disable") : t("connectors.enable")}</button>
-                  <button type="button" className="secondary small" onClick={() => void runAction(connection, "test")}>{t("connectors.test")}</button>
-                  <button type="button" className="secondary small" disabled={!connection.enabled} onClick={() => void runAction(connection, "sync")}><RefreshCw aria-hidden="true" /> {t("connectors.sync")}</button>
-                  <button type="button" className="secondary small" onClick={() => void runAction(connection, "cancel")}><CircleStop aria-hidden="true" /> {t("connectors.cancel")}</button>
-                  <button type="button" className="secondary small danger" onClick={() => void runAction(connection, "delete")}><Trash2 aria-hidden="true" /> {t("connectors.delete")}</button>
-                </div>
-                <div className="connector-capability-list" aria-label={t("connectors.capabilities")}>
-                  {Object.entries(connection.capabilities).filter(([, enabled]) => enabled).length ? Object.entries(connection.capabilities).filter(([, enabled]) => enabled).map(([capability]) => <span className="badge" key={capability}>{capability}</span>) : <span className="field-hint">{t("connectors.catalogOnly")}</span>}
-                </div>
-                {catalog?.job ? (
-                  <div className={`notice compact${["failed", "canceled"].includes(catalog.job.status) ? " warning" : ""}`}>
-                    <strong>{catalog.job.job_type === "recompute" ? t("connectors.recompute") : t("connectors.sync")}</strong>
-                    {` · ${catalog.job.status} · ${catalog.job.progress_phase ?? "-"}`}
-                    {catalog.job.progress_total ? ` · ${catalog.job.progress_current}/${catalog.job.progress_total}` : ""}
-                    {catalog.job.error ? <span>{` · ${catalog.job.error}`}</span> : null}
-                  </div>
-                ) : null}
-                {catalog?.libraries.length ? (
-                  <div className="connector-mapping-shell">
-                    <div className="connector-logical-links">
-                      <h4>{t("connectors.libraryLinks")}</h4>
-                      <p>{t("connectors.libraryLinksDescription")}</p>
-                      {catalog.libraries.map((remoteLibrary) => (
-                        <label key={remoteLibrary.id}>
-                          <span>{remoteLibrary.name}</span>
-                          <select
-                            multiple
-                            value={(linkDrafts[connection.id]?.[remoteLibrary.id] ?? []).map(String)}
-                            onChange={(event) => {
-                              const libraryIds = Array.from(event.currentTarget.selectedOptions, (option) => Number(option.value));
-                              setLinkDrafts((current) => ({
-                                ...current,
-                                [connection.id]: {
-                                  ...current[connection.id],
-                                  [remoteLibrary.id]: libraryIds,
-                                },
-                              }));
-                            }}
-                          >
-                            {libraries.map((library) => <option key={library.id} value={library.id}>{library.name}</option>)}
-                          </select>
-                        </label>
-                      ))}
-                      <button type="button" disabled={pending === `links-${connection.id}`} onClick={() => void saveLinks(connection.id)}>{t("connectors.saveLibraryLinks")}</button>
-                    </div>
-                    <div className="connector-mapping-heading"><div><h4>{t("connectors.mappingTitle")}</h4><p>{t("connectors.mappingDescription")}</p></div><label><input type="checkbox" checked={advanced} onChange={(event) => setAdvanced(event.target.checked)} /> {t("connectors.advanced")}</label></div>
-                    <div className="connector-mapping-table-wrap">
-                      <table className="connector-mapping-table"><thead><tr><th>{t("connectors.externalLibrary")}</th><th>{t("connectors.location")}</th><th>{t("connectors.localRoot")}</th>{advanced ? <><th>{t("connectors.sourcePrefix")}</th><th>{t("connectors.targetSubpath")}</th><th>{t("connectors.caseMode")}</th><th>{t("connectors.priority")}</th></> : null}<th>{t("connectors.status")}</th></tr></thead><tbody>
-                        {catalog.libraries.flatMap((remoteLibrary) => remoteLibrary.locations.map((location) => {
-                          const draft = drafts[connection.id]?.[location.id];
-                          return <tr key={location.id}><td>{remoteLibrary.name}</td><td><code>{location.remote_path}</code></td><td><select value={draft?.library_root_id ?? 0} onChange={(event) => updateDraft(connection.id, location.id, { library_root_id: Number(event.target.value) })}><option value={0}>{t("connectors.unmapped")}</option>{rootOptions.map((root) => <option key={root.id} value={root.id}>{root.label}</option>)}</select></td>{advanced ? <><td><input value={draft?.source_prefix ?? location.remote_path} onChange={(event) => updateDraft(connection.id, location.id, { source_prefix: event.target.value })} /></td><td><input value={draft?.target_subpath ?? ""} onChange={(event) => updateDraft(connection.id, location.id, { target_subpath: event.target.value })} /></td><td><select value={draft?.case_mode ?? "sensitive"} onChange={(event) => updateDraft(connection.id, location.id, { case_mode: event.target.value as "sensitive" | "insensitive" })}><option value="sensitive">sensitive</option><option value="insensitive">insensitive</option></select></td><td><input type="number" value={draft?.priority ?? 0} onChange={(event) => updateDraft(connection.id, location.id, { priority: Number(event.target.value) })} /></td></> : null}<td><span className={`badge${draft?.library_root_id ? "" : " warning"}`}>{draft?.library_root_id ? t("connectors.bound") : t("connectors.unmapped")}</span></td></tr>;
-                        }))}
-                      </tbody></table>
-                    </div>
-                    <button type="button" disabled={pending === `bindings-${connection.id}`} onClick={() => void saveBindings(connection.id)}>{t("connectors.saveMappings")}</button>
-                  </div>
-                ) : <p className="field-hint">{t("connectors.syncForLibraries")}</p>}
-                {catalog && Object.keys(catalog.statusSummary).length ? (
-                  <div className="connector-item-diagnostics">
-                    <h4>{t("connectors.itemDiagnostics")}</h4>
-                    <div className="connector-capability-list">
-                      {Object.entries(catalog.statusSummary).sort(([left], [right]) => left.localeCompare(right)).map(([status, count]) => <span className={`badge${status === "matched" ? "" : " warning"}`} key={status}>{status}: {count}</span>)}
-                    </div>
-                    <div className="connector-mapping-table-wrap">
-                      <table className="connector-mapping-table">
-                        <thead><tr><th>{t("connectors.item")}</th><th>{t("connectors.remotePath")}</th><th>{t("connectors.status")}</th><th>{t("connectors.manualFileId")}</th><th>{t("connectors.actions")}</th></tr></thead>
-                        <tbody>{catalog.items.map((item) => (
-                          <tr key={item.id}>
-                            <td>{item.title}<small>{item.item_type}</small></td>
-                            <td><code>{item.remote_path ?? "-"}</code></td>
-                            <td><span className={`badge${item.match_status === "matched" ? "" : " warning"}`}>{item.match_status}</span>{item.mismatch_reason ? <small>{item.mismatch_reason}</small> : null}</td>
-                            <td><input type="number" min={1} value={manualMatchIds[item.id] ?? ""} onChange={(event) => setManualMatchIds((current) => ({ ...current, [item.id]: event.target.value }))} /></td>
-                            <td><div className="jellyfin-actions"><button type="button" className="secondary small" disabled={pending === `item-${item.id}`} onClick={() => void updateItemMatch(connection.id, item, "manual")}>{t("connectors.setMatch")}</button>{item.match_status === "ignored" ? <button type="button" className="secondary small" onClick={() => void updateItemMatch(connection.id, item, "automatic")}>{t("connectors.automatic")}</button> : <button type="button" className="secondary small" onClick={() => void updateItemMatch(connection.id, item, "ignore")}>{t("connectors.ignore")}</button>}</div></td>
-                          </tr>
-                        ))}</tbody>
-                      </table>
-                    </div>
-                    {catalog.itemTotal > catalog.items.length ? <p className="field-hint">{t("connectors.showingItems", { shown: catalog.items.length, total: catalog.itemTotal })}</p> : null}
-                  </div>
-                ) : null}
-              </section>
-            );
+    <article id={`connector-${connection.id}`} className={`media-card connector-connection-card${expanded ? " is-expanded" : " is-collapsed"}`}>
+      <header className="connector-connection-header">
+        <button
+          type="button"
+          className="connector-connection-toggle"
+          aria-expanded={expanded}
+          aria-controls={`connector-connection-${connection.id}`}
+          onClick={onToggle}
+        >
+          <span className="connector-connection-chevron" aria-hidden="true">
+            {expanded ? <ChevronDown className="nav-icon" /> : <ChevronRight className="nav-icon" />}
+          </span>
+          <span className="connector-connection-identity">
+            <span className="connector-connection-title">
+              <span className="connector-provider-icon" data-provider={connection.provider.toLowerCase()} title={providerLabel(connection.provider)}>
+                <ConnectorProviderIcon provider={connection.provider} aria-hidden="true" />
+                <span className="sr-only">{providerLabel(connection.provider)}</span>
+              </span>
+              <strong>{connection.name}</strong>
+              <span className="connector-connection-url">{connection.base_url || t("connectors.notConfigured")}</span>
+            </span>
+          </span>
+        </button>
+        <span className={`connector-status status-${syncRunning ? "running" : connection.last_status}`}>
+          {t(`connectors.connectionStatus.${syncRunning ? "running" : connection.last_status}`, {
+            defaultValue: connection.last_status,
           })}
+        </span>
+      </header>
+      {expanded ? (
+        <div className="connector-connection-body" id={`connector-connection-${connection.id}`}>
+          <section className="connector-detail-section">
+            <div className="connector-detail-heading">
+              <div><h4>{t("connectors.connectionDetails")}</h4><p>{t("connectors.connectionDetailsDescription")}</p></div>
+              <div className="connector-capability-list" aria-label={t("connectors.capabilities")}>
+                {Object.entries(connection.capabilities).filter(([, value]) => value).map(([capability]) => <span className="badge" key={capability}>{capability}</span>)}
+              </div>
+            </div>
+            <div className="connector-form-grid">
+              <label><span>{t("connectors.name")}</span><input className="settings-choice-input" value={draft.name} disabled={legacyDefault} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label><span>{t("connectors.serverUrl")}</span><input className="settings-choice-input" type="url" value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
+              <label><span>{t("connectors.secret")}</span><input className="settings-choice-input" type="password" autoComplete="new-password" value={draft.secret} placeholder={connection.has_secret ? t("connectors.secretConfigured") : ""} onChange={(event) => setDraft((current) => ({ ...current, secret: event.target.value }))} /></label>
+              <label><span>{t("connectors.syncInterval")}</span><input className="settings-choice-input" type="number" min={5} max={10080} value={draft.syncInterval} onChange={(event) => setDraft((current) => ({ ...current, syncInterval: event.target.value }))} /></label>
+            </div>
+            <div className="jellyfin-actions">
+              <button type="button" className="connector-action-button" disabled={!dirty || !draft.name.trim() || !draft.baseUrl.trim() || !validInterval || pending !== null || syncRunning} onClick={() => void save()}><Check aria-hidden="true" />{t("common.save")}</button>
+              <button type="button" className="secondary small connector-action-button" disabled={pending !== null || syncRunning || dirty || !connection.has_secret || !connection.base_url} onClick={() => void toggleEnabled()}>{connection.enabled ? t("connectors.disable") : t("connectors.enable")}</button>
+              <button type="button" className="secondary small connector-action-button" disabled={pending !== null || syncRunning} onClick={() => void testConnection()}>{pending === "test" ? <RefreshCw className="is-spinning" aria-hidden="true" /> : <Link2 aria-hidden="true" />}{t("connectors.test")}</button>
+              <button type="button" className="secondary small connector-action-button" disabled={pending !== null || syncRunning || dirty || !connection.enabled} onClick={() => void syncNow()}><RefreshCw aria-hidden="true" />{t("connectors.sync")}</button>
+              {syncRunning ? <button type="button" className="secondary small connector-action-button" disabled={pending !== null} onClick={() => void cancelSync()}><CircleStop aria-hidden="true" />{t("connectors.cancel")}</button> : null}
+              <button type="button" className="secondary small danger connector-action-button" disabled={pending !== null || syncRunning} onClick={() => void remove()}><Trash2 aria-hidden="true" />{t("connectors.delete")}</button>
+            </div>
+            {error ? <div className="alert" role="alert">{error}</div> : null}
+            {notice ? <div className="notice success" role="status">{notice}</div> : null}
+            {job ? (
+              <div className={`connector-job-status notice compact${job.status === "failed" || job.status === "canceled" ? " warning" : ""}`}>
+                {job.status === "failed" ? <AlertTriangle aria-hidden="true" /> : job.status === "running" ? <RefreshCw className="is-spinning" aria-hidden="true" /> : null}
+                <strong>{job.job_type === "recompute" ? t("connectors.recompute") : t("connectors.sync")}</strong>
+                <span>{job.status} · {job.progress_phase ?? "-"}{job.progress_total ? ` · ${job.progress_current}/${job.progress_total}` : ""}</span>
+                {job.error ? <span>{job.error}</span> : null}
+              </div>
+            ) : null}
+          </section>
+          <ConnectionMappings connection={connection} onChanged={onChanged} />
+          {connection.capabilities.users ? <ConnectionUsers connection={connection} /> : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function AddConnectorDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (connection: ConnectorConnection) => void;
+}) {
+  const { t } = useTranslation();
+  const [name, setName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [secret, setSecret] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid = Boolean(name.trim() && baseUrl.trim() && secret.trim());
+
+  async function create() {
+    setPending(true);
+    setError(null);
+    try {
+      onCreated(await api.createConnector({
+        provider: "jellyfin",
+        name: name.trim(),
+        base_url: baseUrl.trim(),
+        secret: secret.trim(),
+        sync_interval_minutes: 60,
+        enabled: false,
+      }));
+    } catch (reason) {
+      setError((reason as Error).message);
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="settings-create-library-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="settings-create-library-dialog connector-add-dialog" role="dialog" aria-modal="true" aria-labelledby="connector-add-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="settings-create-library-dialog-header">
+          <div><h2 id="connector-add-dialog-title">{t("connectors.addDialog.title")}</h2><p>{t("connectors.addDialog.description")}</p></div>
+          <button type="button" className="secondary icon-only-button" aria-label={t("common.close")} disabled={pending} onClick={onClose}><X aria-hidden="true" /></button>
+        </div>
+        <label className="connector-provider-field">
+          <span>{t("connectors.provider")}</span>
+          <select className="settings-choice-input" defaultValue="jellyfin">
+            <option value="jellyfin">Jellyfin</option>
+            <option value="plex" disabled title={t("connectors.addDialog.plexTooltip")}>Plex — {t("connectors.addDialog.soon")}</option>
+          </select>
+        </label>
+        <div className="connector-form-grid">
+          <label><span>{t("connectors.name")}</span><input className="settings-choice-input" autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label><span>{t("connectors.serverUrl")}</span><input className="settings-choice-input" type="url" placeholder="http://jellyfin:8096" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+          <label><span>{t("connectors.secret")}</span><input className="settings-choice-input" type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} /></label>
+        </div>
+        {error ? <div className="alert" role="alert">{error}</div> : null}
+        <div className="jellyfin-actions"><button type="button" disabled={!valid || pending} onClick={() => void create()}>{pending ? <RefreshCw className="is-spinning" aria-hidden="true" /> : <Plus aria-hidden="true" />}{t("connectors.create")}</button><button type="button" className="secondary" disabled={pending} onClick={onClose}>{t("common.cancel")}</button></div>
+      </section>
+    </div>
+  );
+}
+
+export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?: () => void }) {
+  const { t } = useTranslation();
+  const [connections, setConnections] = useState<ConnectorConnection[]>([]);
+  const [jobs, setJobs] = useState<Record<number, ConnectorSyncJob | null>>({});
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    const nextConnections = await api.connectors();
+    const nextJobs = Object.fromEntries(await Promise.all(nextConnections.map(async (connection) => [
+      connection.id,
+      await api.connectorSyncStatus(connection.id),
+    ])));
+    setConnections(nextConnections);
+    setJobs(nextJobs);
+    setExpanded((current) => {
+      if (Object.keys(current).length) return current;
+      const hashId = Number(window.location.hash.match(/^#connector-(\d+)$/)?.[1]);
+      const selected = nextConnections.find((connection) => connection.id === hashId) ?? nextConnections[0];
+      return selected ? { [selected.id]: true } : {};
+    });
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    load().catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false));
+  }, [load]);
+
+  useEffect(() => {
+    if (!connections.length) return undefined;
+    const timer = window.setInterval(() => {
+      void load().catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [connections.length, load]);
+
+  return (
+    <>
+      <AsyncPanel
+        title={t("connectors.title")}
+        subtitle={t("connectors.description")}
+        loading={loading}
+        error={error}
+        collapseActions={<button type="button" className="secondary small settings-panel-header-action connector-action-button" onClick={() => setAddOpen(true)}><Plus aria-hidden="true" />{t("connectors.addConnection")}</button>}
+      >
+        {!connections.length ? <div className="notice">{t("connectors.empty")}</div> : null}
+        <div className="connector-card-list">
+          {connections.map((connection) => (
+            <ConnectionCard
+              key={connection.id}
+              connection={connection}
+              job={jobs[connection.id] ?? null}
+              expanded={Boolean(expanded[connection.id])}
+              onToggle={() => setExpanded((current) => ({ ...current, [connection.id]: !current[connection.id] }))}
+              onChanged={load}
+              onCatalogChanged={onCatalogChanged}
+            />
+          ))}
         </div>
       </AsyncPanel>
-      <details className="connector-legacy-details">
-        <summary>{t("connectors.jellyfinCompatibility")}</summary>
-        <JellyfinSettingsPanel onCatalogChanged={onCatalogChanged} />
-      </details>
-    </div>
+      {addOpen ? <AddConnectorDialog onClose={() => setAddOpen(false)} onCreated={(connection) => { setAddOpen(false); setExpanded((current) => ({ ...current, [connection.id]: true })); void load(); }} /> : null}
+    </>
   );
 }

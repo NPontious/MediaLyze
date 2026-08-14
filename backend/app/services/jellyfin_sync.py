@@ -541,7 +541,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                         "sync_run_id": sync_run_id,
                         "jellyfin_user_id": user_id,
                         "name": str(payload.get("Name") or (stored.name if stored else "Unknown user")),
-                        "enabled_for_sync": bool(stored.enabled_for_sync) if stored else False,
+                        "enabled_for_sync": bool(stored.enabled_for_sync) if stored else True,
                         "last_synced_at": stored.last_synced_at if stored else None,
                     }
                 )

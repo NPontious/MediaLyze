@@ -42,7 +42,6 @@ from backend.app.services.connector_security import redact_connector_error
 from backend.app.services.connector_service import is_legacy_default_connection
 from backend.app.services.connector_matching import (
     compare_legacy_jellyfin_matches,
-    recompute_connector_matches,
 )
 from backend.app.services.app_settings import get_app_settings
 from backend.app.services.history_retention import (
@@ -867,6 +866,7 @@ class ScanRuntimeManager:
         try:
             execute_scan_job(job_id, self.settings, is_cancel_requested=self.is_job_cancel_requested)
         finally:
+            connector_recompute_ids: list[int] = []
             match_db = SessionLocal()
             try:
                 job = match_db.get(ScanJob, job_id)
@@ -904,16 +904,27 @@ class ScanRuntimeManager:
                 )
                 if changed_ids or changed_locators:
                     recompute_jellyfin_matches(match_db, media_file_ids=changed_ids)
-                    recompute_connector_matches(
-                        match_db,
-                        media_file_ids=changed_ids,
-                        media_file_locators=changed_locators,
+                    connector_recompute_ids = list(
+                        match_db.scalars(
+                            select(ConnectorConnection.id).where(
+                                ConnectorConnection.enabled.is_(True)
+                            )
+                        )
                     )
             except Exception:
                 match_db.rollback()
                 logger.exception("Failed to refresh Jellyfin matches after scan %s", job_id)
             finally:
                 match_db.close()
+            for connection_id in connector_recompute_ids:
+                try:
+                    self.request_connector_recompute(connection_id, trigger_source="scan")
+                except Exception:
+                    logger.exception(
+                        "Failed to queue connector mapping refresh after scan %s for connection %s",
+                        job_id,
+                        connection_id,
+                    )
             should_attempt_compaction = False
             with self.lock:
                 self.submitted_job_ids.discard(job_id)

@@ -15,7 +15,7 @@
     "build:backend": "node ./scripts/build-backend.mjs"
   },
   "devDependencies": {
-    "electron": "^39.8.5",
+    "electron": "^39.8.10",
     "electron-builder": "^26.15.0",
     "ffmpeg-static": "^5.3.0",
     "icon-gen": "^5.0.0"
@@ -72,9 +72,11 @@
     }
   },
   "overrides": {
-    "brace-expansion@1.1.14": "1.1.16",
-    "brace-expansion@2.1.0": "2.1.2",
-    "brace-expansion@5.0.6": "5.0.7",
+    "brace-expansion@1.1.14": "1.1.18",
+    "brace-expansion@2.1.0": "2.1.4",
+    "brace-expansion@5.0.6": "5.0.9",
+    "fast-uri": "4.1.2",
+    "js-yaml": "4.3.1",
     "sharp": "0.35.3",
     "tmp": "^0.2.7"
   }

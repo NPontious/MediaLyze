@@ -63,6 +63,31 @@ class RemoteItem:
     provider_payload: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteUser:
+    remote_id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteUserItemData:
+    item_remote_id: str
+    user_remote_id: str
+    play_count: int = 0
+    played: bool = False
+    playback_position_ticks: int = 0
+    last_played_date: datetime | None = None
+    is_favorite: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RemotePlaybackEvent:
+    remote_event_id: str
+    item_remote_id: str
+    user_remote_id: str
+    played_at: datetime
+
+
 class ConnectorAdapter(Protocol):
     provider: str
     capabilities: frozenset[str]
@@ -78,3 +103,14 @@ class ConnectorAdapter(Protocol):
     def iter_libraries(self) -> Iterable[RemoteLibrary]: ...
 
     def iter_items(self, libraries: Iterable[RemoteLibrary]) -> Iterator[RemoteItem]: ...
+
+    def iter_users(self) -> Iterable[RemoteUser]: ...
+
+    def iter_user_item_data(self, users: Iterable[RemoteUser]) -> Iterator[RemoteUserItemData]: ...
+
+    def iter_playback_events(
+        self,
+        users: Iterable[RemoteUser],
+        *,
+        min_date: datetime | None = None,
+    ) -> Iterator[RemotePlaybackEvent]: ...

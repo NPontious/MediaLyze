@@ -14,17 +14,27 @@ from backend.app.models.entities import (
     ConnectorCredential,
     ConnectorItem,
     ConnectorLibrary,
+    ConnectorLibraryLink,
     ConnectorLibraryLocation,
     ConnectorMediaMatch,
+    ConnectorPlaybackEvent,
     ConnectorRootBinding,
     ConnectorSyncJob,
     ConnectorSyncStageItem,
     ConnectorSyncStageLibrary,
+    ConnectorSyncStagePlaybackEvent,
+    ConnectorSyncStageUser,
+    ConnectorSyncStageUserData,
+    ConnectorUser,
+    ConnectorUserItemData,
     JellyfinConnection,
     JellyfinItem,
     JellyfinLibrary,
     JellyfinMediaMatch,
     JellyfinPathMapping,
+    JellyfinPlaybackEvent,
+    JellyfinUser,
+    JellyfinUserItemData,
     JobStatus,
     Library,
     LibraryRoot,
@@ -45,19 +55,18 @@ from backend.app.services.connector_matching import recompute_connector_matches
 from backend.app.services.connector_pathing import normalize_connector_path, normalize_target_subpath
 from backend.app.services.connector_service import (
     create_connector_connection,
-    remove_manual_connector_match,
     replace_connector_bindings,
     replace_connector_library_links,
-    restore_automatic_connector_match,
     serialize_connector_connection,
-    set_manual_connector_match,
 )
+from backend.app.services.connector_mapping import reconcile_connector_mappings
 from backend.app.services.connector_sync import (
     create_or_get_connector_sync_job,
     claim_connector_sync_job,
     _stage_item_row,
     _upsert_stage_items,
     promote_connector_staging,
+    promote_connector_playback_staging,
     recover_orphaned_connector_sync_jobs,
     request_connector_sync_cancellation,
     run_connector_recompute,
@@ -91,6 +100,8 @@ def _connector_graph(db: Session, root_path: str):
         name="Living Room",
         base_url="http://jellyfin.local",
         enabled=True,
+        path_mapping_mode="manual",
+        library_mapping_mode="manual",
     )
     db.add_all([library, connection])
     db.flush()
@@ -190,44 +201,6 @@ def test_connector_matcher_allows_multiple_items_for_one_file_and_prefers_longes
     assert {match.media_file_id for match in matches} == {media.id}
 
 
-def test_manual_connector_match_survives_recompute(tmp_path) -> None:
-    _engine, factory = _session_factory()
-    with factory() as db:
-        connection, library, root, remote_library, _location = _connector_graph(db, str(tmp_path))
-        media = MediaFile(
-            library_id=library.id,
-            library_root_id=root.id,
-            relative_path="movie.mkv",
-            filename="movie.mkv",
-            extension="mkv",
-            size_bytes=123,
-            mtime=1.0,
-            scan_status=ScanStatus.ready,
-        )
-        item = ConnectorItem(
-            connection_id=connection.id,
-            connector_library_id=remote_library.id,
-            remote_id="manual",
-            item_type="Movie",
-            remote_path="/unmapped/movie.mkv",
-            normalized_remote_path="/unmapped/movie.mkv",
-            title="Manual",
-        )
-        db.add_all([media, item])
-        db.commit()
-        set_manual_connector_match(db, item, media.id)
-
-        summary = recompute_connector_matches(db, connection_id=connection.id)
-        match = db.scalar(
-            select(ConnectorMediaMatch).where(ConnectorMediaMatch.connector_item_id == item.id)
-        )
-
-    assert summary["manual_preserved"] == 1
-    assert match is not None
-    assert match.match_method == "manual"
-    assert match.media_file_id == media.id
-
-
 def test_binding_batch_rejects_equivalent_active_rules_atomically(tmp_path) -> None:
     _engine, factory = _session_factory()
     with factory() as db:
@@ -252,6 +225,202 @@ def test_binding_batch_rejects_equivalent_active_rules_atomically(tmp_path) -> N
         count = db.scalar(select(func.count()).select_from(ConnectorRootBinding))
 
     assert count == 0
+
+
+def test_automatic_mapping_requires_three_consistent_assets(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, library, root, remote_library, location = _connector_graph(db, str(tmp_path))
+        connection.path_mapping_mode = "automatic"
+        connection.library_mapping_mode = "automatic"
+        location.remote_path = "/connector/movies"
+        location.normalized_path = "/connector/movies"
+        for index in range(3):
+            filename = f"movie-{index}.mkv"
+            db.add_all([
+                MediaFile(
+                    library_id=library.id,
+                    library_root_id=root.id,
+                    relative_path=f"Action/{filename}",
+                    filename=filename,
+                    extension="mkv",
+                    size_bytes=1000 + index,
+                    duration_seconds=90 + index,
+                    mtime=1.0,
+                    scan_status=ScanStatus.ready,
+                ),
+                ConnectorItem(
+                    connection_id=connection.id,
+                    connector_library_id=remote_library.id,
+                    remote_id=f"remote-{index}",
+                    item_type="Movie",
+                    remote_path=f"/connector/movies/Action/{filename}",
+                    normalized_remote_path=f"/connector/movies/Action/{filename}",
+                    title=filename,
+                    size_bytes=1000 + index,
+                    duration_seconds=90 + index,
+                ),
+            ])
+        db.commit()
+
+        summary = reconcile_connector_mappings(db, connection.id)
+        binding = db.scalar(select(ConnectorRootBinding))
+
+        assert summary["verified"] == 1
+        assert binding is not None
+        assert binding.source_prefix == "/connector/movies"
+        assert binding.library_root_id == root.id
+        assert binding.evidence_count == 3
+        assert binding.verification_status == "verified"
+        assert binding.origin == "automatic"
+
+
+def test_automatic_mapping_does_not_guess_from_two_assets(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, library, root, remote_library, location = _connector_graph(db, str(tmp_path))
+        connection.path_mapping_mode = "automatic"
+        connection.library_mapping_mode = "automatic"
+        location.remote_path = "/different/mount"
+        location.normalized_path = "/different/mount"
+        for index in range(2):
+            filename = f"movie-{index}.mkv"
+            db.add_all([
+                MediaFile(
+                    library_id=library.id,
+                    library_root_id=root.id,
+                    relative_path=filename,
+                    filename=filename,
+                    extension="mkv",
+                    size_bytes=1000 + index,
+                    mtime=1.0,
+                    scan_status=ScanStatus.ready,
+                ),
+                ConnectorItem(
+                    connection_id=connection.id,
+                    connector_library_id=remote_library.id,
+                    remote_id=f"remote-{index}",
+                    item_type="Movie",
+                    remote_path=f"/different/mount/{filename}",
+                    normalized_remote_path=f"/different/mount/{filename}",
+                    title=filename,
+                    size_bytes=1000 + index,
+                ),
+            ])
+        db.commit()
+
+        reconcile_connector_mappings(db, connection.id)
+
+        assert db.scalar(select(func.count()).select_from(ConnectorRootBinding)) == 0
+
+
+def test_automatic_mapping_removes_trusted_rule_when_new_evidence_conflicts(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, first_library, first_root, remote_library, location = _connector_graph(
+            db, str(tmp_path / "first")
+        )
+        connection.path_mapping_mode = "automatic"
+        connection.library_mapping_mode = "automatic"
+        location.remote_path = "/different/mount"
+        location.normalized_path = "/different/mount"
+        second_library = Library(
+            name="Archive",
+            path=str(tmp_path / "second"),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(second_library)
+        db.flush()
+        second_root = LibraryRoot(
+            library_id=second_library.id,
+            path=str(tmp_path / "second"),
+            display_name="Archive",
+            path_key=str(tmp_path / "second").casefold(),
+        )
+        db.add(second_root)
+        db.flush()
+        db.add(
+            ConnectorRootBinding(
+                location_id=location.id,
+                library_root_id=first_root.id,
+                source_prefix="/different/mount",
+                normalized_source_prefix="/different/mount",
+                origin="automatic",
+                verification_status="verified",
+            )
+        )
+        for root, library, group in (
+            (first_root, first_library, "first"),
+            (second_root, second_library, "second"),
+        ):
+            for index in range(3):
+                filename = f"{group}-{index}.mkv"
+                db.add_all([
+                    MediaFile(
+                        library_id=library.id,
+                        library_root_id=root.id,
+                        relative_path=f"Shared/{filename}",
+                        filename=filename,
+                        extension="mkv",
+                        size_bytes=1000 + index,
+                        mtime=1.0,
+                        scan_status=ScanStatus.ready,
+                    ),
+                    ConnectorItem(
+                        connection_id=connection.id,
+                        connector_library_id=remote_library.id,
+                        remote_id=f"{group}-{index}",
+                        item_type="Movie",
+                        remote_path=f"/different/mount/Shared/{filename}",
+                        normalized_remote_path=f"/different/mount/Shared/{filename}",
+                        title=filename,
+                        size_bytes=1000 + index,
+                    ),
+                ])
+        db.commit()
+
+        reconcile_connector_mappings(db, connection.id)
+
+        assert db.scalar(select(func.count()).select_from(ConnectorRootBinding)) == 0
+
+
+def test_manual_library_batch_keeps_binding_derived_link_required(tmp_path) -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection, library, root, remote_library, location = _connector_graph(db, str(tmp_path))
+        db.commit()
+        replace_connector_bindings(
+            db,
+            connection.id,
+            ConnectorBindingBatchUpdate(
+                bindings=[
+                    ConnectorBindingWrite(
+                        location_id=location.id,
+                        library_root_id=root.id,
+                        source_prefix=location.remote_path,
+                    )
+                ]
+            ),
+        )
+
+        replace_connector_library_links(
+            db,
+            connection.id,
+            ConnectorLibraryLinkBatchUpdate(
+                links=[
+                    ConnectorLibraryLinkWrite(
+                        connector_library_id=remote_library.id,
+                        library_ids=[library.id],
+                    )
+                ]
+            ),
+        )
+        link = db.scalar(select(ConnectorLibraryLink))
+
+        assert link is not None
+        assert link.link_method == "derived"
 
 
 def test_connector_sync_is_single_flight_per_connection_but_independent_between_connections() -> None:
@@ -415,49 +584,6 @@ def test_deleted_media_locator_recomputes_previously_matched_item(tmp_path) -> N
         ) is None
 
 
-def test_manual_unmatch_is_persistent_until_automatic_matching_is_restored(tmp_path) -> None:
-    _engine, factory = _session_factory()
-    with factory() as db:
-        connection, library, root, remote_library, location = _connector_graph(db, str(tmp_path))
-        media = MediaFile(
-            library_id=library.id,
-            library_root_id=root.id,
-            relative_path="movie.mkv",
-            filename="movie.mkv",
-            extension="mkv",
-            size_bytes=123,
-            mtime=1.0,
-            scan_status=ScanStatus.ready,
-        )
-        item = ConnectorItem(
-            connection_id=connection.id,
-            connector_library_id=remote_library.id,
-            remote_id="ignored",
-            item_type="Movie",
-            remote_path="/srv/media/movie.mkv",
-            title="Ignored",
-        )
-        db.add_all([
-            ConnectorRootBinding(
-                location_id=location.id,
-                library_root_id=root.id,
-                source_prefix="/srv/media",
-                normalized_source_prefix="/srv/media",
-            ),
-            media,
-            item,
-        ])
-        db.commit()
-        recompute_connector_matches(db, connection_id=connection.id)
-
-        assert remove_manual_connector_match(db, item) is True
-        recompute_connector_matches(db, connection_id=connection.id)
-        assert item.match_status == "ignored"
-
-        restore_automatic_connector_match(db, item)
-        assert item.match_status == "matched"
-
-
 def test_manual_library_links_are_many_to_many_and_durable(tmp_path) -> None:
     _engine, factory = _session_factory()
     with factory() as db:
@@ -566,6 +692,178 @@ def test_connector_promote_can_roll_back_without_replacing_live_snapshot() -> No
         assert set(
             db.scalars(select(ConnectorItem.remote_id).where(ConnectorItem.connection_id == connection.id))
         ) == {"old-item"}
+
+
+def test_connector_playback_identity_is_scoped_per_connection() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        first = ConnectorConnection(provider="jellyfin", name="First")
+        second = ConnectorConnection(provider="jellyfin", name="Second")
+        db.add_all([first, second])
+        db.flush()
+        first_item = ConnectorItem(
+            connection_id=first.id,
+            remote_id="shared-item",
+            item_type="Movie",
+            title="First item",
+        )
+        second_item = ConnectorItem(
+            connection_id=second.id,
+            remote_id="shared-item",
+            item_type="Movie",
+            title="Second item",
+        )
+        first_user = ConnectorUser(
+            connection_id=first.id,
+            remote_id="shared-user",
+            name="Alice",
+            enabled_for_sync=True,
+        )
+        second_user = ConnectorUser(
+            connection_id=second.id,
+            remote_id="shared-user",
+            name="Alice",
+            enabled_for_sync=True,
+        )
+        db.add_all([first_item, second_item, first_user, second_user])
+        db.commit()
+        now = utc_now()
+        for connection in (first, second):
+            db.add_all([
+                ConnectorSyncStageUser(
+                    sync_run_id=f"run-{connection.id}",
+                    connection_id=connection.id,
+                    remote_id="shared-user",
+                    name="Alice",
+                    last_synced_at=now,
+                ),
+                ConnectorSyncStageUserData(
+                    sync_run_id=f"run-{connection.id}",
+                    connection_id=connection.id,
+                    item_remote_id="shared-item",
+                    user_remote_id="shared-user",
+                    play_count=connection.id,
+                    played=True,
+                    last_synced_at=now,
+                ),
+                ConnectorSyncStagePlaybackEvent(
+                    sync_run_id=f"run-{connection.id}",
+                    connection_id=connection.id,
+                    remote_event_id="shared-event",
+                    item_remote_id="shared-item",
+                    user_remote_id="shared-user",
+                    played_at=now,
+                    last_synced_at=now,
+                ),
+            ])
+        db.commit()
+
+        promote_connector_playback_staging(db, f"run-{first.id}", first.id)
+        promote_connector_playback_staging(db, f"run-{second.id}", second.id)
+        db.commit()
+
+        assert db.scalar(select(func.count()).select_from(ConnectorUser)) == 2
+        assert db.scalar(select(func.count()).select_from(ConnectorUserItemData)) == 2
+        assert db.scalar(select(func.count()).select_from(ConnectorPlaybackEvent)) == 2
+        assert {
+            (event.connection_id, event.remote_event_id)
+            for event in db.scalars(select(ConnectorPlaybackEvent))
+        } == {(first.id, "shared-event"), (second.id, "shared-event")}
+
+
+def test_new_connector_users_are_enabled_by_default() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection = ConnectorConnection(provider="jellyfin", name="Default users")
+        db.add(connection)
+        db.flush()
+        db.add(
+            ConnectorSyncStageUser(
+                sync_run_id="default-users",
+                connection_id=connection.id,
+                remote_id="new-user",
+                name="Alice",
+                last_synced_at=utc_now(),
+            )
+        )
+        db.commit()
+
+        promote_connector_playback_staging(db, "default-users", connection.id)
+        db.commit()
+
+        user = db.scalar(
+            select(ConnectorUser).where(
+                ConnectorUser.connection_id == connection.id,
+                ConnectorUser.remote_id == "new-user",
+            )
+        )
+        assert user is not None
+        assert user.enabled_for_sync is True
+
+
+def test_connector_playback_promote_rolls_back_to_complete_previous_snapshot() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        connection = ConnectorConnection(provider="jellyfin", name="Atomic playback")
+        db.add(connection)
+        db.flush()
+        item = ConnectorItem(
+            connection_id=connection.id,
+            remote_id="item",
+            item_type="Movie",
+            title="Movie",
+        )
+        user = ConnectorUser(
+            connection_id=connection.id,
+            remote_id="user",
+            name="Alice",
+            enabled_for_sync=True,
+        )
+        db.add_all([item, user])
+        db.flush()
+        db.add(
+            ConnectorPlaybackEvent(
+                connection_id=connection.id,
+                remote_event_id="old-event",
+                connector_item_id=item.id,
+                connector_user_id=user.id,
+                played_at=utc_now(),
+            )
+        )
+        db.commit()
+        now = utc_now()
+        db.add_all(
+            [
+                ConnectorSyncStageUser(
+                    sync_run_id="replacement",
+                    connection_id=connection.id,
+                    remote_id="user",
+                    name="Alice",
+                    last_synced_at=now,
+                ),
+                ConnectorSyncStagePlaybackEvent(
+                    sync_run_id="replacement",
+                    connection_id=connection.id,
+                    remote_event_id="new-event",
+                    item_remote_id="item",
+                    user_remote_id="user",
+                    played_at=now,
+                    last_synced_at=now,
+                ),
+            ]
+        )
+        db.commit()
+
+        promote_connector_playback_staging(db, "replacement", connection.id)
+        db.rollback()
+
+        assert list(
+            db.scalars(
+                select(ConnectorPlaybackEvent.remote_event_id).where(
+                    ConnectorPlaybackEvent.connection_id == connection.id
+                )
+            )
+        ) == ["old-event"]
 
 
 def test_connector_bulk_stage_and_promote_preserve_normalized_metadata() -> None:
@@ -678,22 +976,41 @@ def test_init_db_migrates_legacy_jellyfin_catalog_idempotently(tmp_path) -> None
             title="Movie",
             match_status="matched",
         )
+        legacy_user = JellyfinUser(
+            jellyfin_user_id="shared-user",
+            name="Alice",
+            enabled_for_sync=True,
+        )
         mapping = JellyfinPathMapping(
             jellyfin_path_prefix="/srv/media",
             medialyze_path_prefix=str(tmp_path),
             enabled=True,
         )
-        db.add_all([media, item, mapping])
+        db.add_all([media, item, mapping, legacy_user])
         db.flush()
-        db.add(
+        db.add_all([
             JellyfinMediaMatch(
                 media_file_id=media.id,
                 jellyfin_item_id=item.id,
                 match_method="path",
                 confidence=1.0,
                 status="matched",
-            )
-        )
+            ),
+            JellyfinUserItemData(
+                jellyfin_item_id=item.id,
+                jellyfin_user_id=legacy_user.jellyfin_user_id,
+                play_count=2,
+                played=True,
+                playback_position_ticks=0,
+                is_favorite=False,
+            ),
+            JellyfinPlaybackEvent(
+                jellyfin_activity_id=99,
+                jellyfin_item_id=item.id,
+                jellyfin_user_id=legacy_user.jellyfin_user_id,
+                played_at=utc_now(),
+            ),
+        ])
         db.commit()
 
     init_db(engine)
@@ -707,6 +1024,9 @@ def test_init_db_migrates_legacy_jellyfin_catalog_idempotently(tmp_path) -> None
         assert db.scalar(select(func.count()).select_from(ConnectorLibraryLocation)) == 1
         assert db.scalar(select(func.count()).select_from(ConnectorItem)) == 1
         assert db.scalar(select(func.count()).select_from(ConnectorMediaMatch)) == 1
+        assert db.scalar(select(func.count()).select_from(ConnectorUser)) == 1
+        assert db.scalar(select(func.count()).select_from(ConnectorUserItemData)) == 1
+        assert db.scalar(select(func.count()).select_from(ConnectorPlaybackEvent)) == 1
         binding = db.scalar(select(ConnectorRootBinding))
         assert binding is not None
         assert binding.case_mode == "insensitive"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from backend.app.models.entities import ConnectorConnection
@@ -10,6 +10,9 @@ from backend.app.services.connector_contract import (
     RemoteItem,
     RemoteLibrary,
     RemoteLocation,
+    RemotePlaybackEvent,
+    RemoteUser,
+    RemoteUserItemData,
 )
 from backend.app.services.jellyfin_client import JellyfinClient, JellyfinItemPage
 from backend.app.services.jellyfin_matching import normalize_jellyfin_path
@@ -44,11 +47,7 @@ def _library_id(folder: dict) -> str:
 
 class JellyfinConnectorAdapter:
     provider = "jellyfin"
-    # The generic adapter currently synchronizes only the catalog. Optional
-    # users, playback, and authenticated image routes remain capabilities of
-    # the migrated legacy-default connection until they move behind this
-    # adapter as well.
-    capabilities = frozenset()
+    capabilities = frozenset({"users", "user_states", "playback_events"})
 
     def __init__(self, connection: ConnectorConnection, secret: str, cancellation_check=None) -> None:
         self.client = JellyfinClient(
@@ -154,6 +153,72 @@ class JellyfinConnectorAdapter:
                         "image_tags": dict(payload.get("ImageTags") or {}),
                         "backdrop_image_tags": list(payload.get("BackdropImageTags") or []),
                     },
+                )
+
+    def iter_users(self) -> Iterable[RemoteUser]:
+        for payload in self.client.get_users():
+            remote_id = _remote_id(payload.get("Id"))
+            if not remote_id:
+                continue
+            yield RemoteUser(
+                remote_id=remote_id,
+                name=str(payload.get("Name") or "Unknown user").strip() or "Unknown user",
+            )
+
+    def iter_user_item_data(self, users: Iterable[RemoteUser]) -> Iterator[RemoteUserItemData]:
+        for user in users:
+            for page in self.client.iter_item_pages(
+                user_id=user.remote_id,
+                user_data_only=True,
+            ):
+                for payload in page.items:
+                    item_remote_id = _remote_id(payload.get("Id"))
+                    if not item_remote_id:
+                        continue
+                    user_data = payload.get("UserData")
+                    if not isinstance(user_data, dict):
+                        user_data = {}
+                    yield RemoteUserItemData(
+                        item_remote_id=item_remote_id,
+                        user_remote_id=user.remote_id,
+                        play_count=int(user_data.get("PlayCount") or 0),
+                        played=bool(user_data.get("Played")),
+                        playback_position_ticks=int(user_data.get("PlaybackPositionTicks") or 0),
+                        last_played_date=_parse_datetime(user_data.get("LastPlayedDate")),
+                        is_favorite=bool(user_data.get("IsFavorite")),
+                    )
+
+    def iter_playback_events(
+        self,
+        users: Iterable[RemoteUser],
+        *,
+        min_date: datetime | None = None,
+    ) -> Iterator[RemotePlaybackEvent]:
+        user_ids = {user.remote_id for user in users}
+        if not user_ids:
+            return
+        normalized_min_date = None
+        if min_date is not None:
+            normalized = min_date if min_date.tzinfo is not None else min_date.replace(tzinfo=UTC)
+            normalized_min_date = normalized.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        for page in self.client.iter_playback_activity_pages(min_date=normalized_min_date):
+            for payload in page.items:
+                remote_event_id = str(payload.get("Id") or "").strip()
+                item_remote_id = _remote_id(payload.get("ItemId"))
+                user_remote_id = _remote_id(payload.get("UserId"))
+                played_at = _parse_datetime(payload.get("Date"))
+                if (
+                    not remote_event_id
+                    or not item_remote_id
+                    or user_remote_id not in user_ids
+                    or played_at is None
+                ):
+                    continue
+                yield RemotePlaybackEvent(
+                    remote_event_id=remote_event_id,
+                    item_remote_id=item_remote_id,
+                    user_remote_id=user_remote_id,
+                    played_at=played_at,
                 )
 
 

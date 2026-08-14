@@ -36,6 +36,9 @@ class ConnectorProviderRegistry:
     def descriptors(self) -> tuple[ConnectorProviderDescriptor, ...]:
         return tuple(self._descriptors[key] for key in sorted(self._descriptors))
 
+    def descriptor(self, provider: str) -> ConnectorProviderDescriptor | None:
+        return self._descriptors.get(provider.strip().casefold())
+
     def create(
         self,
         connection: ConnectorConnection,
@@ -73,7 +76,7 @@ def register_builtin_connectors() -> None:
                     secret=True,
                 ),
             ),
-            optional_capabilities=("users", "user_states", "playback_events", "images"),
+            optional_capabilities=("users", "user_states", "playback_events"),
         ),
     )
 
