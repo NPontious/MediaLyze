@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from backend.app.core.config import get_settings
 from backend.app.models.entities import (
     JellyfinConnection,
     JellyfinLibrary,
@@ -23,19 +24,13 @@ from backend.app.models.entities import (
     JellyfinUser,
     Library,
 )
-from backend.app.core.config import get_settings
 from backend.app.services.jellyfin_client import JellyfinClient, JellyfinError, JellyfinItemPage
 from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
+from backend.app.services.jellyfin_jobs import update_jellyfin_sync_job_progress
 from backend.app.services.jellyfin_matching import (
     map_library_locations,
     normalize_jellyfin_path,
     recompute_jellyfin_matches,
-)
-from backend.app.services.jellyfin_jobs import update_jellyfin_sync_job_progress
-from backend.app.services.jellyfin_staging import (
-    cleanup_staging,
-    commit_stage_page,
-    promote_staging,
 )
 from backend.app.services.jellyfin_progress import (
     begin_jellyfin_progress,
@@ -47,9 +42,13 @@ from backend.app.services.jellyfin_progress import (
     update_jellyfin_progress,
     update_jellyfin_progress_track,
 )
+from backend.app.services.jellyfin_staging import (
+    cleanup_staging,
+    commit_stage_page,
+    promote_staging,
+)
 from backend.app.services.stats_cache import stats_cache
 from backend.app.utils.time import utc_now
-
 
 JELLYFIN_USER_SYNC_WORKERS = 4
 
@@ -151,6 +150,7 @@ def _sync_playback_events(
     imported = 0
     try:
         for page in iterator(min_date=min_date):
+            _raise_if_sync_cancelled()
             rows: list[dict] = []
             for payload in page.items:
                 activity_id = payload.get("Id")
@@ -180,6 +180,19 @@ def _sync_playback_events(
                 JellyfinSyncStagePlaybackEvent,
                 rows,
                 conflict_columns=("sync_run_id", "jellyfin_activity_id"),
+            )
+            update_jellyfin_progress(
+                "playback_events",
+                current=min(
+                    page.start_index
+                    + (
+                        page.processed_count
+                        if page.processed_count is not None
+                        else len(page.items)
+                    ),
+                    page.total_record_count,
+                ),
+                total=page.total_record_count,
             )
     except JellyfinError:
         # Playback history is an optional elevated Jellyfin endpoint. Keep the
@@ -592,7 +605,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                     total=page.total_record_count,
                 )
 
-            update_jellyfin_progress("items", current=0, total=None)
+            update_jellyfin_progress("user_states", current=0, total=None)
             _sync_enabled_user_data(
                 db,
                 sync_run_id=sync_run_id,
@@ -601,6 +614,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                 api_key=api_key,
                 now=now,
             )
+            update_jellyfin_progress("playback_events", current=0, total=None)
             playback_event_count, playback_history_status = _sync_playback_events(
                 db,
                 client=client,

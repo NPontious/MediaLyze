@@ -27,6 +27,7 @@ New Storage map to view your entire library at once!
 
 ### 🐛 Bug fixes
 
+- keep long Jellyfin user-state, playback-history, and compatibility-mirror phases visibly progressing and responsive to cancellation
 - remove the redundant connector connection heading, description, and technical capability badges from expanded connection settings
 - show active connector synchronizations in the global scan banner with consistent progress details and cancellation controls instead of inline connection messages
 - move connector automatic/manual mapping controls into their accordion headers, reuse the Library Detail period selector's segmented-control design, and align their chevrons with the Analyzed users accordion

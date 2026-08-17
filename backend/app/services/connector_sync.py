@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import uuid4
 
 from sqlalchemy import delete, func, literal, select, update
@@ -7,6 +8,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.app.db.types import UTCDateTime
 from backend.app.models.entities import (
     ConnectorConnection,
     ConnectorItem,
@@ -22,22 +24,21 @@ from backend.app.models.entities import (
     ConnectorSyncStageUserData,
     ConnectorUser,
     ConnectorUserItemData,
-    JobStatus,
     JellyfinConnection,
     JellyfinItem,
     JellyfinLibrary,
     JellyfinPlaybackEvent,
     JellyfinUser,
     JellyfinUserItemData,
+    JobStatus,
 )
-from backend.app.db.types import UTCDateTime
 from backend.app.services.connector_contract import RemoteItem, RemoteLibrary, RemoteUser
 from backend.app.services.connector_credentials import read_connector_secret
-from backend.app.services.connector_matching import recompute_connector_matches
 from backend.app.services.connector_mapping import (
     project_automatic_mapping_to_legacy,
     reconcile_connector_mappings,
 )
+from backend.app.services.connector_matching import recompute_connector_matches
 from backend.app.services.connector_pathing import normalize_connector_path
 from backend.app.services.connector_registry import connector_registry
 from backend.app.services.connector_security import (
@@ -45,8 +46,8 @@ from backend.app.services.connector_security import (
     redact_connector_error,
 )
 from backend.app.services.connector_service import is_legacy_default_connection
-from backend.app.services.stats_cache import stats_cache
 from backend.app.services.jellyfin_matching import recompute_jellyfin_matches
+from backend.app.services.stats_cache import stats_cache
 from backend.app.utils.time import utc_now
 
 
@@ -1025,8 +1026,14 @@ def run_connector_recompute(db: Session, job_id: int) -> dict[str, int]:
         raise ConnectorSyncFailed(safe_error) from None
 
 
-def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, int]]:
+def mirror_legacy_jellyfin_snapshot(
+    db: Session,
+    *,
+    cancellation_check: Callable[[], None] | None = None,
+) -> tuple[int | None, dict[str, int]]:
     """Mirror the compatibility catalog without exposing Jellyfin fields to core sync code."""
+    if cancellation_check is not None:
+        cancellation_check()
     connection = db.scalar(
         select(ConnectorConnection).where(
             ConnectorConnection.provider == "jellyfin",
@@ -1061,7 +1068,9 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
     }
     desired_library_ids: set[str] = set()
     legacy_library_map: dict[int, ConnectorLibrary] = {}
-    for legacy in db.scalars(select(JellyfinLibrary)):
+    for index, legacy in enumerate(db.scalars(select(JellyfinLibrary))):
+        if cancellation_check is not None and index % 100 == 0:
+            cancellation_check()
         remote_id = legacy.remote_item_id or f"legacy:{legacy.id}"
         desired_library_ids.add(remote_id)
         current = live_libraries.get(remote_id)
@@ -1122,7 +1131,9 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
         )
     }
     desired_item_ids: set[str] = set()
-    for legacy in legacy_items:
+    for index, legacy in enumerate(legacy_items):
+        if cancellation_check is not None and index % 250 == 0:
+            cancellation_check()
         desired_item_ids.add(legacy.jellyfin_item_id)
         item = live_items.get(legacy.jellyfin_item_id)
         if item is None:
@@ -1173,7 +1184,9 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
         )
     }
     desired_user_ids: set[str] = set()
-    for legacy_user in db.scalars(select(JellyfinUser)):
+    for index, legacy_user in enumerate(db.scalars(select(JellyfinUser))):
+        if cancellation_check is not None and index % 100 == 0:
+            cancellation_check()
         desired_user_ids.add(legacy_user.jellyfin_user_id)
         user = connector_users.get(legacy_user.jellyfin_user_id)
         if user is None:
@@ -1210,11 +1223,13 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
             ConnectorPlaybackEvent.connection_id == connection.id
         )
     )
-    for legacy_data, legacy_item in db.execute(
+    for index, (legacy_data, legacy_item) in enumerate(db.execute(
         select(JellyfinUserItemData, JellyfinItem).join(
             JellyfinItem, JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id
         )
-    ):
+    )):
+        if cancellation_check is not None and index % 250 == 0:
+            cancellation_check()
         user = users_by_remote.get(legacy_data.jellyfin_user_id)
         item = items_by_remote.get(legacy_item.jellyfin_item_id)
         if user is None or item is None or not user.enabled_for_sync:
@@ -1231,11 +1246,13 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
                 last_synced_at=legacy_data.last_synced_at,
             )
         )
-    for legacy_event, legacy_item in db.execute(
+    for index, (legacy_event, legacy_item) in enumerate(db.execute(
         select(JellyfinPlaybackEvent, JellyfinItem).join(
             JellyfinItem, JellyfinItem.id == JellyfinPlaybackEvent.jellyfin_item_id
         )
-    ):
+    )):
+        if cancellation_check is not None and index % 250 == 0:
+            cancellation_check()
         user = users_by_remote.get(legacy_event.jellyfin_user_id)
         item = items_by_remote.get(legacy_item.jellyfin_item_id)
         if user is None or item is None or not user.enabled_for_sync:
@@ -1257,10 +1274,25 @@ def mirror_legacy_jellyfin_snapshot(db: Session) -> tuple[int | None, dict[str, 
     ]
     if stale_connector_user_ids:
         db.execute(delete(ConnectorUser).where(ConnectorUser.id.in_(stale_connector_user_ids)))
+    if cancellation_check is not None:
+        cancellation_check()
     db.commit()
     reconcile_connector_mappings(db, connection.id, commit=False)
-    matching = recompute_connector_matches(db, connection_id=connection.id, commit=False)
+    if cancellation_check is not None:
+        cancellation_check()
+    matching = recompute_connector_matches(
+        db,
+        connection_id=connection.id,
+        cancellation_check=cancellation_check,
+        commit=False,
+    )
     project_automatic_mapping_to_legacy(db, connection.id)
-    recompute_jellyfin_matches(db, commit=False)
+    recompute_jellyfin_matches(
+        db,
+        cancellation_check=cancellation_check,
+        commit=False,
+    )
+    if cancellation_check is not None:
+        cancellation_check()
     db.commit()
     return connection.id, matching

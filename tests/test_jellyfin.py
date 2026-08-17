@@ -1,10 +1,10 @@
-from datetime import UTC, datetime
 import os
+import tempfile
+import zlib
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier, Lock
-import tempfile
 from types import SimpleNamespace
-import zlib
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
 os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="medialyze-media-"))
@@ -51,25 +51,26 @@ from backend.app.models.entities import (
 )
 from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.jellyfin_client import (
-    JellyfinClient,
     JellyfinActivityPage,
+    JellyfinClient,
     JellyfinConfigurationError,
-    JellyfinItemPage,
-    JellyfinImage,
     JellyfinConnectionError,
+    JellyfinImage,
+    JellyfinItemPage,
     JellyfinResponseError,
 )
 from backend.app.services.jellyfin_images import JellyfinImageCache
 from backend.app.services.jellyfin_matching import apply_path_mappings, recompute_jellyfin_matches
 from backend.app.services.jellyfin_progress import (
     clear_jellyfin_progress,
+    jellyfin_cancellation_requested,
     request_jellyfin_cancellation,
     reset_jellyfin_cancellation,
     set_jellyfin_progress_tracks,
     update_jellyfin_progress,
     update_jellyfin_progress_track,
 )
-from backend.app.services.jellyfin_sync import run_jellyfin_sync
+from backend.app.services.jellyfin_sync import JellyfinSyncCancelled, run_jellyfin_sync
 from backend.app.services.media_service import list_library_files
 from backend.app.services.runtime import ScanRuntimeManager
 
@@ -976,6 +977,102 @@ def test_runtime_deduplicates_manual_and_scheduled_jellyfin_syncs(
     assert canceled.active_lock is None
 
 
+def test_running_sync_signals_worker_before_persisting_cancellation(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db.add_all([
+        JellyfinConnection(
+            id=1,
+            base_url="http://jellyfin:8096",
+            api_key="secret",
+            enabled=True,
+        ),
+        JellyfinSyncJob(
+            status=JobStatus.running,
+            trigger_source=JellyfinSyncTriggerSource.manual,
+            active_lock=1,
+        ),
+    ])
+    db.commit()
+    factory = sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    runtime = object.__new__(ScanRuntimeManager)
+    monkeypatch.setattr("backend.app.services.runtime.SessionLocal", factory)
+
+    def persist_after_signal(_db: Session, _job_id: int) -> bool:
+        assert jellyfin_cancellation_requested() is True
+        return True
+
+    monkeypatch.setattr(
+        "backend.app.services.runtime.mark_jellyfin_sync_cancellation_requested",
+        persist_after_signal,
+    )
+    reset_jellyfin_cancellation()
+    try:
+        result = runtime.cancel_jellyfin_sync(1)
+    finally:
+        reset_jellyfin_cancellation()
+
+    assert result["cancellation_requested"] is True
+
+
+def test_runtime_marks_cancellation_during_connector_mirror_as_canceled(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db.add_all([
+        JellyfinConnection(
+            id=1,
+            base_url="http://jellyfin:8096",
+            api_key="secret",
+            enabled=True,
+        ),
+        ConnectorConnection(provider="jellyfin", name="Jellyfin"),
+        JellyfinSyncJob(
+            status=JobStatus.queued,
+            trigger_source=JellyfinSyncTriggerSource.manual,
+            active_lock=1,
+        ),
+    ])
+    db.commit()
+    job = db.scalar(select(JellyfinSyncJob))
+    assert job is not None
+    factory = sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    runtime = object.__new__(ScanRuntimeManager)
+    monkeypatch.setattr("backend.app.services.runtime.SessionLocal", factory)
+    monkeypatch.setattr(
+        "backend.app.services.runtime.run_jellyfin_sync",
+        lambda _db, *, job_id: {"status": "success", "job_id": job_id},
+    )
+
+    def cancel_during_mirror(_db: Session, *, cancellation_check) -> tuple[int, dict]:
+        raise JellyfinSyncCancelled("Jellyfin synchronization was canceled")
+
+    monkeypatch.setattr(
+        "backend.app.services.runtime.mirror_legacy_jellyfin_snapshot",
+        cancel_during_mirror,
+    )
+
+    runtime._run_jellyfin_sync(job.id)
+    db.expire_all()
+    canceled = db.get(JellyfinSyncJob, job.id)
+
+    assert canceled is not None
+    assert canceled.status == JobStatus.canceled
+    assert canceled.active_lock is None
+    assert canceled.sync_summary == {"status": "canceled"}
+
+
 def test_sync_status_exposes_live_progress(db: Session) -> None:
     client = _client(db)
     update_jellyfin_progress("items", detail="Alice", current=500, total=1200)
@@ -1397,12 +1494,36 @@ def test_sync_persists_individual_playback_events_and_exposes_them_for_a_file(
                 total_record_count=3,
             )
 
+    from backend.app.services import jellyfin_sync as jellyfin_sync_service
+
+    reported_progress: list[tuple[str | None, int, int | None]] = []
+    original_update_progress = jellyfin_sync_service.update_jellyfin_progress
+
+    def track_progress(
+        phase: str | None,
+        *,
+        detail: str | None = None,
+        current: int = 0,
+        total: int | None = None,
+    ) -> None:
+        reported_progress.append((phase, current, total))
+        original_update_progress(
+            phase,
+            detail=detail,
+            current=current,
+            total=total,
+        )
+
     monkeypatch.setattr("backend.app.services.jellyfin_sync.JellyfinClient", PlaybackFakeClient)
+    monkeypatch.setattr(jellyfin_sync_service, "update_jellyfin_progress", track_progress)
 
     result = run_jellyfin_sync(db)
 
     assert result["playback_history_status"] == "available"
     assert result["playback_events_synced"] == 3
+    assert ("user_states", 0, None) in reported_progress
+    assert ("playback_events", 0, None) in reported_progress
+    assert ("playback_events", 3, 3) in reported_progress
     events = list(
         db.scalars(
             select(JellyfinPlaybackEvent).order_by(JellyfinPlaybackEvent.jellyfin_activity_id)

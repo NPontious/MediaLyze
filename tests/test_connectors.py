@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -51,27 +49,31 @@ from backend.app.schemas.connectors import (
     ConnectorLibraryLinkWrite,
 )
 from backend.app.services.connector_contract import RemoteItem
+from backend.app.services.connector_mapping import reconcile_connector_mappings
 from backend.app.services.connector_matching import recompute_connector_matches
-from backend.app.services.connector_pathing import normalize_connector_path, normalize_target_subpath
+from backend.app.services.connector_pathing import (
+    normalize_connector_path,
+    normalize_target_subpath,
+)
+from backend.app.services.connector_security import redact_connector_error
 from backend.app.services.connector_service import (
     create_connector_connection,
     replace_connector_bindings,
     replace_connector_library_links,
     serialize_connector_connection,
 )
-from backend.app.services.connector_mapping import reconcile_connector_mappings
 from backend.app.services.connector_sync import (
-    create_or_get_connector_sync_job,
-    claim_connector_sync_job,
     _stage_item_row,
     _upsert_stage_items,
-    promote_connector_staging,
+    claim_connector_sync_job,
+    create_or_get_connector_sync_job,
+    mirror_legacy_jellyfin_snapshot,
     promote_connector_playback_staging,
+    promote_connector_staging,
     recover_orphaned_connector_sync_jobs,
     request_connector_sync_cancellation,
     run_connector_recompute,
 )
-from backend.app.services.connector_security import redact_connector_error
 from backend.app.utils.time import utc_now
 
 
@@ -458,6 +460,28 @@ def test_connector_startup_recovery_cancels_orphaned_jobs() -> None:
         assert job.status == JobStatus.canceled
         assert job.active_lock is None
         assert job.finished_at is not None
+
+
+def test_legacy_connector_mirror_honors_cancellation() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        db.add_all([
+            ConnectorConnection(provider="jellyfin", name="Jellyfin"),
+            JellyfinConnection(id=1, enabled=True),
+        ])
+        db.commit()
+
+        class MirrorCanceled(RuntimeError):
+            pass
+
+        def cancel_mirror() -> None:
+            raise MirrorCanceled
+
+        with pytest.raises(MirrorCanceled):
+            mirror_legacy_jellyfin_snapshot(
+                db,
+                cancellation_check=cancel_mirror,
+            )
 
 
 def test_canceled_queued_connector_job_cannot_be_claimed() -> None:

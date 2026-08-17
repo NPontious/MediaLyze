@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
 import logging
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock, Timer
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -11,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from tzlocal import get_localzone
-from watchdog.events import FileSystemEvent, FileSystemEventHandler, FileMovedEvent
+from watchdog.events import FileMovedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from backend.app.core.config import Settings
@@ -28,35 +28,35 @@ from backend.app.models.entities import (
     ScanMode,
     ScanTriggerSource,
 )
+from backend.app.schemas.history import (
+    HistoryReconstructionJobStatus,
+    HistoryReconstructionPhase,
+    HistoryReconstructionStatusRead,
+)
+from backend.app.services.app_settings import get_app_settings
 from backend.app.services.connector_credentials import read_connector_secret
+from backend.app.services.connector_matching import (
+    compare_legacy_jellyfin_matches,
+)
+from backend.app.services.connector_security import redact_connector_error
+from backend.app.services.connector_service import is_legacy_default_connection
 from backend.app.services.connector_sync import (
     claim_connector_sync_job,
     create_or_get_connector_sync_job,
+    mirror_legacy_jellyfin_snapshot,
     recover_orphaned_connector_sync_jobs,
     request_connector_sync_cancellation,
     run_connector_recompute,
     run_connector_sync,
-    mirror_legacy_jellyfin_snapshot,
 )
-from backend.app.services.connector_security import redact_connector_error
-from backend.app.services.connector_service import is_legacy_default_connection
-from backend.app.services.connector_matching import (
-    compare_legacy_jellyfin_matches,
-)
-from backend.app.services.app_settings import get_app_settings
+from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.history_retention import (
     HistoryRetentionResult,
     apply_history_retention,
     run_pending_history_compaction,
 )
 from backend.app.services.history_storage import get_history_storage
-from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
-from backend.app.services.library_history_service import get_dashboard_history, get_library_history
-from backend.app.services.library_service import get_library_summary
-from backend.app.services.jellyfin_matching import (
-    recompute_jellyfin_matches,
-    refresh_jellyfin_mapping_state,
-)
+from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_jobs import (
     cancel_queued_jellyfin_sync_job,
     create_or_get_jellyfin_sync_job,
@@ -65,14 +65,26 @@ from backend.app.services.jellyfin_jobs import (
     mark_jellyfin_sync_cancellation_requested,
     mark_jellyfin_sync_job_running,
     recover_orphaned_jellyfin_sync_jobs,
+    update_jellyfin_sync_job_progress,
+)
+from backend.app.services.jellyfin_matching import (
+    recompute_jellyfin_matches,
+    refresh_jellyfin_mapping_state,
 )
 from backend.app.services.jellyfin_progress import (
+    jellyfin_cancellation_requested,
     request_jellyfin_cancellation,
     reset_jellyfin_cancellation,
 )
-from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
-from backend.app.services.jellyfin_sync import run_jellyfin_sync
+from backend.app.services.jellyfin_sync import JellyfinSyncCancelled, run_jellyfin_sync
+from backend.app.services.library_history_service import get_dashboard_history, get_library_history
+from backend.app.services.library_service import get_library_summary
 from backend.app.services.path_access import is_watch_supported_for_library
+from backend.app.services.scanner import (
+    execute_scan_job,
+    queue_quality_recompute_job,
+    queue_scan_job,
+)
 from backend.app.services.stats_cache import stats_cache
 from backend.app.services.telemetry import (
     send_current_telemetry_snapshot,
@@ -80,18 +92,7 @@ from backend.app.services.telemetry import (
     send_update_telemetry_snapshot,
 )
 from backend.app.services.update_status import check_for_updates
-from backend.app.schemas.history import (
-    HistoryReconstructionJobStatus,
-    HistoryReconstructionPhase,
-    HistoryReconstructionStatusRead,
-)
 from backend.app.utils.time import utc_now
-from backend.app.services.scanner import (
-    execute_scan_job,
-    queue_quality_recompute_job,
-    queue_scan_job,
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -652,9 +653,13 @@ class ScanRuntimeManager:
                     "status": JobStatus.canceled.value if canceled else job.status.value,
                     "cancellation_requested": canceled,
                 }
-            requested = mark_jellyfin_sync_cancellation_requested(db, job.id)
+            # Signal the in-process worker before attempting the SQLite write.
+            # The compatibility mirror can hold a long write transaction, and
+            # waiting for that transaction here used to make cancellation look
+            # permanently stuck.
+            requested = request_jellyfin_cancellation(job.id)
             if requested:
-                request_jellyfin_cancellation(job.id)
+                mark_jellyfin_sync_cancellation_requested(db, job.id)
             return {
                 "job_id": job.id,
                 "status": job.status.value,
@@ -752,12 +757,40 @@ class ScanRuntimeManager:
                 return
             try:
                 summary = run_jellyfin_sync(db, job_id=job_id)
-                connector_id, connector_matching = mirror_legacy_jellyfin_snapshot(db)
+                if summary.get("status") == "canceled":
+                    finish_jellyfin_sync_job(db, job_id, JobStatus.canceled, summary=summary)
+                    return
+                update_jellyfin_sync_job_progress(
+                    db,
+                    job_id,
+                    phase="mapping",
+                    detail=None,
+                    current=0,
+                    total=None,
+                )
+
+                def check_cancellation() -> None:
+                    if jellyfin_cancellation_requested():
+                        raise JellyfinSyncCancelled("Jellyfin synchronization was canceled")
+
+                connector_id, connector_matching = mirror_legacy_jellyfin_snapshot(
+                    db,
+                    cancellation_check=check_cancellation,
+                )
                 if connector_id is not None:
                     summary["connector_matching"] = connector_matching
                     summary["connector_shadow"] = compare_legacy_jellyfin_matches(
                         db, connector_id
                     )
+            except JellyfinSyncCancelled:
+                db.rollback()
+                finish_jellyfin_sync_job(
+                    db,
+                    job_id,
+                    JobStatus.canceled,
+                    summary={"status": "canceled"},
+                )
+                return
             except Exception as exc:
                 connection = db.get(JellyfinConnection, 1)
                 secret = read_jellyfin_api_key(

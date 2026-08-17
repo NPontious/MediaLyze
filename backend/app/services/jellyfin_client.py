@@ -45,6 +45,7 @@ class JellyfinActivityPage:
     items: list[dict]
     start_index: int
     total_record_count: int
+    processed_count: int | None = None
 
 
 class JellyfinClient:
@@ -364,6 +365,7 @@ class JellyfinClient:
                 ],
                 start_index=start_index,
                 total_record_count=total,
+                processed_count=len(page),
             )
             next_index = start_index + len(page)
             if next_index >= total:
