@@ -86,6 +86,8 @@ beforeEach(() => {
   vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
   vi.spyOn(api, "libraries").mockResolvedValue([]);
   vi.spyOn(api, "activeScanJobs").mockResolvedValue([]);
+  vi.spyOn(api, "connectors").mockResolvedValue([]);
+  vi.spyOn(api, "connectorSyncStatus").mockResolvedValue(null);
   vi.spyOn(api, "updateStatus").mockResolvedValue({
     current_version: "0.8.3",
     latest_version: "0.8.3",
@@ -364,6 +366,57 @@ describe("AppShell", () => {
     expect(document.querySelector(".scan-job-card.is-indeterminate")).toBeTruthy();
     // Metrics toggle button is present
     expect(screen.getByRole("button", { name: "Toggle scan metrics" })).toBeInTheDocument();
+  });
+
+  it("shows active connector synchronization in the global scan banner", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.mocked(api.connectors).mockResolvedValue([{
+      id: 7,
+      provider: "jellyfin",
+      name: "Living Room",
+      base_url: "http://jellyfin.local",
+      config: {},
+      capabilities: { users: true },
+      enabled: true,
+      sync_interval_minutes: 60,
+      path_mapping_mode: "automatic",
+      library_mapping_mode: "automatic",
+      server_name: "Jellyfin",
+      server_version: "10.11",
+      last_status: "running",
+      last_error: null,
+      last_sync_started_at: null,
+      last_sync_finished_at: null,
+      last_successful_sync_at: null,
+      has_secret: true,
+      created_at: "2026-08-04T00:00:00Z",
+      updated_at: "2026-08-04T00:00:00Z",
+    }]);
+    vi.mocked(api.connectorSyncStatus).mockResolvedValue({
+      id: 12,
+      connection_id: 7,
+      job_type: "sync",
+      sync_run_id: "run-12",
+      status: "running",
+      trigger_source: "manual",
+      cancellation_requested: false,
+      progress_phase: "items",
+      progress_detail: null,
+      progress_current: 20,
+      progress_total: 100,
+      error: null,
+      sync_summary: {},
+    });
+    const cancel = vi.spyOn(api, "cancelConnectorSync").mockResolvedValue({ job_id: 12, status: "running", cancellation_requested: true });
+
+    renderShell();
+
+    expect(await screen.findByText("Living Room")).toBeInTheDocument();
+    expect(document.querySelector(".scan-banner .connector-sync-job-card.is-determinate")).toBeInTheDocument();
+    expect(await screen.findByText("Items")).toBeInTheDocument();
+    expect(screen.getByText("20 / 100")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop this synchronization" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(7, 12));
   });
 
   it("keeps active scans visible and shows an error when cancel fails", async () => {

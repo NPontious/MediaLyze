@@ -1,18 +1,19 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Bug, ChevronDown, ChevronRight, Download, GitCompare, House, Map, Settings, X } from "lucide-react";
+import { Bug, ChevronDown, ChevronRight, Download, GitCompare, House, Map, RefreshCw, Settings, X } from "lucide-react";
 import { FilePlusCorner, FileXCorner, File, FileDiff, FileExclamationPoint, FileSearchCorner, FileCheckCorner } from "lucide-react";
 import { AnimatePresence, motion, useAnimation, type Transition } from "motion/react";
 
 import { AnimatedSearchIcon } from "./AnimatedSearchIcon";
 import { BanIcon } from "./BanIcon";
+import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import { FolderInputIcon } from "./FolderInputIcon";
 import { FolderOutputIcon } from "./FolderOutputIcon";
 import { GithubIcon } from "./GithubIcon";
 import { HandCoinsIcon } from "./HandCoinsIcon";
 import { TelemetryModeToggle } from "./TelemetryModeToggle";
-import { api, type ScanJob, type TelemetryMode, type UpdateStatus } from "../lib/api";
+import { api, type ConnectorConnection, type ConnectorSyncJob, type ScanJob, type TelemetryMode, type UpdateStatus } from "../lib/api";
 import { APP_VERSION } from "../lib/app-version";
 import { useAppData } from "../lib/app-data";
 import {
@@ -232,6 +233,100 @@ function ScanJobCard({
   );
 }
 
+type ActiveConnectorJob = {
+  connection: ConnectorConnection;
+  job: ConnectorSyncJob;
+};
+
+function ConnectorSyncJobCard({
+  activeJob,
+  onStop,
+  stopping,
+}: {
+  activeJob: ActiveConnectorJob;
+  onStop: () => void;
+  stopping: boolean;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
+    return !window.matchMedia("(max-width: 500px)").matches;
+  });
+
+  const { connection, job } = activeJob;
+  const progressTotal = job.progress_total ?? 0;
+  const isDeterminate = job.status === "running" && progressTotal > 0;
+  const progressPercent = isDeterminate
+    ? Math.min(100, Math.max(0, (job.progress_current / progressTotal) * 100))
+    : 0;
+  const phaseKey = job.status === "queued" ? "queued" : job.progress_phase ?? "starting";
+  const phaseLabel = t(`connectors.syncStep.${phaseKey}`, {
+    defaultValue: phaseKey.replaceAll("_", " "),
+  });
+  const jobLabel = job.job_type === "recompute" ? t("connectors.recompute") : t("connectors.sync");
+
+  return (
+    <div
+      className={`scan-job-card connector-sync-job-card${isDeterminate ? " is-determinate" : " is-indeterminate"}`}
+      style={isDeterminate ? { "--scan-progress": `${progressPercent}%` } as React.CSSProperties : undefined}
+    >
+      <div className="scan-job-card-main">
+        <span className="scan-job-card-search-icon connector-sync-provider-icon" aria-hidden="true">
+          <ConnectorProviderIcon provider={connection.provider} />
+        </span>
+        <span className="scan-job-card-name" title={connection.name}>{connection.name}</span>
+        {expanded ? (
+            <div className="scan-job-metrics">
+              <span className="scan-job-metric-item">
+                <span className="scan-job-metric-icon-wrap" title={jobLabel}>
+                  <RefreshCw size={14} aria-hidden="true" />
+                  <span className="scan-job-metric-value">{jobLabel}</span>
+                </span>
+              </span>
+              <span className="scan-job-metric-item">
+                <span className="scan-job-metric-sep" aria-hidden="true" />
+                <span className="scan-job-metric-icon-wrap" title={t("connectors.syncBanner.phase")}>
+                  <span className="scan-job-metric-value">{phaseLabel}</span>
+                </span>
+              </span>
+              {progressTotal > 0 ? (
+                <span className="scan-job-metric-item">
+                  <span className="scan-job-metric-sep" aria-hidden="true" />
+                  <span className="scan-job-metric-icon-wrap" title={t("connectors.syncBanner.progress")}>
+                    <FileCheckCorner size={14} aria-hidden="true" />
+                    <span className="scan-job-metric-value">{job.progress_current.toLocaleString()} / {progressTotal.toLocaleString()}</span>
+                  </span>
+                </span>
+              ) : null}
+            </div>
+        ) : null}
+        <div className="scan-job-card-actions">
+          <button
+            type="button"
+            className="secondary icon-only-button scan-job-toggle-button"
+            aria-label={t("connectors.syncBanner.toggleMetrics")}
+            title={t("connectors.syncBanner.toggleMetrics")}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? <FolderInputIcon size={16} aria-hidden="true" /> : <FolderOutputIcon size={16} aria-hidden="true" />}
+          </button>
+          <span className="scan-job-action-sep" aria-hidden="true" />
+          <button
+            type="button"
+            className="secondary icon-only-button scan-banner-stop"
+            aria-label={t("connectors.syncBanner.stopJob")}
+            title={t("connectors.syncBanner.stopJob")}
+            disabled={stopping}
+            onClick={onStop}
+          >
+            <BanIcon size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 export function AppShell() {
   const { t } = useTranslation();
@@ -250,6 +345,9 @@ export function AppShell() {
   const [expandedReleaseVersion, setExpandedReleaseVersion] = useState(currentReleaseVersion);
   const [stoppingScans, setStoppingScans] = useState(false);
   const [scanCancelError, setScanCancelError] = useState<string | null>(null);
+  const [activeConnectorJobs, setActiveConnectorJobs] = useState<ActiveConnectorJob[]>([]);
+  const [stoppingConnectorJobs, setStoppingConnectorJobs] = useState<Set<number>>(() => new Set());
+  const [connectorCancelError, setConnectorCancelError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [pendingTelemetryMode, setPendingTelemetryMode] = useState<TelemetryMode | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
@@ -460,6 +558,42 @@ export function AppShell() {
   }, [allReleaseNotes, appSettingsLoaded, releaseNotes?.version, telemetry.environment_disabled, telemetryUndecided]);
 
   useEffect(() => {
+    let disposed = false;
+    let refreshRunning = false;
+
+    async function refreshConnectorJobs() {
+      if (refreshRunning) return;
+      refreshRunning = true;
+      try {
+        const connections = await api.connectors();
+        const jobs = await Promise.all(connections.map(async (connection) => ({
+          connection,
+          job: await api.connectorSyncStatus(connection.id),
+        })));
+        if (!disposed) {
+          setActiveConnectorJobs(jobs.filter((entry): entry is ActiveConnectorJob => (
+            entry.job?.status === "queued" || entry.job?.status === "running"
+          )));
+        }
+      } catch {
+        // Preserve the last known active jobs while connector polling recovers.
+      } finally {
+        refreshRunning = false;
+      }
+    }
+
+    void refreshConnectorJobs();
+    const timer = window.setInterval(() => void refreshConnectorJobs(), 5000);
+    const handleFocus = () => void refreshConnectorJobs();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (hadActiveJobsRef.current && !hasActiveJobs) {
       setScanCancelError(null);
       void Promise.all([loadLibraries(true), loadDashboard(true)])
@@ -606,11 +740,16 @@ export function AppShell() {
             </div>
           </nav>
         </div>
-        {activeJobs.length > 0 ? (
+        {activeJobs.length > 0 || activeConnectorJobs.length > 0 ? (
           <div className="scan-banner">
             {scanCancelError ? (
               <div className="scan-banner-error" role="alert">
                 {scanCancelError}
+              </div>
+            ) : null}
+            {connectorCancelError ? (
+              <div className="scan-banner-error" role="alert">
+                {connectorCancelError}
               </div>
             ) : null}
             <div className="scan-banner-list">
@@ -628,6 +767,29 @@ export function AppShell() {
                       setScanCancelError(t("scanBanner.cancelFailed"));
                     } finally {
                       setStoppingScans(false);
+                    }
+                  }}
+                />
+              ))}
+              {activeConnectorJobs.map((activeJob) => (
+                <ConnectorSyncJobCard
+                  key={`connector-${activeJob.connection.id}-${activeJob.job.id}`}
+                  activeJob={activeJob}
+                  stopping={stoppingConnectorJobs.has(activeJob.job.id)}
+                  onStop={async () => {
+                    setStoppingConnectorJobs((current) => new Set(current).add(activeJob.job.id));
+                    setConnectorCancelError(null);
+                    try {
+                      await api.cancelConnectorSync(activeJob.connection.id, activeJob.job.id);
+                      setActiveConnectorJobs((current) => current.filter((entry) => entry.job.id !== activeJob.job.id));
+                    } catch {
+                      setConnectorCancelError(t("connectors.syncBanner.cancelFailed"));
+                    } finally {
+                      setStoppingConnectorJobs((current) => {
+                        const next = new Set(current);
+                        next.delete(activeJob.job.id);
+                        return next;
+                      });
                     }
                   }}
                 />

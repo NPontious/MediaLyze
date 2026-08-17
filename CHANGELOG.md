@@ -27,6 +27,11 @@ New Storage map to view your entire library at once!
 
 ### 🐛 Bug fixes
 
+- remove the redundant connector connection heading, description, and technical capability badges from expanded connection settings
+- show active connector synchronizations in the global scan banner with consistent progress details and cancellation controls instead of inline connection messages
+- move connector automatic/manual mapping controls into their accordion headers, reuse the Library Detail period selector's segmented-control design, and align their chevrons with the Analyzed users accordion
+- reorganize connector library assignments into compact source-to-target mapping rows with clearer coverage and required-link states
+- align expanded connector settings with the boxed Library settings accordion layout and section spacing
 - replace the remaining oversized custom single-choice menus in Settings with native platform dropdowns
 
 ## v0.17.0

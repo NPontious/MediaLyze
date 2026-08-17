@@ -1,5 +1,4 @@
 import {
-  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -17,6 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import { AsyncPanel } from "./AsyncPanel";
 import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
+import { SlidingTogglePill } from "./SlidingTogglePill";
 import {
   api,
   type ConnectorConnection,
@@ -285,20 +285,31 @@ function ConnectionMappings({
 
   function sectionHeader(kind: MappingSection, title: string, description: string) {
     const isExpanded = expanded[kind];
-    const mode = kind === "paths" ? connection.path_mapping_mode : connection.library_mapping_mode;
     return (
-      <button type="button" className="connector-users-toggle" aria-expanded={isExpanded} onClick={() => setExpanded((current) => ({ ...current, [kind]: !current[kind] }))}>
-        <div><h4>{title}</h4><p>{description}</p></div>
-        <span className="connector-mapping-header-status"><span className="badge">{t(`connectors.mapping.mode.${mode}`)}</span>{isExpanded ? <ChevronDown className="nav-icon" /> : <ChevronRight className="nav-icon" />}</span>
-      </button>
+      <div className="connector-mapping-section-header">
+        <button type="button" className="connector-users-toggle connector-mapping-section-copy-toggle" aria-expanded={isExpanded} onClick={() => setExpanded((current) => ({ ...current, [kind]: !current[kind] }))}>
+          <div><h4>{title}</h4><p>{description}</p></div>
+        </button>
+        {modeControl(kind)}
+        <button
+          type="button"
+          className="connector-mapping-expand-toggle"
+          aria-label={t(isExpanded ? "panel.collapseAria" : "panel.expandAria", { title })}
+          aria-expanded={isExpanded}
+          onClick={() => setExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
+        >
+          {isExpanded ? <ChevronDown aria-hidden="true" className="nav-icon" /> : <ChevronRight aria-hidden="true" className="nav-icon" />}
+        </button>
+      </div>
     );
   }
 
   function modeControl(kind: MappingSection) {
     const mode = kind === "paths" ? connection.path_mapping_mode : connection.library_mapping_mode;
     return (
-      <div className="connector-mapping-mode" role="group" aria-label={t(`connectors.mapping.${kind}.modeLabel`)}>
-        {(["automatic", "manual"] as const).map((candidate) => <button key={candidate} type="button" className={`secondary small connector-action-button${mode === candidate ? " active" : ""}`} aria-pressed={mode === candidate} disabled={pending !== null} onClick={() => void changeMode(kind, candidate)}>{t(`connectors.mapping.mode.${candidate}`)}</button>)}
+      <div className="library-history-range-toggle connector-mapping-mode" role="group" aria-label={t(`connectors.mapping.${kind}.modeLabel`)}>
+        <SlidingTogglePill activeKey={mode} className="nav-active-pill library-history-range-pill" />
+        {(["automatic", "manual"] as const).map((candidate) => <button key={candidate} type="button" data-toggle-key={candidate} className={`library-history-range-button${mode === candidate ? " active" : ""}`} aria-pressed={mode === candidate} disabled={pending !== null} onClick={() => void changeMode(kind, candidate)}><span className="library-history-range-button-content"><span>{t(`connectors.mapping.mode.${candidate}`)}</span></span></button>)}
       </div>
     );
   }
@@ -308,28 +319,32 @@ function ConnectionMappings({
       <section className="connector-detail-section connector-mapping-section">
         {sectionHeader("libraries", t("connectors.mapping.libraries.title"), t("connectors.mapping.libraries.description"))}
         {expanded.libraries ? <div className="connector-mapping-body">
-          {modeControl("libraries")}
           {loading ? <div className="progress is-indeterminate"><span /></div> : null}
-          {overview ? <div className="connector-mapping-summary"><strong>{t("connectors.mapping.coverage", { percent: overview.coverage.matched_percent })}</strong><span>{t("connectors.mapping.coverageItems", { matched: overview.coverage.matched_items, total: overview.coverage.total_items })}</span></div> : null}
-          {overview?.libraries.map((source) => <article className="connector-mapping-card" key={source.id}>
-            <div className="connector-mapping-card-heading"><strong>{source.name}</strong>{source.required_library_ids.length ? <span className="badge">{t("connectors.mapping.required")}</span> : null}</div>
-            <div className="connector-library-choice-list">
-              {libraries.map((library) => {
-                const required = source.required_library_ids.includes(library.id);
-                const checked = (linkDraft[source.id] ?? []).includes(library.id);
-                return <label key={library.id}><input type="checkbox" checked={checked} disabled={connection.library_mapping_mode === "automatic" || required || pending !== null} onChange={() => setLinkDraft((current) => ({ ...current, [source.id]: checked ? (current[source.id] ?? []).filter((id) => id !== library.id) : [...(current[source.id] ?? []), library.id] }))} /><span>{library.name}</span>{required ? <small>{t("connectors.mapping.requiredByPath")}</small> : null}</label>;
-              })}
-              {!libraries.length ? <span className="muted">{t("connectors.mapping.noLibraries")}</span> : null}
+          {overview ? <div className="connector-mapping-summary-card">
+            <div className="connector-mapping-summary"><strong>{t("connectors.mapping.coverage", { percent: overview.coverage.matched_percent })}</strong><span>{t("connectors.mapping.coverageItems", { matched: overview.coverage.matched_items, total: overview.coverage.total_items })}</span></div>
+            <div className="connector-mapping-coverage-track" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, overview.coverage.matched_percent))}%` }} /></div>
+          </div> : null}
+          {overview?.libraries.map((source) => <article className="connector-mapping-card connector-library-assignment-card" key={source.id}>
+            <div className="connector-library-assignment-row">
+              <div className="connector-library-assignment-source"><strong>{source.name}</strong></div>
+              <span className="connector-library-assignment-arrow" aria-hidden="true">→</span>
+              <div className="connector-library-choice-list">
+                {libraries.map((library) => {
+                  const required = source.required_library_ids.includes(library.id);
+                  const checked = (linkDraft[source.id] ?? []).includes(library.id);
+                  return <label className={`connector-library-choice${checked ? " is-selected" : ""}${required ? " is-required" : ""}`} key={library.id}><input type="checkbox" checked={checked} disabled={connection.library_mapping_mode === "automatic" || required || pending !== null} onChange={() => setLinkDraft((current) => ({ ...current, [source.id]: checked ? (current[source.id] ?? []).filter((id) => id !== library.id) : [...(current[source.id] ?? []), library.id] }))} /><span>{library.name}</span>{required ? <small>{t("connectors.mapping.requiredByPath")}</small> : null}</label>;
+                })}
+                {!libraries.length ? <span className="muted">{t("connectors.mapping.noLibraries")}</span> : null}
+                {source.recommendation && createDraft[source.id] ? <details className="connector-technical-details connector-create-library-details"><summary><FolderPlus aria-hidden="true" />{t("connectors.mapping.createRecommendation")}</summary><div className="connector-create-recommendation connector-form-grid"><label><span>{t("connectors.name")}</span><input className="settings-choice-input" value={createDraft[source.id].name} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], name: event.target.value } }))} /></label><label><span>{t("connectors.mapping.mediaType")}</span><select className="settings-choice-input" value={createDraft[source.id].type} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], type: event.target.value } }))}>{["movies", "series", "music", "audiobooks", "mixed", "other"].map((type) => <option key={type} value={type}>{t(`libraryTypes.${type}`, { defaultValue: type })}</option>)}</select></label><label><span>{t("connectors.mapping.localPath")}</span><input className="settings-choice-input" value={createDraft[source.id].path} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], path: event.target.value } }))} /></label><button type="button" className="secondary small connector-action-button" disabled={pending !== null || !createDraft[source.id].name.trim() || !createDraft[source.id].path.trim()} onClick={() => void createLibrary(source.id)}>{t("connectors.mapping.createLibrary")}</button></div></details> : null}
+              </div>
             </div>
-            {source.recommendation && createDraft[source.id] ? <details className="connector-technical-details"><summary><FolderPlus aria-hidden="true" />{t("connectors.mapping.createRecommendation")}</summary><div className="connector-create-recommendation connector-form-grid"><label><span>{t("connectors.name")}</span><input className="settings-choice-input" value={createDraft[source.id].name} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], name: event.target.value } }))} /></label><label><span>{t("connectors.mapping.mediaType")}</span><select className="settings-choice-input" value={createDraft[source.id].type} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], type: event.target.value } }))}>{["movies", "series", "music", "audiobooks", "mixed", "other"].map((type) => <option key={type} value={type}>{t(`libraryTypes.${type}`, { defaultValue: type })}</option>)}</select></label><label><span>{t("connectors.mapping.localPath")}</span><input className="settings-choice-input" value={createDraft[source.id].path} onChange={(event) => setCreateDraft((current) => ({ ...current, [source.id]: { ...current[source.id], path: event.target.value } }))} /></label><button type="button" className="secondary small connector-action-button" disabled={pending !== null || !createDraft[source.id].name.trim() || !createDraft[source.id].path.trim()} onClick={() => void createLibrary(source.id)}>{t("connectors.mapping.createLibrary")}</button></div></details> : null}
           </article>)}
-          {connection.library_mapping_mode === "manual" && overview ? <button type="button" className="secondary small connector-action-button" disabled={pending !== null} onClick={() => void saveLinks()}>{t("connectors.mapping.saveAssignments")}</button> : null}
+          {connection.library_mapping_mode === "manual" && overview ? <button type="button" className="secondary small connector-action-button connector-mapping-save-action" disabled={pending !== null} onClick={() => void saveLinks()}>{t("connectors.mapping.saveAssignments")}</button> : null}
         </div> : null}
       </section>
       <section className="connector-detail-section connector-mapping-section">
         {sectionHeader("paths", t("connectors.mapping.paths.title"), t("connectors.mapping.paths.description"))}
         {expanded.paths ? <div className="connector-mapping-body">
-          {modeControl("paths")}
           {loading ? <div className="progress is-indeterminate"><span /></div> : null}
           {bindingDraft.map((binding, index) => <article className="connector-mapping-card" key={binding.id ?? `new-${index}`}>
             <div className="connector-mapping-row-main"><select className="settings-choice-input" value={binding.location_id} disabled={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, location_id: Number(event.target.value) } : row))}>{allLocations.map((location) => <option key={location.id} value={location.id}>{location.libraryName}: {location.remote_path}</option>)}</select><span aria-hidden="true">→</span><select className="settings-choice-input" value={binding.library_root_id} disabled={connection.path_mapping_mode === "automatic"} onChange={(event) => setBindingDraft((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, library_root_id: Number(event.target.value) } : row))}>{roots.map((root) => <option key={root.id} value={root.id}>{root.libraryName}: {root.display_name}</option>)}</select><span className={`badge mapping-${overview?.libraries.flatMap((library) => library.locations.flatMap((location) => location.bindings)).find((row) => row.id === binding.id)?.verification_status ?? "manual"}`}>{t(`connectors.mapping.status.${overview?.libraries.flatMap((library) => library.locations.flatMap((location) => location.bindings)).find((row) => row.id === binding.id)?.verification_status ?? "manual"}`)}</span></div>
@@ -447,7 +462,6 @@ function ConnectionCard({
     setNotice(null);
     try {
       await api.syncConnector(connection.id);
-      setNotice(t("connectors.syncQueued"));
       await onChanged();
     } catch (reason) {
       setError((reason as Error).message);
@@ -459,9 +473,9 @@ function ConnectionCard({
   async function cancelSync() {
     setPending("cancel");
     setError(null);
+    setNotice(null);
     try {
       await api.cancelConnectorSync(connection.id, job?.id);
-      setNotice(t("connectors.cancelRequested"));
       await onChanged();
     } catch (reason) {
       setError((reason as Error).message);
@@ -486,7 +500,7 @@ function ConnectionCard({
   }
 
   return (
-    <article id={`connector-${connection.id}`} className={`media-card connector-connection-card${expanded ? " is-expanded" : " is-collapsed"}`}>
+    <article id={`connector-${connection.id}`} className={`media-card library-settings-card connector-connection-card${expanded ? " is-expanded" : " is-collapsed"}`}>
       <header className="connector-connection-header">
         <button
           type="button"
@@ -516,14 +530,8 @@ function ConnectionCard({
         </span>
       </header>
       {expanded ? (
-        <div className="connector-connection-body" id={`connector-connection-${connection.id}`}>
+        <div className="library-settings-body connector-connection-body" id={`connector-connection-${connection.id}`}>
           <section className="connector-detail-section">
-            <div className="connector-detail-heading">
-              <div><h4>{t("connectors.connectionDetails")}</h4><p>{t("connectors.connectionDetailsDescription")}</p></div>
-              <div className="connector-capability-list" aria-label={t("connectors.capabilities")}>
-                {Object.entries(connection.capabilities).filter(([, value]) => value).map(([capability]) => <span className="badge" key={capability}>{capability}</span>)}
-              </div>
-            </div>
             <div className="connector-form-grid">
               <label><span>{t("connectors.name")}</span><input className="settings-choice-input" value={draft.name} disabled={legacyDefault} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label>
               <label><span>{t("connectors.serverUrl")}</span><input className="settings-choice-input" type="url" value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
@@ -540,14 +548,6 @@ function ConnectionCard({
             </div>
             {error ? <div className="alert" role="alert">{error}</div> : null}
             {notice ? <div className="notice success" role="status">{notice}</div> : null}
-            {job ? (
-              <div className={`connector-job-status notice compact${job.status === "failed" || job.status === "canceled" ? " warning" : ""}`}>
-                {job.status === "failed" ? <AlertTriangle aria-hidden="true" /> : job.status === "running" ? <RefreshCw className="is-spinning" aria-hidden="true" /> : null}
-                <strong>{job.job_type === "recompute" ? t("connectors.recompute") : t("connectors.sync")}</strong>
-                <span>{job.status} · {job.progress_phase ?? "-"}{job.progress_total ? ` · ${job.progress_current}/${job.progress_total}` : ""}</span>
-                {job.error ? <span>{job.error}</span> : null}
-              </div>
-            ) : null}
           </section>
           <ConnectionMappings connection={connection} onChanged={onChanged} />
           {connection.capabilities.users ? <ConnectionUsers connection={connection} /> : null}

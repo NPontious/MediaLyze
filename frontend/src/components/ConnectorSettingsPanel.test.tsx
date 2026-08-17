@@ -56,7 +56,11 @@ describe("ConnectorSettingsPanel", () => {
     expect(screen.getByText("http://jellyfin.local").parentElement).toHaveClass("connector-connection-title");
     const connectionToggle = screen.getByRole("button", { name: /Living Room/ });
     expect(connectionToggle).toHaveAttribute("aria-expanded", "true");
+    expect(connectionToggle.closest(".connector-connection-card")).toHaveClass("library-settings-card", "is-expanded");
+    expect(document.querySelector(".connector-connection-body")).toHaveClass("library-settings-body");
     expect(connectionToggle.querySelector(".connector-connection-chevron .nav-icon")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connection" })).not.toBeInTheDocument();
+    expect(screen.queryByText("user_states")).not.toBeInTheDocument();
     const usersToggle = screen.getByRole("button", { name: /Analyzed users/ });
     expect(usersToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Alice")).not.toBeInTheDocument();
@@ -157,13 +161,27 @@ describe("ConnectorSettingsPanel", () => {
     const update = vi.spyOn(api, "updateConnector").mockResolvedValue({ ...CONNECTION, path_mapping_mode: "manual" });
     render(<ConnectorSettingsPanel />);
 
-    const pathToggle = await screen.findByRole("button", { name: /Path mappings/ });
+    const pathToggle = await screen.findByRole("button", { name: /^Path mappings Map connector locations/ });
     expect(pathToggle).toHaveAttribute("aria-expanded", "false");
+    const pathMode = screen.getByRole("group", { name: "Path mapping mode" });
+    expect(pathMode.closest(".connector-mapping-section-header")).toContainElement(pathToggle);
+    const pathExpandToggle = screen.getByRole("button", { name: "Expand Path mappings" });
+    expect(pathExpandToggle).toHaveClass("connector-mapping-expand-toggle");
+    expect(pathExpandToggle).not.toHaveClass("secondary", "icon-only-button");
+    expect(pathExpandToggle.querySelector(".nav-icon")).toHaveAttribute("aria-hidden", "true");
+    expect(pathMode).toHaveClass("library-history-range-toggle");
+    expect(pathMode.querySelector(".library-history-range-pill")).toBeInTheDocument();
+    expect(pathMode.querySelectorAll(".library-history-range-button")).toHaveLength(2);
+    expect(pathMode.querySelector('[aria-pressed="true"]')).toHaveTextContent("Automatic");
     expect(overview).not.toHaveBeenCalled();
     fireEvent.click(pathToggle);
     expect(await screen.findByText("Verified")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Library assignments/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Library assignments Assign connector libraries/ }));
     expect(await screen.findByText("75% path coverage")).toBeInTheDocument();
+    expect(document.querySelector(".connector-mapping-summary-card .connector-mapping-coverage-track span")).toHaveStyle({ width: "75%" });
+    const assignmentRow = document.querySelector(".connector-library-assignment-row");
+    expect(assignmentRow).toHaveTextContent("Movies→Moviesrequired by path mapping");
+    expect(assignmentRow?.querySelector(".connector-library-choice")).toHaveClass("is-selected", "is-required");
     fireEvent.click(screen.getAllByRole("button", { name: "Manual" })[1]);
     await waitFor(() => expect(update).toHaveBeenCalledWith(CONNECTION.id, { path_mapping_mode: "manual" }));
   });
@@ -209,6 +227,7 @@ describe("ConnectorSettingsPanel", () => {
     const cancel = vi.spyOn(api, "cancelConnectorSync").mockResolvedValue({ job_id: 12, status: "running", cancellation_requested: true });
     render(<ConnectorSettingsPanel />);
 
+    expect(document.querySelector(".connector-job-status")).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Cancel sync" }));
 
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(CONNECTION.id, 12));
