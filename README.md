@@ -265,7 +265,7 @@ MediaLyze is an open-source project under active development. The current focus 
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/image?repos=frederikemmer/medialyze&type=date&legend=top-left)](https://www.star-history.com/?repos=frederikemmer%2Fmedialyze&type=date&legend=top-left)
+[![Star History Chart](https://star-history.dera.page/svg?repos=frederikemmer/medialyze&type=date&legend=top-left)](https://star-history.dera.page/#frederikemmer/medialyze&type=date&legend=top-left)
 
 ## Contributing
 
