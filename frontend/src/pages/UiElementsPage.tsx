@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "r
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
+  Activity,
   ArrowLeft,
   ArrowUp,
   ArrowUpRight,
@@ -26,6 +27,7 @@ import {
   FileSearchCorner,
   FileText,
   FileVideo,
+  Files,
   Folder,
   GitCompare,
   History,
@@ -41,7 +43,6 @@ import {
   PanelRightClose,
   PanelTopClose,
   Plus,
-  RefreshCw,
   Save,
   SaveOff,
   Search,
@@ -51,6 +52,7 @@ import {
   Sparkles,
   SquareArrowOutUpRight,
   Trash2,
+  UserRoundCheck,
   X,
 } from "lucide-react";
 
@@ -1876,14 +1878,14 @@ export function UiElementsPage() {
               </VariantCard>
               <VariantCard title="Active connector synchronization" source={`${source}: Header scan banner`} classes={["scan-banner", "scan-job-card", "connector-sync-job-card", "scan-job-metrics"]} wide>
                 <div className="scan-banner-list">
-                  <div className="scan-job-card connector-sync-job-card is-determinate" style={{ "--scan-progress": "72%" } as React.CSSProperties}>
+                  <div className="scan-job-card connector-sync-job-card is-determinate" style={{ "--scan-progress": "60%" } as React.CSSProperties}>
                     <div className="scan-job-card-main">
                       <span className="scan-job-card-search-icon connector-sync-provider-icon" aria-hidden="true"><ConnectorProviderIcon provider="jellyfin" /></span>
                       <span className="scan-job-card-name">Living Room</span>
                       <div className="scan-job-metrics">
-                        <span className="scan-job-metric-item"><span className="scan-job-metric-icon-wrap"><RefreshCw size={14} aria-hidden="true" /><span className="scan-job-metric-value">Sync now</span></span></span>
-                        <span className="scan-job-metric-item"><span className="scan-job-metric-sep" aria-hidden="true" /><span className="scan-job-metric-icon-wrap"><span className="scan-job-metric-value">Items</span></span></span>
-                        <span className="scan-job-metric-item"><span className="scan-job-metric-sep" aria-hidden="true" /><span className="scan-job-metric-icon-wrap"><FileCheckCorner size={14} aria-hidden="true" /><span className="scan-job-metric-value">10,500 / 14,646</span></span></span>
+                        <span className="scan-job-metric-item"><span className="scan-job-metric-icon-wrap" title="Current synchronization phase: Mirroring user states"><Activity size={14} aria-hidden="true" /><span className="scan-job-metric-value">Mirroring user states</span></span></span>
+                        <span className="scan-job-metric-item"><span className="scan-job-metric-sep" aria-hidden="true" /><span className="scan-job-metric-icon-wrap" title="14,646 of 14,646 assets synchronized"><Files size={14} aria-hidden="true" /><span className="scan-job-metric-value">14,646 / 14,646</span></span></span>
+                        <span className="scan-job-metric-item"><span className="scan-job-metric-sep" aria-hidden="true" /><span className="scan-job-metric-icon-wrap" title="User states processed for 3 of 5 users"><UserRoundCheck size={14} aria-hidden="true" /><span className="scan-job-metric-value">3 / 5</span></span></span>
                       </div>
                       <div className="scan-job-card-actions"><button type="button" className="secondary icon-only-button scan-banner-stop" aria-label="Stop this synchronization"><CircleStop size={16} aria-hidden="true" /></button></div>
                     </div>

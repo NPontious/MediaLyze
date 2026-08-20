@@ -60,6 +60,7 @@ from backend.app.services.jellyfin_client import (
     JellyfinResponseError,
 )
 from backend.app.services.jellyfin_images import JellyfinImageCache
+from backend.app.services.jellyfin_jobs import update_jellyfin_sync_job_progress
 from backend.app.services.jellyfin_matching import apply_path_mappings, recompute_jellyfin_matches
 from backend.app.services.jellyfin_progress import (
     clear_jellyfin_progress,
@@ -1055,7 +1056,13 @@ def test_runtime_marks_cancellation_during_connector_mirror_as_canceled(
         lambda _db, *, job_id: {"status": "success", "job_id": job_id},
     )
 
-    def cancel_during_mirror(_db: Session, *, cancellation_check) -> tuple[int, dict]:
+    def cancel_during_mirror(
+        _db: Session,
+        *,
+        cancellation_check,
+        progress_callback,
+    ) -> tuple[int, dict]:
+        assert callable(progress_callback)
         raise JellyfinSyncCancelled("Jellyfin synchronization was canceled")
 
     monkeypatch.setattr(
@@ -1139,6 +1146,39 @@ def test_sync_status_exposes_persisted_active_job(db: Session) -> None:
     assert payload["sync_phase_detail"] == "Alice"
     assert payload["sync_current"] == 750
     assert payload["sync_total"] == 1200
+
+
+def test_sync_job_accumulates_phase_progress_metrics(db: Session) -> None:
+    job = JellyfinSyncJob(
+        status=JobStatus.running,
+        trigger_source=JellyfinSyncTriggerSource.manual,
+        active_lock=1,
+    )
+    db.add(job)
+    db.commit()
+
+    assert update_jellyfin_sync_job_progress(
+        db,
+        job.id,
+        phase="items",
+        detail=None,
+        current=500,
+        total=1200,
+    )
+    assert update_jellyfin_sync_job_progress(
+        db,
+        job.id,
+        phase="user_states",
+        detail="Alice",
+        current=1,
+        total=3,
+    )
+
+    db.refresh(job)
+    assert job.sync_summary["progress_metrics"] == {
+        "items": {"current": 500, "total": 1200, "detail": None},
+        "user_states": {"current": 1, "total": 3, "detail": "Alice"},
+    }
 
 
 def test_manual_sync_returns_accepted_job_without_running_inline(db: Session) -> None:
@@ -1521,7 +1561,8 @@ def test_sync_persists_individual_playback_events_and_exposes_them_for_a_file(
 
     assert result["playback_history_status"] == "available"
     assert result["playback_events_synced"] == 3
-    assert ("user_states", 0, None) in reported_progress
+    assert ("user_states", 0, 1) in reported_progress
+    assert ("user_states", 1, 1) in reported_progress
     assert ("playback_events", 0, None) in reported_progress
     assert ("playback_events", 3, 3) in reported_progress
     events = list(

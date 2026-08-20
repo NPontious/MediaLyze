@@ -400,12 +400,17 @@ describe("AppShell", () => {
       status: "running",
       trigger_source: "manual",
       cancellation_requested: false,
-      progress_phase: "items",
+      progress_phase: "mirroring_user_states",
       progress_detail: null,
-      progress_current: 20,
-      progress_total: 100,
+      progress_current: 52_200,
+      progress_total: 104_265,
       error: null,
-      sync_summary: {},
+      sync_summary: {
+        progress_metrics: {
+          items: { current: 100, total: 100, detail: null },
+          user_states: { current: 2, total: 4, detail: "Alice" },
+        },
+      },
     });
     const cancel = vi.spyOn(api, "cancelConnectorSync").mockResolvedValue({ job_id: 12, status: "running", cancellation_requested: true });
 
@@ -413,8 +418,12 @@ describe("AppShell", () => {
 
     expect(await screen.findByText("Living Room")).toBeInTheDocument();
     expect(document.querySelector(".scan-banner .connector-sync-job-card.is-determinate")).toBeInTheDocument();
-    expect(await screen.findByText("Items")).toBeInTheDocument();
-    expect(screen.getByText("20 / 100")).toBeInTheDocument();
+    expect(await screen.findByText("Mirroring user states")).toBeInTheDocument();
+    expect(screen.getByText("100 / 100")).toBeInTheDocument();
+    expect(screen.getByText("2 / 4")).toBeInTheDocument();
+    expect(screen.getByTitle("100 of 100 assets synchronized")).toBeInTheDocument();
+    expect(screen.getByTitle("User states processed for 2 of 4 users")).toBeInTheDocument();
+    expect(screen.queryByText("Sync now")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop this synchronization" }));
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(7, 12));
   });

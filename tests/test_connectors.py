@@ -484,6 +484,106 @@ def test_legacy_connector_mirror_honors_cancellation() -> None:
             )
 
 
+def test_legacy_connector_mirror_bulk_copies_playback_data_and_is_idempotent() -> None:
+    _engine, factory = _session_factory()
+    with factory() as db:
+        now = utc_now()
+        connection = ConnectorConnection(provider="jellyfin", name="Jellyfin")
+        legacy_connection = JellyfinConnection(id=1, enabled=True)
+        legacy_library = JellyfinLibrary(
+            remote_item_id="movies",
+            name="Movies",
+            locations=["/media"],
+        )
+        enabled_user = JellyfinUser(
+            jellyfin_user_id="enabled",
+            name="Alice",
+            enabled_for_sync=True,
+        )
+        disabled_user = JellyfinUser(
+            jellyfin_user_id="disabled",
+            name="Bob",
+            enabled_for_sync=False,
+        )
+        db.add_all([
+            connection,
+            legacy_connection,
+            legacy_library,
+            enabled_user,
+            disabled_user,
+        ])
+        db.flush()
+        legacy_item = JellyfinItem(
+            jellyfin_item_id="movie",
+            library_id=legacy_library.id,
+            library_name="Movies",
+            item_type="Movie",
+            path="/media/movie.mkv",
+            title="Movie",
+            last_synced_at=now,
+        )
+        db.add(legacy_item)
+        db.flush()
+        db.add_all([
+            JellyfinUserItemData(
+                jellyfin_item_id=legacy_item.id,
+                jellyfin_user_id=enabled_user.jellyfin_user_id,
+                play_count=3,
+                played=True,
+                playback_position_ticks=42,
+                is_favorite=True,
+                last_synced_at=now,
+            ),
+            JellyfinUserItemData(
+                jellyfin_item_id=legacy_item.id,
+                jellyfin_user_id=disabled_user.jellyfin_user_id,
+                play_count=1,
+                played=True,
+                playback_position_ticks=0,
+                is_favorite=False,
+                last_synced_at=now,
+            ),
+            JellyfinPlaybackEvent(
+                jellyfin_activity_id=10,
+                jellyfin_item_id=legacy_item.id,
+                jellyfin_user_id=enabled_user.jellyfin_user_id,
+                played_at=now,
+                last_synced_at=now,
+            ),
+            JellyfinPlaybackEvent(
+                jellyfin_activity_id=11,
+                jellyfin_item_id=legacy_item.id,
+                jellyfin_user_id=disabled_user.jellyfin_user_id,
+                played_at=now,
+                last_synced_at=now,
+            ),
+        ])
+        db.commit()
+        progress: list[tuple[str, int, int | None]] = []
+
+        for _run in range(2):
+            mirrored_connection_id, _matching = mirror_legacy_jellyfin_snapshot(
+                db,
+                progress_callback=lambda phase, current, total: progress.append(
+                    (phase, current, total)
+                ),
+            )
+            assert mirrored_connection_id == connection.id
+
+        mirrored_state = db.scalar(select(ConnectorUserItemData))
+        mirrored_event = db.scalar(select(ConnectorPlaybackEvent))
+        assert db.scalar(select(func.count()).select_from(ConnectorUserItemData)) == 1
+        assert db.scalar(select(func.count()).select_from(ConnectorPlaybackEvent)) == 1
+        assert mirrored_state is not None
+        assert mirrored_state.play_count == 3
+        assert mirrored_state.is_favorite is True
+        assert mirrored_event is not None
+        assert mirrored_event.remote_event_id == "10"
+        assert ("mirroring_items", 1, 1) in progress
+        assert ("mirroring_user_states", 1, 1) in progress
+        assert ("mirroring_playback_events", 1, 1) in progress
+
+
 def test_canceled_queued_connector_job_cannot_be_claimed() -> None:
     _engine, factory = _session_factory()
     with factory() as db:

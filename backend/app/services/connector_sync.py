@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import uuid4
 
-from sqlalchemy import delete, func, literal, select, update
+from sqlalchemy import String, cast, delete, func, literal, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -202,6 +202,15 @@ def _update_progress(
     job.progress_total = total
     job.progress_detail = detail
     job.heartbeat_at = utc_now()
+    summary = dict(job.sync_summary or {})
+    progress_metrics = dict(summary.get("progress_metrics") or {})
+    progress_metrics[phase] = {
+        "current": max(0, int(current)),
+        "total": max(0, int(total)) if total is not None else None,
+        "detail": detail,
+    }
+    summary["progress_metrics"] = progress_metrics
+    job.sync_summary = summary
     db.commit()
 
 
@@ -730,6 +739,20 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
     try:
         cancellation = lambda: _check_cancellation(db, job_id)
         with connector_registry.create(connection, secret, cancellation) as adapter:
+            provider_reports_progress = False
+            set_progress_callback = getattr(adapter, "set_progress_callback", None)
+            if callable(set_progress_callback):
+                set_progress_callback(
+                    lambda phase, current, total, detail=None: _update_progress(
+                        db,
+                        job,
+                        phase,
+                        current,
+                        total,
+                        detail,
+                    )
+                )
+                provider_reports_progress = True
             server = adapter.get_server_info()
             connection.server_name = server.name
             connection.server_version = server.version
@@ -756,7 +779,8 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
                     _upsert_stage_items(db, item_batch)
                     item_batch.clear()
                     db.commit()
-                    _update_progress(db, job, "items", item_count)
+                    if not provider_reports_progress:
+                        _update_progress(db, job, "items", item_count)
             cancellation()
             _upsert_stage_items(db, item_batch)
             db.commit()
@@ -788,6 +812,7 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
                     ],
                 )
                 db.commit()
+                _update_progress(db, job, "users", len(remote_users), len(remote_users))
 
             stored_user_selection = dict(
                 db.execute(
@@ -802,7 +827,7 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
                 if stored_user_selection.get(user.remote_id, True)
             ]
             if "user_states" in adapter.capabilities and enabled_users:
-                _update_progress(db, job, "user_states", 0)
+                _update_progress(db, job, "user_states", 0, len(enabled_users))
                 iter_user_item_data = getattr(adapter, "iter_user_item_data", None)
                 if not callable(iter_user_item_data):
                     raise ValueError("Connector advertises user states without implementing them")
@@ -838,7 +863,8 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
                         )
                         state_batch.clear()
                         db.commit()
-                        _update_progress(db, job, "user_states", state_count)
+                        if not provider_reports_progress:
+                            _update_progress(db, job, "user_states", state_count)
                 _upsert_stage_rows(
                     db,
                     ConnectorSyncStageUserData,
@@ -922,11 +948,13 @@ def run_connector_sync(db: Session, job_id: int) -> dict:
             commit=False,
         )
         if is_legacy_default_connection(connection):
-            summary["legacy_projection"] = project_automatic_mapping_to_legacy(
+            legacy_projection = project_automatic_mapping_to_legacy(
                 db,
                 connection.id,
             )
-            recompute_jellyfin_matches(db, commit=False)
+            summary["legacy_projection"] = legacy_projection
+            if legacy_projection.get("path_mappings_changed"):
+                recompute_jellyfin_matches(db, commit=False)
         cleanup_connector_staging(db, run_id, connection.id, commit=False)
         finished = utc_now()
         job = db.get(ConnectorSyncJob, job_id)
@@ -996,8 +1024,9 @@ def run_connector_recompute(db: Session, job_id: int) -> dict[str, int]:
         )
         connection = db.get(ConnectorConnection, job.connection_id)
         if connection is not None and is_legacy_default_connection(connection):
-            project_automatic_mapping_to_legacy(db, connection.id)
-            recompute_jellyfin_matches(db, commit=False)
+            legacy_projection = project_automatic_mapping_to_legacy(db, connection.id)
+            if legacy_projection.get("path_mappings_changed"):
+                recompute_jellyfin_matches(db, commit=False)
         _check_cancellation(db, job_id)
         job = db.get(ConnectorSyncJob, job_id)
         job.status = JobStatus.completed
@@ -1030,6 +1059,7 @@ def mirror_legacy_jellyfin_snapshot(
     db: Session,
     *,
     cancellation_check: Callable[[], None] | None = None,
+    progress_callback: Callable[[str, int, int | None], None] | None = None,
 ) -> tuple[int | None, dict[str, int]]:
     """Mirror the compatibility catalog without exposing Jellyfin fields to core sync code."""
     if cancellation_check is not None:
@@ -1124,6 +1154,8 @@ def mirror_legacy_jellyfin_snapshot(
             db.delete(location)
 
     legacy_items = list(db.scalars(select(JellyfinItem)))
+    if progress_callback is not None:
+        progress_callback("mirroring_items", 0, len(legacy_items))
     live_items = {
         item.remote_id: item
         for item in db.scalars(
@@ -1134,6 +1166,8 @@ def mirror_legacy_jellyfin_snapshot(
     for index, legacy in enumerate(legacy_items):
         if cancellation_check is not None and index % 250 == 0:
             cancellation_check()
+        if progress_callback is not None and index and index % 250 == 0:
+            progress_callback("mirroring_items", index, len(legacy_items))
         desired_item_ids.add(legacy.jellyfin_item_id)
         item = live_items.get(legacy.jellyfin_item_id)
         if item is None:
@@ -1176,6 +1210,8 @@ def mirror_legacy_jellyfin_snapshot(
         if remote_id not in desired_library_ids:
             db.delete(library)
     db.flush()
+    if progress_callback is not None:
+        progress_callback("mirroring_items", len(legacy_items), len(legacy_items))
 
     connector_users = {
         user.remote_id: user
@@ -1199,18 +1235,36 @@ def mirror_legacy_jellyfin_snapshot(
         user.enabled_for_sync = legacy_user.enabled_for_sync
         user.last_synced_at = legacy_user.last_synced_at
     db.flush()
-    users_by_remote = {
-        user.remote_id: user
-        for user in db.scalars(
-            select(ConnectorUser).where(ConnectorUser.connection_id == connection.id)
+    user_data_source = (
+        select(
+            ConnectorItem.id,
+            ConnectorUser.id,
+            JellyfinUserItemData.play_count,
+            JellyfinUserItemData.played,
+            JellyfinUserItemData.playback_position_ticks,
+            JellyfinUserItemData.last_played_date,
+            JellyfinUserItemData.is_favorite,
+            JellyfinUserItemData.last_synced_at,
         )
-    }
-    items_by_remote = {
-        item.remote_id: item
-        for item in db.scalars(
-            select(ConnectorItem).where(ConnectorItem.connection_id == connection.id)
+        .select_from(JellyfinUserItemData)
+        .join(JellyfinItem, JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id)
+        .join(
+            ConnectorItem,
+            (ConnectorItem.connection_id == connection.id)
+            & (ConnectorItem.remote_id == JellyfinItem.jellyfin_item_id),
         )
-    }
+        .join(
+            ConnectorUser,
+            (ConnectorUser.connection_id == connection.id)
+            & (ConnectorUser.remote_id == JellyfinUserItemData.jellyfin_user_id),
+        )
+        .where(ConnectorUser.enabled_for_sync.is_(True))
+    )
+    user_data_total = int(
+        db.scalar(select(func.count()).select_from(user_data_source.subquery())) or 0
+    )
+    if progress_callback is not None:
+        progress_callback("mirroring_user_states", 0, user_data_total)
     db.execute(
         delete(ConnectorUserItemData).where(
             ConnectorUserItemData.connector_user_id.in_(
@@ -1219,54 +1273,75 @@ def mirror_legacy_jellyfin_snapshot(
         )
     )
     db.execute(
+        sqlite_insert(ConnectorUserItemData).from_select(
+            (
+                "connector_item_id",
+                "connector_user_id",
+                "play_count",
+                "played",
+                "playback_position_ticks",
+                "last_played_date",
+                "is_favorite",
+                "last_synced_at",
+            ),
+            user_data_source,
+        )
+    )
+    if cancellation_check is not None:
+        cancellation_check()
+    if progress_callback is not None:
+        progress_callback("mirroring_user_states", user_data_total, user_data_total)
+
+    playback_source = (
+        select(
+            literal(connection.id),
+            cast(JellyfinPlaybackEvent.jellyfin_activity_id, String),
+            ConnectorItem.id,
+            ConnectorUser.id,
+            JellyfinPlaybackEvent.played_at,
+            JellyfinPlaybackEvent.last_synced_at,
+        )
+        .select_from(JellyfinPlaybackEvent)
+        .join(JellyfinItem, JellyfinItem.id == JellyfinPlaybackEvent.jellyfin_item_id)
+        .join(
+            ConnectorItem,
+            (ConnectorItem.connection_id == connection.id)
+            & (ConnectorItem.remote_id == JellyfinItem.jellyfin_item_id),
+        )
+        .join(
+            ConnectorUser,
+            (ConnectorUser.connection_id == connection.id)
+            & (ConnectorUser.remote_id == JellyfinPlaybackEvent.jellyfin_user_id),
+        )
+        .where(ConnectorUser.enabled_for_sync.is_(True))
+    )
+    playback_total = int(
+        db.scalar(select(func.count()).select_from(playback_source.subquery())) or 0
+    )
+    if progress_callback is not None:
+        progress_callback("mirroring_playback_events", 0, playback_total)
+    db.execute(
         delete(ConnectorPlaybackEvent).where(
             ConnectorPlaybackEvent.connection_id == connection.id
         )
     )
-    for index, (legacy_data, legacy_item) in enumerate(db.execute(
-        select(JellyfinUserItemData, JellyfinItem).join(
-            JellyfinItem, JellyfinItem.id == JellyfinUserItemData.jellyfin_item_id
+    db.execute(
+        sqlite_insert(ConnectorPlaybackEvent).from_select(
+            (
+                "connection_id",
+                "remote_event_id",
+                "connector_item_id",
+                "connector_user_id",
+                "played_at",
+                "last_synced_at",
+            ),
+            playback_source,
         )
-    )):
-        if cancellation_check is not None and index % 250 == 0:
-            cancellation_check()
-        user = users_by_remote.get(legacy_data.jellyfin_user_id)
-        item = items_by_remote.get(legacy_item.jellyfin_item_id)
-        if user is None or item is None or not user.enabled_for_sync:
-            continue
-        db.add(
-            ConnectorUserItemData(
-                connector_item_id=item.id,
-                connector_user_id=user.id,
-                play_count=legacy_data.play_count,
-                played=legacy_data.played,
-                playback_position_ticks=legacy_data.playback_position_ticks,
-                last_played_date=legacy_data.last_played_date,
-                is_favorite=legacy_data.is_favorite,
-                last_synced_at=legacy_data.last_synced_at,
-            )
-        )
-    for index, (legacy_event, legacy_item) in enumerate(db.execute(
-        select(JellyfinPlaybackEvent, JellyfinItem).join(
-            JellyfinItem, JellyfinItem.id == JellyfinPlaybackEvent.jellyfin_item_id
-        )
-    )):
-        if cancellation_check is not None and index % 250 == 0:
-            cancellation_check()
-        user = users_by_remote.get(legacy_event.jellyfin_user_id)
-        item = items_by_remote.get(legacy_item.jellyfin_item_id)
-        if user is None or item is None or not user.enabled_for_sync:
-            continue
-        db.add(
-            ConnectorPlaybackEvent(
-                connection_id=connection.id,
-                remote_event_id=str(legacy_event.jellyfin_activity_id),
-                connector_item_id=item.id,
-                connector_user_id=user.id,
-                played_at=legacy_event.played_at,
-                last_synced_at=legacy_event.last_synced_at,
-            )
-        )
+    )
+    if cancellation_check is not None:
+        cancellation_check()
+    if progress_callback is not None:
+        progress_callback("mirroring_playback_events", playback_total, playback_total)
     stale_connector_user_ids = [
         user.id
         for remote_id, user in connector_users.items()
@@ -1286,12 +1361,13 @@ def mirror_legacy_jellyfin_snapshot(
         cancellation_check=cancellation_check,
         commit=False,
     )
-    project_automatic_mapping_to_legacy(db, connection.id)
-    recompute_jellyfin_matches(
-        db,
-        cancellation_check=cancellation_check,
-        commit=False,
-    )
+    legacy_projection = project_automatic_mapping_to_legacy(db, connection.id)
+    if legacy_projection.get("path_mappings_changed"):
+        recompute_jellyfin_matches(
+            db,
+            cancellation_check=cancellation_check,
+            commit=False,
+        )
     if cancellation_check is not None:
         cancellation_check()
     db.commit()

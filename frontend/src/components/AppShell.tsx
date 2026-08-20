@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Bug, ChevronDown, ChevronRight, Download, GitCompare, House, Map, RefreshCw, Settings, X } from "lucide-react";
+import { Activity, Bug, ChevronDown, ChevronRight, Download, Files, GitCompare, History, House, LibraryBig, Map, RefreshCw, Settings, UserRoundCheck, X } from "lucide-react";
 import { FilePlusCorner, FileXCorner, File, FileDiff, FileExclamationPoint, FileSearchCorner, FileCheckCorner } from "lucide-react";
 import { AnimatePresence, motion, useAnimation, type Transition } from "motion/react";
 
@@ -238,6 +238,29 @@ type ActiveConnectorJob = {
   job: ConnectorSyncJob;
 };
 
+type ConnectorProgressMetric = {
+  current: number;
+  total: number | null;
+  detail: string | null;
+};
+
+function connectorProgressMetrics(job: ConnectorSyncJob): Record<string, ConnectorProgressMetric> {
+  const rawMetrics = job.sync_summary?.progress_metrics;
+  if (!rawMetrics || typeof rawMetrics !== "object" || Array.isArray(rawMetrics)) return {};
+  return Object.fromEntries(
+    Object.entries(rawMetrics).flatMap(([key, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const metric = value as Record<string, unknown>;
+      if (typeof metric.current !== "number") return [];
+      return [[key, {
+        current: metric.current,
+        total: typeof metric.total === "number" ? metric.total : null,
+        detail: typeof metric.detail === "string" ? metric.detail : null,
+      }]];
+    }),
+  );
+}
+
 function ConnectorSyncJobCard({
   activeJob,
   onStop,
@@ -260,10 +283,26 @@ function ConnectorSyncJobCard({
     ? Math.min(100, Math.max(0, (job.progress_current / progressTotal) * 100))
     : 0;
   const phaseKey = job.status === "queued" ? "queued" : job.progress_phase ?? "starting";
-  const phaseLabel = t(`connectors.syncStep.${phaseKey}`, {
+  const phaseTranslationGroup = phaseKey.startsWith("mirroring_") ? "syncMirrorStep" : "syncStep";
+  const phaseLabel = t(`connectors.${phaseTranslationGroup}.${phaseKey}`, {
     defaultValue: phaseKey.replaceAll("_", " "),
   });
-  const jobLabel = job.job_type === "recompute" ? t("connectors.recompute") : t("connectors.sync");
+  const savedMetrics = connectorProgressMetrics(job);
+  const activeMetric = { current: job.progress_current, total: job.progress_total, detail: job.progress_detail };
+  const metricDefinitions = [
+    { key: "items", icon: Files, tooltip: "assetsProgress" },
+    { key: "user_states", icon: UserRoundCheck, tooltip: "usersProgress" },
+    { key: "playback_events", icon: History, tooltip: "playbackProgress" },
+    { key: "libraries", icon: LibraryBig, tooltip: "librariesProgress" },
+  ] as const;
+  const metrics = metricDefinitions.flatMap((definition) => {
+    const metric = savedMetrics[definition.key] ?? (phaseKey === definition.key ? activeMetric : null);
+    if (!metric || (metric.current <= 0 && (metric.total ?? 0) <= 0)) return [];
+    const value = metric.total === null
+      ? metric.current.toLocaleString()
+      : `${metric.current.toLocaleString()} / ${metric.total.toLocaleString()}`;
+    return [{ ...definition, metric, value }];
+  });
 
   return (
     <div
@@ -278,26 +317,30 @@ function ConnectorSyncJobCard({
         {expanded ? (
             <div className="scan-job-metrics">
               <span className="scan-job-metric-item">
-                <span className="scan-job-metric-icon-wrap" title={jobLabel}>
-                  <RefreshCw size={14} aria-hidden="true" />
-                  <span className="scan-job-metric-value">{jobLabel}</span>
-                </span>
-              </span>
-              <span className="scan-job-metric-item">
-                <span className="scan-job-metric-sep" aria-hidden="true" />
-                <span className="scan-job-metric-icon-wrap" title={t("connectors.syncBanner.phase")}>
+                <span
+                  className="scan-job-metric-icon-wrap"
+                  title={t("connectors.syncBanner.currentPhase", { phase: phaseLabel })}
+                >
+                  <Activity size={14} aria-hidden="true" />
                   <span className="scan-job-metric-value">{phaseLabel}</span>
                 </span>
               </span>
-              {progressTotal > 0 ? (
-                <span className="scan-job-metric-item">
+              {metrics.map(({ key, icon: MetricIcon, tooltip, metric, value }) => (
+                <span key={key} className="scan-job-metric-item">
                   <span className="scan-job-metric-sep" aria-hidden="true" />
-                  <span className="scan-job-metric-icon-wrap" title={t("connectors.syncBanner.progress")}>
-                    <FileCheckCorner size={14} aria-hidden="true" />
-                    <span className="scan-job-metric-value">{job.progress_current.toLocaleString()} / {progressTotal.toLocaleString()}</span>
+                  <span
+                    className="scan-job-metric-icon-wrap"
+                    title={t(`connectors.syncBanner.${tooltip}`, {
+                      current: metric.current.toLocaleString(),
+                      total: metric.total?.toLocaleString() ?? "–",
+                      detail: metric.detail ?? "",
+                    })}
+                  >
+                    <MetricIcon size={14} aria-hidden="true" />
+                    <span className="scan-job-metric-value">{value}</span>
                   </span>
                 </span>
-              ) : null}
+              ))}
             </div>
         ) : null}
         <div className="scan-job-card-actions">

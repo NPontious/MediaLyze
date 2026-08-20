@@ -494,8 +494,8 @@ def project_automatic_mapping_to_legacy(
             )
         )
     )
-    db.execute(delete(JellyfinPathMapping))
     seen: set[tuple[str, str]] = set()
+    desired_pairs: list[tuple[str, str]] = []
     for binding, root in rows:
         target = str(
             PurePosixPath(root.path.replace("\\", "/"))
@@ -505,12 +505,30 @@ def project_automatic_mapping_to_legacy(
         if pair in seen:
             continue
         seen.add(pair)
-        db.add(
-            JellyfinPathMapping(
-                jellyfin_path_prefix=binding.source_prefix,
-                medialyze_path_prefix=target,
-                enabled=True,
-            )
+        desired_pairs.append(pair)
+
+    existing_mappings = list(db.scalars(select(JellyfinPathMapping)))
+    existing_pairs = {
+        (mapping.jellyfin_path_prefix, mapping.medialyze_path_prefix)
+        for mapping in existing_mappings
+        if mapping.enabled
+    }
+    path_mappings_changed = (
+        existing_pairs != seen
+        or len(existing_mappings) != len(seen)
+        or any(not mapping.enabled for mapping in existing_mappings)
+    )
+    if path_mappings_changed:
+        db.execute(delete(JellyfinPathMapping))
+        db.add_all(
+            [
+                JellyfinPathMapping(
+                    jellyfin_path_prefix=source,
+                    medialyze_path_prefix=target,
+                    enabled=True,
+                )
+                for source, target in desired_pairs
+            ]
         )
 
     links_by_remote: dict[str, list[int]] = defaultdict(list)
@@ -526,14 +544,19 @@ def project_automatic_mapping_to_legacy(
         links_by_remote[remote_id].append(library_id)
     linked_count = 0
     for legacy in db.scalars(select(JellyfinLibrary)):
-        library_ids = links_by_remote.get(legacy.jellyfin_library_id, [])
+        remote_id = legacy.remote_item_id or f"legacy:{legacy.id}"
+        library_ids = links_by_remote.get(remote_id, [])
         legacy.linked_library_id = library_ids[0] if library_ids else None
         legacy.link_method = "automatic" if library_ids else None
         if library_ids:
             legacy.mapped_status = "linked"
             linked_count += 1
     db.flush()
-    return {"path_mappings": len(seen), "library_links": linked_count}
+    return {
+        "path_mappings": len(seen),
+        "path_mappings_changed": int(path_mappings_changed),
+        "library_links": linked_count,
+    }
 
 
 def get_connector_mapping_overview(

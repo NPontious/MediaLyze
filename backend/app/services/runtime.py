@@ -776,6 +776,16 @@ class ScanRuntimeManager:
                 connector_id, connector_matching = mirror_legacy_jellyfin_snapshot(
                     db,
                     cancellation_check=check_cancellation,
+                    progress_callback=lambda phase, current, total: (
+                        update_jellyfin_sync_job_progress(
+                            db,
+                            job_id,
+                            phase=phase,
+                            detail=None,
+                            current=current,
+                            total=total,
+                        )
+                    ),
                 )
                 if connector_id is not None:
                     summary["connector_matching"] = connector_matching

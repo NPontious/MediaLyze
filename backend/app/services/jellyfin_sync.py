@@ -379,6 +379,8 @@ def _sync_enabled_user_data(
     now: datetime,
 ) -> None:
     """Fetch user-scoped pages concurrently while keeping SQLite writes serialized."""
+    completed_users = 0
+    total_users = len(enabled_users)
     for batch_start in range(0, len(enabled_users), JELLYFIN_USER_SYNC_WORKERS):
         batch = enabled_users[batch_start : batch_start + JELLYFIN_USER_SYNC_WORKERS]
         set_jellyfin_progress_tracks(
@@ -447,6 +449,13 @@ def _sync_enabled_user_data(
                             )
                             db.commit()
                             complete_jellyfin_progress_track(user_id)
+                            completed_users += 1
+                            update_jellyfin_progress(
+                                "user_states",
+                                detail=str(user_row["name"]),
+                                current=completed_users,
+                                total=total_users,
+                            )
                             continue
 
                         rows = []
@@ -537,7 +546,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
             connection.server_version = system_info.get("Version")
             db.commit()
 
-            update_jellyfin_progress("users")
+            update_jellyfin_progress("users", current=0, total=None)
             remote_users = client.get_users()
             stored_users = {
                 user.jellyfin_user_id: user for user in db.scalars(select(JellyfinUser))
@@ -565,6 +574,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                 conflict_columns=("sync_run_id", "jellyfin_user_id"),
             )
             user_count = len(user_rows)
+            update_jellyfin_progress("users", current=user_count, total=user_count)
 
             update_jellyfin_progress("libraries")
             folders = client.get_virtual_folders()
@@ -605,11 +615,16 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                     total=page.total_record_count,
                 )
 
-            update_jellyfin_progress("user_states", current=0, total=None)
+            enabled_user_rows = [row for row in user_rows if row["enabled_for_sync"]]
+            update_jellyfin_progress(
+                "user_states",
+                current=0,
+                total=len(enabled_user_rows),
+            )
             _sync_enabled_user_data(
                 db,
                 sync_run_id=sync_run_id,
-                enabled_users=[row for row in user_rows if row["enabled_for_sync"]],
+                enabled_users=enabled_user_rows,
                 base_url=connection.base_url,
                 api_key=api_key,
                 now=now,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -50,6 +50,9 @@ class JellyfinConnectorAdapter:
     capabilities = frozenset({"users", "user_states", "playback_events"})
 
     def __init__(self, connection: ConnectorConnection, secret: str, cancellation_check=None) -> None:
+        self._progress_callback: (
+            Callable[[str, int, int | None, str | None], None] | None
+        ) = None
         self.client = JellyfinClient(
             connection.base_url,
             secret,
@@ -72,6 +75,12 @@ class JellyfinConnectorAdapter:
             name=str(payload.get("ServerName") or "").strip() or None,
             version=str(payload.get("Version") or "").strip() or None,
         )
+
+    def set_progress_callback(
+        self,
+        callback: Callable[[str, int, int | None, str | None], None],
+    ) -> None:
+        self._progress_callback = callback
 
     def iter_libraries(self) -> Iterable[RemoteLibrary]:
         for folder in self.client.get_virtual_folders():
@@ -154,6 +163,13 @@ class JellyfinConnectorAdapter:
                         "backdrop_image_tags": list(payload.get("BackdropImageTags") or []),
                     },
                 )
+            if self._progress_callback is not None:
+                self._progress_callback(
+                    "items",
+                    min(page.start_index + len(page.items), page.total_record_count),
+                    page.total_record_count,
+                    None,
+                )
 
     def iter_users(self) -> Iterable[RemoteUser]:
         for payload in self.client.get_users():
@@ -166,7 +182,8 @@ class JellyfinConnectorAdapter:
             )
 
     def iter_user_item_data(self, users: Iterable[RemoteUser]) -> Iterator[RemoteUserItemData]:
-        for user in users:
+        user_list = list(users)
+        for user_index, user in enumerate(user_list, start=1):
             for page in self.client.iter_item_pages(
                 user_id=user.remote_id,
                 user_data_only=True,
@@ -187,6 +204,13 @@ class JellyfinConnectorAdapter:
                         last_played_date=_parse_datetime(user_data.get("LastPlayedDate")),
                         is_favorite=bool(user_data.get("IsFavorite")),
                     )
+            if self._progress_callback is not None:
+                self._progress_callback(
+                    "user_states",
+                    user_index,
+                    len(user_list),
+                    user.name,
+                )
 
     def iter_playback_events(
         self,

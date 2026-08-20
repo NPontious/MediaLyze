@@ -27,6 +27,8 @@ New Storage map to view your entire library at once!
 
 ### 🐛 Bug fixes
 
+- show cumulative asset and per-user Jellyfin synchronization progress with stage-specific icons and tooltips in the global scan banner
+- fix the standard Jellyfin connector's post-sync mapping crash, bulk-mirror user states and playback events, expose compatibility-mirror progress, and avoid redundant legacy rematching when projected paths are unchanged
 - keep long Jellyfin user-state, playback-history, and compatibility-mirror phases visibly progressing and responsive to cancellation
 - remove the redundant connector connection heading, description, and technical capability badges from expanded connection settings
 - show active connector synchronizations in the global scan banner with consistent progress details and cancellation controls instead of inline connection messages
