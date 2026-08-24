@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.18.0
+
+>2026-08-24
+
 New Storage map to view your entire library at once!
 
 ### ✨ New
@@ -12,12 +16,6 @@ New Storage map to view your entire library at once!
 - add a provider-neutral, multi-connection connector layer (for later implementation of Plex, ...)
 - add conservative corpus-based automatic connector path inference (manual path mapping shouldn't be necessary now)
 
-### 🔒 Security
-
-- keep connector credentials out of provider config, persisted provider payloads, normal API DTOs, job errors, and logs through dedicated validation and recursive redaction
-- update the Electron runtime to its patched internal archive extractor and refresh the packaging toolchain, React Router, Vite, Undici, PostCSS, Nano ID, and transitive YAML and URL tooling to resolve current Dependabot advisories
-- harden desktop installer downloads with immutable release URLs, strict asset and redirect validation, explicit save destinations, temporary files, size and SHA-256 verification, and cancel-safe cleanup
-
 ### ⚡ Performance
 
 - accelerate library file browsing with debounced requests, smaller pages, cached background counts, compact denormalized table rows, SQLite FTS5 trigram search, index-friendly path sorting and compressed API responses
@@ -25,12 +23,16 @@ New Storage map to view your entire library at once!
 - reduce comparison queries and responses to the selected axes and renderer
 - lazy-load raw ffprobe payloads only when their detail panel is opened
 
+### 🔒 Security
+
+- keep connector credentials out of provider config, persisted provider payloads, normal API DTOs, job errors, and logs through dedicated validation and recursive redaction
+- update the Electron runtime to its patched internal archive extractor and refresh the packaging toolchain, React Router, Vite, Undici, PostCSS, Nano ID, and transitive YAML and URL tooling to resolve current Dependabot advisories
+- harden desktop installer downloads with immutable release URLs, strict asset and redirect validation, explicit save destinations, temporary files, size and SHA-256 verification, and cancel-safe cleanup
+
 ### 🐛 Bug fixes
 
-- show cumulative asset and per-user Jellyfin synchronization progress with stage-specific icons and tooltips in the global scan banner
 - fix the standard Jellyfin connector's post-sync mapping crash, bulk-mirror user states and playback events, expose compatibility-mirror progress, and avoid redundant legacy rematching when projected paths are unchanged
 - keep long Jellyfin user-state, playback-history, and compatibility-mirror phases visibly progressing and responsive to cancellation
-- remove the redundant connector connection heading, description, and technical capability badges from expanded connection settings
 - show active connector synchronizations in the global scan banner with consistent progress details and cancellation controls instead of inline connection messages
 - move connector automatic/manual mapping controls into their accordion headers, reuse the Library Detail period selector's segmented-control design, and align their chevrons with the Analyzed users accordion
 - reorganize connector library assignments into compact source-to-target mapping rows with clearer coverage and required-link states
