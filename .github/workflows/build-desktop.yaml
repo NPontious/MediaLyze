@@ -63,6 +63,17 @@ jobs:
           git fetch --prune --tags origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
           git checkout --force "${BUILD_REF}" || git checkout --force "origin/${BUILD_REF}"
 
+      - name: Resolve shared build version
+        shell: bash
+        run: |
+          repository_version="$(python3 .github/scripts/release_metadata.py version)"
+          if [[ "${IS_RELEASE_BUILD}" == "true" ]]; then
+            build_version="${RELEASE_TAG#v}"
+          else
+            build_version="${repository_version}-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "BUILD_VERSION=${build_version}" >> "${GITHUB_ENV}"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -90,6 +101,8 @@ jobs:
       - name: Build frontend
         run: npm run build
         working-directory: frontend
+        env:
+          VITE_APP_VERSION: ${{ env.BUILD_VERSION }}
 
       - name: Install backend build dependencies
         run: python -m pip install -e . pyinstaller
@@ -98,9 +111,23 @@ jobs:
         run: npm ci
         working-directory: desktop
 
+      - name: Stamp Electron package version
+        run: npm version "${BUILD_VERSION}" --no-git-tag-version --allow-same-version
+        working-directory: desktop
+
       - name: Run desktop packaging regression tests
         run: npm test
         working-directory: desktop
+
+      - name: Verify shared build version inputs
+        shell: bash
+        run: |
+          frontend_version="$(python3 -c 'import json; print(json.load(open("frontend/dist/build-version.json"))["version"])')"
+          desktop_version="$(node -p 'require("./desktop/package.json").version')"
+          if [[ "${frontend_version}" != "${BUILD_VERSION}" ]] || [[ "${desktop_version}" != "${BUILD_VERSION}" ]]; then
+            echo "Desktop build version mismatch: expected=${BUILD_VERSION} frontend=${frontend_version} electron=${desktop_version}" >&2
+            exit 1
+          fi
 
       - name: Restore static Linux ffprobe
         if: matrix.os == 'ubuntu-latest'

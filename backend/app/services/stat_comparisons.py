@@ -75,33 +75,33 @@ class CategoryValue:
 class ComparisonSourceRow:
     media_file_id: int
     asset_name: str
-    size: float | None
-    duration: float | None
-    quality_score: float | None
-    bitrate: float | None
-    audio_bitrate: float | None
-    play_count: float
-    users_played: float
-    audio_channels: float | None
-    sample_rate: float | None
-    container: str | None
-    video_codec: str | None
-    width: int | None
-    height: int | None
-    hdr_type: str | None
-    audio_artist: str | None
-    audio_album: str | None
-    audio_genre: str | None
-    audio_year: str | None
-    track_number: str | None
-    bit_rate_mode: str | None
-    embedded_cover: bool
-    chapter_count: float | None
-    audiobook_narrator: str | None
-    audiobook_author: str | None
-    audiobook_publisher: str | None
-    audiobook_series: str | None
-    audiobook_series_part: str | None
+    size: float | None = None
+    duration: float | None = None
+    quality_score: float | None = None
+    bitrate: float | None = None
+    audio_bitrate: float | None = None
+    play_count: float = 0
+    users_played: float = 0
+    audio_channels: float | None = None
+    sample_rate: float | None = None
+    container: str | None = None
+    video_codec: str | None = None
+    width: int | None = None
+    height: int | None = None
+    hdr_type: str | None = None
+    audio_artist: str | None = None
+    audio_album: str | None = None
+    audio_genre: str | None = None
+    audio_year: str | None = None
+    track_number: str | None = None
+    bit_rate_mode: str | None = None
+    embedded_cover: bool = False
+    chapter_count: float | None = None
+    audiobook_narrator: str | None = None
+    audiobook_author: str | None = None
+    audiobook_publisher: str | None = None
+    audiobook_series: str | None = None
+    audiobook_series_part: str | None = None
 
 
 COMPARISON_FIELD_DEFINITIONS: dict[ComparisonFieldId, ComparisonFieldDefinition] = {
@@ -239,128 +239,116 @@ def _numeric_axis_buckets(field_id: ComparisonFieldId) -> list[ComparisonBucket]
     ]
 
 
-def _comparison_source_rows(db: Session, *, library_id: int | None = None) -> list[ComparisonSourceRow]:
-    cache_key = str(id(db.get_bind()))
-    cached = (
-        stats_cache.get_library_comparison_source(cache_key, library_id)
-        if library_id is not None
-        else stats_cache.get_dashboard_comparison_source(cache_key)
-    )
-    if cached is not None:
-        return cached  # type: ignore[return-value]
+def _comparison_source_rows(
+    db: Session,
+    *,
+    x_field: ComparisonFieldId,
+    y_field: ComparisonFieldId,
+    library_id: int | None = None,
+) -> list[ComparisonSourceRow]:
+    requested_fields = {x_field, y_field}
+    selected_columns = [
+        MediaFile.id.label("media_file_id"),
+        MediaFile.filename.label("asset_name"),
+    ]
+    column_by_field = {
+        "size": cast(MediaFile.size_bytes, Float).label("size"),
+        "quality_score": cast(MediaFile.quality_score, Float).label("quality_score"),
+        "duration": cast(MediaFile.duration_seconds, Float).label("duration"),
+        "bitrate": cast(MediaFile.bitrate, Float).label("bitrate"),
+        "audio_bitrate": cast(MediaFile.audio_bitrate, Float).label("audio_bitrate"),
+        "audio_channels": cast(MediaFile.audio_channels, Float).label("audio_channels"),
+        "sample_rate": cast(MediaFile.sample_rate, Float).label("sample_rate"),
+        "container": MediaFile.extension.label("container"),
+        "video_codec": MediaFile.primary_video_codec.label("video_codec"),
+        "hdr_type": MediaFile.primary_video_hdr_type.label("hdr_type"),
+        "audio_artist": MediaFile.audio_artist.label("audio_artist"),
+        "audio_album": MediaFile.audio_album.label("audio_album"),
+        "audio_genre": MediaFile.audio_genre.label("audio_genre"),
+        "audio_year": MediaFile.audio_date.label("audio_date"),
+        "track_number": MediaFile.track_number.label("track_number"),
+        "bit_rate_mode": MediaFile.bit_rate_mode.label("bit_rate_mode"),
+        "embedded_cover": MediaFile.has_embedded_cover.label("embedded_cover"),
+        "chapter_count": cast(MediaFile.chapter_count, Float).label("chapter_count"),
+        "audiobook_narrator": MediaFile.audiobook_narrator.label("audiobook_narrator"),
+        "audiobook_author": MediaFile.audiobook_author.label("audiobook_author"),
+        "audiobook_publisher": MediaFile.audiobook_publisher.label("audiobook_publisher"),
+        "audiobook_series": MediaFile.audiobook_series.label("audiobook_series"),
+        "audiobook_series_part": MediaFile.audiobook_series_part.label("audiobook_series_part"),
+    }
+    for field_id in requested_fields:
+        column = column_by_field.get(field_id)
+        if column is not None:
+            selected_columns.append(column)
+    if requested_fields & {"resolution", "resolution_mp"}:
+        selected_columns.extend(
+            [
+                MediaFile.primary_video_width.label("width"),
+                MediaFile.primary_video_height.label("height"),
+            ]
+        )
 
-    playback = (
-        select(
-            JellyfinMediaMatch.media_file_id.label("media_file_id"),
-            func.coalesce(func.sum(JellyfinUserItemData.play_count), 0).label("play_count"),
-            func.count(
-                func.distinct(
-                    case(
-                        (
-                            JellyfinUserItemData.played.is_(True),
-                            JellyfinUserItemData.jellyfin_user_id,
-                        ),
-                        else_=None,
+    playback = None
+    if requested_fields & {"play_count", "users_played"}:
+        playback = (
+            select(
+                JellyfinMediaMatch.media_file_id.label("media_file_id"),
+                func.coalesce(func.sum(JellyfinUserItemData.play_count), 0).label("play_count"),
+                func.count(
+                    func.distinct(
+                        case(
+                            (
+                                JellyfinUserItemData.played.is_(True),
+                                JellyfinUserItemData.jellyfin_user_id,
+                            ),
+                            else_=None,
+                        )
                     )
-                )
-            ).label("users_played"),
+                ).label("users_played"),
+            )
+            .select_from(JellyfinMediaMatch)
+            .join(
+                JellyfinUserItemData,
+                JellyfinUserItemData.jellyfin_item_id == JellyfinMediaMatch.jellyfin_item_id,
+            )
+            .join(
+                JellyfinUser,
+                JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id,
+            )
+            .where(
+                JellyfinMediaMatch.status == "matched",
+                JellyfinUser.enabled_for_sync.is_(True),
+            )
+            .group_by(JellyfinMediaMatch.media_file_id)
+            .subquery("comparison_playback_aggregate")
         )
-        .select_from(JellyfinMediaMatch)
-        .join(
-            JellyfinUserItemData,
-            JellyfinUserItemData.jellyfin_item_id == JellyfinMediaMatch.jellyfin_item_id,
-        )
-        .join(
-            JellyfinUser,
-            JellyfinUser.jellyfin_user_id == JellyfinUserItemData.jellyfin_user_id,
-        )
-        .where(
-            JellyfinMediaMatch.status == "matched",
-            JellyfinUser.enabled_for_sync.is_(True),
-        )
-        .group_by(JellyfinMediaMatch.media_file_id)
-        .subquery("comparison_playback_aggregate")
-    )
+        if "play_count" in requested_fields:
+            selected_columns.append(cast(func.coalesce(playback.c.play_count, 0), Float).label("play_count"))
+        if "users_played" in requested_fields:
+            selected_columns.append(cast(func.coalesce(playback.c.users_played, 0), Float).label("users_played"))
 
     query = (
-        select(
-            MediaFile.id.label("media_file_id"),
-            MediaFile.filename.label("asset_name"),
-            cast(MediaFile.size_bytes, Float).label("size"),
-            cast(MediaFile.quality_score, Float).label("quality_score"),
-            cast(MediaFile.duration_seconds, Float).label("duration"),
-            cast(MediaFile.bitrate, Float).label("bitrate"),
-            cast(MediaFile.audio_bitrate, Float).label("audio_bitrate"),
-            cast(func.coalesce(playback.c.play_count, 0), Float).label("play_count"),
-            cast(func.coalesce(playback.c.users_played, 0), Float).label("users_played"),
-            cast(MediaFile.audio_channels, Float).label("audio_channels"),
-            cast(MediaFile.sample_rate, Float).label("sample_rate"),
-            MediaFile.extension.label("container"),
-            MediaFile.primary_video_codec.label("video_codec"),
-            MediaFile.primary_video_width.label("width"),
-            MediaFile.primary_video_height.label("height"),
-            MediaFile.primary_video_hdr_type.label("hdr_type"),
-            MediaFile.audio_artist.label("audio_artist"),
-            MediaFile.audio_album.label("audio_album"),
-            MediaFile.audio_genre.label("audio_genre"),
-            MediaFile.audio_date.label("audio_date"),
-            MediaFile.track_number.label("track_number"),
-            MediaFile.bit_rate_mode.label("bit_rate_mode"),
-            MediaFile.has_embedded_cover.label("embedded_cover"),
-            cast(MediaFile.chapter_count, Float).label("chapter_count"),
-            MediaFile.audiobook_narrator.label("audiobook_narrator"),
-            MediaFile.audiobook_author.label("audiobook_author"),
-            MediaFile.audiobook_publisher.label("audiobook_publisher"),
-            MediaFile.audiobook_series.label("audiobook_series"),
-            MediaFile.audiobook_series_part.label("audiobook_series_part"),
-        )
+        select(*selected_columns)
         .select_from(MediaFile)
-        .outerjoin(playback, playback.c.media_file_id == MediaFile.id)
         .order_by(MediaFile.id.asc())
     )
+    if playback is not None:
+        query = query.outerjoin(playback, playback.c.media_file_id == MediaFile.id)
     if library_id is not None:
         query = query.where(MediaFile.library_id == library_id)
     else:
         query = query.join(Library, Library.id == MediaFile.library_id).where(Library.show_on_dashboard.is_(True))
 
-    rows = [
-        ComparisonSourceRow(
-            media_file_id=row.media_file_id,
-            asset_name=row.asset_name or str(row.media_file_id),
-            size=row.size,
-            duration=row.duration,
-            quality_score=row.quality_score,
-            bitrate=row.bitrate,
-            audio_bitrate=row.audio_bitrate,
-            play_count=row.play_count,
-            users_played=row.users_played,
-            audio_channels=row.audio_channels,
-            sample_rate=row.sample_rate,
-            container=row.container,
-            video_codec=row.video_codec,
-            width=row.width,
-            height=row.height,
-            hdr_type=row.hdr_type,
-            audio_artist=row.audio_artist,
-            audio_album=row.audio_album,
-            audio_genre=row.audio_genre,
-            audio_year=(row.audio_date or "")[:4] or None,
-            track_number=row.track_number,
-            bit_rate_mode=row.bit_rate_mode,
-            embedded_cover=bool(row.embedded_cover),
-            chapter_count=row.chapter_count,
-            audiobook_narrator=row.audiobook_narrator,
-            audiobook_author=row.audiobook_author,
-            audiobook_publisher=row.audiobook_publisher,
-            audiobook_series=row.audiobook_series,
-            audiobook_series_part=row.audiobook_series_part,
-        )
-        for row in db.execute(query).all()
-    ]
-    if library_id is not None:
-        stats_cache.set_library_comparison_source(cache_key, library_id, rows)
-    else:
-        stats_cache.set_dashboard_comparison_source(cache_key, rows)
+    rows = []
+    for result in db.execute(query).all():
+        values = dict(result._mapping)
+        media_file_id = values["media_file_id"]
+        values["asset_name"] = values.get("asset_name") or str(media_file_id)
+        if "audio_date" in values:
+            values["audio_year"] = (values.pop("audio_date") or "")[:4] or None
+        if "embedded_cover" in values:
+            values["embedded_cover"] = bool(values["embedded_cover"])
+        rows.append(ComparisonSourceRow(**values))
     return rows
 
 
@@ -484,13 +472,25 @@ def _build_comparison(
     x_field: ComparisonFieldId,
     y_field: ComparisonFieldId,
     library_id: int | None,
+    renderer: ComparisonRendererId | None = None,
 ) -> ComparisonResponse:
     x_definition = COMPARISON_FIELD_DEFINITIONS[x_field]
     y_definition = COMPARISON_FIELD_DEFINITIONS[y_field]
     app_settings = get_app_settings(db)
     resolution_categories = app_settings.resolution_categories
     sample_limit = app_settings.scan_performance.comparison_scatter_point_limit
-    rows = _comparison_source_rows(db, library_id=library_id)
+    available_renderers = _available_renderers(x_definition.kind, y_definition.kind)
+    requested_renderer = renderer if renderer in available_renderers else available_renderers[0]
+    include_all_renderers = renderer is None
+    build_heatmap = include_all_renderers or requested_renderer == "heatmap"
+    build_scatter = (include_all_renderers or requested_renderer == "scatter") and "scatter" in available_renderers
+    build_bar = (include_all_renderers or requested_renderer == "bar") and "bar" in available_renderers
+    rows = _comparison_source_rows(
+        db,
+        x_field=x_field,
+        y_field=y_field,
+        library_id=library_id,
+    )
     total_files = len(rows)
 
     included_rows: list[tuple[int, str, float | CategoryValue, float | CategoryValue]] = []
@@ -542,9 +542,10 @@ def _build_comparison(
             current = y_category_counts.get(y_key)
             y_category_counts[y_key] = (y_label, (current[1] if current else 0) + 1)
 
-        heatmap_counts[(x_key, y_key)] = heatmap_counts.get((x_key, y_key), 0) + 1
+        if build_heatmap:
+            heatmap_counts[(x_key, y_key)] = heatmap_counts.get((x_key, y_key), 0) + 1
 
-        if x_definition.kind == "numeric" and y_definition.kind == "numeric":
+        if build_scatter:
             scatter_points.append(
                 ComparisonScatterPoint(
                     media_file_id=_media_file_id,
@@ -554,7 +555,7 @@ def _build_comparison(
                 )
             )
 
-        if y_definition.kind == "numeric":
+        if build_bar:
             total, count = 0.0, 0
             current = bar_totals.get(x_key)
             if current is not None:
@@ -584,9 +585,10 @@ def _build_comparison(
         ]
     )
 
-    sampled_scatter_points, sampled_points = _sample_scatter_points(
-        scatter_points,
-        sample_limit=sample_limit,
+    sampled_scatter_points, sampled_points = (
+        _sample_scatter_points(scatter_points, sample_limit=sample_limit)
+        if build_scatter
+        else ([], False)
     )
 
     return ComparisonResponse(
@@ -594,7 +596,7 @@ def _build_comparison(
         y_field=y_field,
         x_field_kind=x_definition.kind,
         y_field_kind=y_definition.kind,
-        available_renderers=_available_renderers(x_definition.kind, y_definition.kind),
+        available_renderers=available_renderers,
         total_files=total_files,
         included_files=len(included_rows),
         excluded_files=max(0, total_files - len(included_rows)),
@@ -606,7 +608,7 @@ def _build_comparison(
             ComparisonHeatmapCell(x_key=x_key, y_key=y_key, count=count)
             for (x_key, y_key), count in sorted(heatmap_counts.items())
         ],
-        scatter_points=sampled_scatter_points if "scatter" in _available_renderers(x_definition.kind, y_definition.kind) else None,
+        scatter_points=sampled_scatter_points if build_scatter else None,
         bar_entries=[
             ComparisonBarEntry(
                 x_key=bucket.key,
@@ -616,7 +618,7 @@ def _build_comparison(
             )
             for bucket in x_buckets
             if bucket.key in bar_totals and bar_totals[bucket.key][2] > 0
-        ] if "bar" in _available_renderers(x_definition.kind, y_definition.kind) else None,
+        ] if build_bar else None,
     )
 
 
@@ -625,13 +627,20 @@ def get_dashboard_comparison(
     *,
     x_field: ComparisonFieldId,
     y_field: ComparisonFieldId,
+    renderer: ComparisonRendererId | None = None,
 ) -> ComparisonResponse:
     cache_key = str(id(db.get_bind()))
-    cached = stats_cache.get_dashboard_comparison(cache_key, x_field, y_field)
+    cached = stats_cache.get_dashboard_comparison(cache_key, x_field, y_field, renderer)
     if cached is not None:
         return cached
-    payload = _build_comparison(db, x_field=x_field, y_field=y_field, library_id=None)
-    stats_cache.set_dashboard_comparison(cache_key, x_field, y_field, payload)
+    payload = _build_comparison(
+        db,
+        x_field=x_field,
+        y_field=y_field,
+        library_id=None,
+        renderer=renderer,
+    )
+    stats_cache.set_dashboard_comparison(cache_key, x_field, y_field, payload, renderer)
     return payload
 
 
@@ -641,9 +650,10 @@ def get_library_comparison(
     library_id: int,
     x_field: ComparisonFieldId,
     y_field: ComparisonFieldId,
+    renderer: ComparisonRendererId | None = None,
 ) -> ComparisonResponse | None:
     cache_key = str(id(db.get_bind()))
-    cached = stats_cache.get_library_comparison(cache_key, library_id, x_field, y_field)
+    cached = stats_cache.get_library_comparison(cache_key, library_id, x_field, y_field, renderer)
     if cached is not None:
         return cached
     library = db.get(Library, library_id)
@@ -654,6 +664,12 @@ def get_library_comparison(
         x_field=x_field,
         y_field=y_field,
     )
-    payload = _build_comparison(db, x_field=normalized_x_field, y_field=normalized_y_field, library_id=library_id)
-    stats_cache.set_library_comparison(cache_key, library_id, x_field, y_field, payload)
+    payload = _build_comparison(
+        db,
+        x_field=normalized_x_field,
+        y_field=normalized_y_field,
+        library_id=library_id,
+        renderer=renderer,
+    )
+    stats_cache.set_library_comparison(cache_key, library_id, x_field, y_field, payload, renderer)
     return payload

@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import Settings
 from backend.app.models.entities import (
     AudioStream,
+    ConnectorConnection,
+    ConnectorLibrary,
+    ConnectorLibraryLink,
     ExternalSubtitle,
     JellyfinItem,
     JellyfinLibrary,
@@ -28,6 +31,7 @@ from backend.app.models.entities import (
     VideoStream,
 )
 from backend.app.schemas.library import (
+    ConnectorLibraryLinkRead,
     LibraryCreate,
     LibraryRootRead,
     LibraryStatistics,
@@ -197,6 +201,34 @@ def _library_summary_from_model(
             name=linked_jellyfin_library.name,
             last_synced_at=linked_jellyfin_library.last_synced_at,
         )
+    connector_links = db.execute(
+        select(ConnectorLibraryLink, ConnectorLibrary, ConnectorConnection)
+        .join(
+            ConnectorLibrary,
+            ConnectorLibrary.id == ConnectorLibraryLink.connector_library_id,
+        )
+        .join(
+            ConnectorConnection,
+            ConnectorConnection.id == ConnectorLibrary.connection_id,
+        )
+        .where(ConnectorLibraryLink.library_id == library.id)
+        .order_by(
+            ConnectorConnection.provider,
+            ConnectorConnection.name,
+            ConnectorLibrary.name,
+        )
+    ).all()
+    summary.connector_links = [
+        ConnectorLibraryLinkRead(
+            connection_id=connection.id,
+            connection_name=connection.name,
+            provider=connection.provider,
+            connector_library_id=connector_library.id,
+            connector_library_name=connector_library.name,
+            link_method=link.link_method,
+        )
+        for link, connector_library, connection in connector_links
+    ]
     return summary
 
 
@@ -374,7 +406,6 @@ def _replace_library_roots_preserving_media(
         if root is not None:
             reused_root_ids.add(root.id)
             root.path = str(resolved_root.path)
-            root.display_name = resolved_root.display_name
             root.path_key = resolved_root.path_key
             continue
 
@@ -382,7 +413,6 @@ def _replace_library_roots_preserving_media(
             root = unmatched_existing.pop(0)
             reused_root_ids.add(root.id)
             root.path = str(resolved_root.path)
-            root.display_name = resolved_root.display_name
             root.path_key = resolved_root.path_key
         else:
             root = LibraryRoot(
@@ -403,12 +433,66 @@ def _replace_library_roots_preserving_media(
         db.delete(root)
 
 
+def _unique_root_alias(candidate: str, used: set[str]) -> str:
+    base = candidate.strip()
+    if not base:
+        raise ValueError("Library root alias must not be empty")
+    alias = base
+    suffix = 2
+    while alias.casefold() in used:
+        alias = f"{base} ({suffix})"
+        suffix += 1
+    used.add(alias.casefold())
+    return alias
+
+
+def _apply_structured_root_aliases(library: Library, root_specs) -> None:
+    if not root_specs:
+        # Derived aliases still need to be unique for roots with identical basenames.
+        used: set[str] = set()
+        for root in library.roots:
+            root.display_name = _unique_root_alias(root.display_name, used)
+        return
+
+    by_id = {root.id: root for root in library.roots}
+    by_key = {root.path_key: root for root in library.roots}
+    assignments: list[tuple[LibraryRoot, str]] = []
+    assigned_ids: set[int] = set()
+    for spec in root_specs:
+        root = by_id.get(spec.id) if spec.id is not None else None
+        if spec.id is not None and root is None:
+            raise ValueError(f"Library root {spec.id} does not belong to this library")
+        if root is None:
+            root = by_key.get(normalized_library_path_key(spec.path))
+        if root is None or root.id in assigned_ids:
+            continue
+        alias = spec.display_name.strip() if spec.display_name else root.display_name
+        assignments.append((root, alias))
+        assigned_ids.add(root.id)
+
+    explicit_aliases = [alias.casefold() for _root, alias in assignments]
+    if len(explicit_aliases) != len(set(explicit_aliases)):
+        raise ValueError("Library root aliases must be unique ignoring case")
+
+    used: set[str] = set()
+    assignment_map = {root.id: alias for root, alias in assignments}
+    for root in library.roots:
+        requested = assignment_map.get(root.id)
+        if requested is not None:
+            if requested.casefold() in used:
+                raise ValueError("Library root aliases must be unique ignoring case")
+            root.display_name = requested
+            used.add(requested.casefold())
+        else:
+            root.display_name = _unique_root_alias(root.display_name, used)
+
+
 def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> Library:
     cache_key = str(id(db.get_bind()))
     app_settings = load_app_settings(db, settings)
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
     selected_profile = validate_library_quality_profile(db, payload.type, payload.quality_profile_id)
-    root_inputs = payload.paths or [payload.path]
+    root_inputs = [root.path for root in payload.roots] or payload.paths or [payload.path]
     safe_path, resolved_roots, initial_scan_config = _resolved_library_path_config(
         settings,
         root_inputs,
@@ -432,6 +516,7 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
         quality_profile_id=selected_profile.id if selected_profile else None,
         show_on_dashboard=payload.show_on_dashboard,
         history_added_date_source=payload.history_added_date_source,
+        preferred_connector_connection_id=payload.preferred_connector_connection_id,
     )
     db.add(library)
     db.flush()
@@ -444,6 +529,9 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
                 path_key=root.path_key,
             )
         )
+    db.flush()
+    db.expire(library, ["roots"])
+    _apply_structured_root_aliases(library, payload.roots)
     db.commit()
     db.refresh(library)
     stats_cache.invalidate(cache_key)
@@ -479,9 +567,15 @@ def update_library_settings(
         if compatible_profile is None:
             library.quality_profile_id = None
 
-    path_fields_updated = "path" in payload.model_fields_set or "paths" in payload.model_fields_set
+    path_fields_updated = (
+        "path" in payload.model_fields_set
+        or "paths" in payload.model_fields_set
+        or "roots" in payload.model_fields_set
+    )
     if path_fields_updated:
-        root_inputs = payload.paths if payload.paths is not None else []
+        root_inputs = [root.path for root in (payload.roots or [])]
+        if not root_inputs:
+            root_inputs = payload.paths if payload.paths is not None else []
         if not root_inputs and payload.path is not None:
             root_inputs = [payload.path]
         safe_path, resolved_roots, next_scan_config = _resolved_library_path_config(
@@ -491,6 +585,9 @@ def update_library_settings(
             derive_selected_paths=True,
         )
         _replace_library_roots_preserving_media(db, library, resolved_roots)
+        db.flush()
+        db.expire(library, ["roots"])
+        _apply_structured_root_aliases(library, payload.roots)
         library.path = str(safe_path)
         library.scan_mode, library.scan_config = _normalize_library_root_scan_settings(
             settings,
@@ -526,7 +623,29 @@ def update_library_settings(
     if payload.show_on_dashboard is not None:
         library.show_on_dashboard = payload.show_on_dashboard
     if payload.history_added_date_source is not None:
+        if (
+            payload.history_added_date_source.value == "connector"
+            and library.preferred_connector_connection_id is None
+            and payload.preferred_connector_connection_id is None
+        ):
+            raise ValueError("Choose a preferred connector connection before using connector history dates")
         library.history_added_date_source = payload.history_added_date_source
+    if "preferred_connector_connection_id" in payload.model_fields_set:
+        if payload.preferred_connector_connection_id is not None:
+            linked = db.scalar(
+                select(ConnectorLibraryLink.id)
+                .join(
+                    ConnectorLibrary,
+                    ConnectorLibrary.id == ConnectorLibraryLink.connector_library_id,
+                )
+                .where(
+                    ConnectorLibraryLink.library_id == library.id,
+                    ConnectorLibrary.connection_id == payload.preferred_connector_connection_id,
+                )
+            )
+            if linked is None:
+                raise ValueError("Preferred connector connection must be linked to this library")
+        library.preferred_connector_connection_id = payload.preferred_connector_connection_id
     db.commit()
     db.refresh(library)
     stats_cache.invalidate(cache_key, library.id)

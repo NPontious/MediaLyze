@@ -70,7 +70,9 @@ def update_jellyfin_progress(
         _progress.total = total
         now = monotonic()
         if _persist_callback is not None and (
-            phase != _last_persisted_phase or now - _last_persisted_at >= 0.5
+            phase != _last_persisted_phase
+            or now - _last_persisted_at >= 0.5
+            or (total is not None and current >= total)
         ):
             callback = _persist_callback
             _last_persisted_at = now

@@ -4,13 +4,14 @@ import os
 import tempfile
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
 os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="medialyze-media-"))
 
 from backend.app.db.base import Base
+from backend.app.db.session import init_db
 from backend.app.models.entities import (
     AppSetting,
     AudioStream,
@@ -173,6 +174,192 @@ def test_list_library_files_cursor_paginates_default_file_sort() -> None:
     assert first_page.next_cursor is not None
     assert [item.filename for item in second_page.items] == ["charlie.mkv"]
     assert second_page.next_cursor is None
+
+
+def test_list_library_files_uses_fts_trigram_index_for_file_search() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    init_db(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        library = Library(
+            name="FTS Movies",
+            path="/tmp/fts-movies",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        db.add_all(
+            [
+                MediaFile(
+                    library_id=library.id,
+                    relative_path="movies/The-Needle-Feature.mkv",
+                    filename="The-Needle-Feature.mkv",
+                    extension="mkv",
+                    size_bytes=1,
+                    mtime=1.0,
+                    search_fields_version=4,
+                    audio_artist="Needle Artist",
+                ),
+                MediaFile(
+                    library_id=library.id,
+                    relative_path="movies/Other.mkv",
+                    filename="Other.mkv",
+                    extension="mkv",
+                    size_bytes=1,
+                    mtime=1.0,
+                    search_fields_version=4,
+                ),
+            ]
+        )
+        db.commit()
+
+        page = list_library_files(
+            db,
+            library.id,
+            search_filters=LibraryFileSearchFilters(file_search="needle"),
+            include_total=False,
+        )
+        artist_page = list_library_files(
+            db,
+            library.id,
+            search_filters=LibraryFileSearchFilters(
+                search_audio_artist="needle artist",
+            ),
+            include_total=False,
+        )
+        negated_page = list_library_files(
+            db,
+            library.id,
+            search_filters=LibraryFileSearchFilters(file_search="!needle"),
+            include_total=False,
+        )
+        query_plan = db.execute(
+            text(
+                "EXPLAIN QUERY PLAN "
+                "SELECT rowid FROM media_file_search_fts "
+                "WHERE media_file_search_fts MATCH '\"needle\"'"
+            )
+        ).all()
+
+    assert [item.filename for item in page.items] == ["The-Needle-Feature.mkv"]
+    assert [item.filename for item in artist_page.items] == ["The-Needle-Feature.mkv"]
+    assert [item.filename for item in negated_page.items] == ["Other.mkv"]
+    assert any("VIRTUAL TABLE INDEX" in str(row) for row in query_plan)
+
+
+def test_list_library_files_count_only_reuses_cached_filter_count() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _capture_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    with session_factory() as db:
+        library = Library(
+            name="Count Movies",
+            path="/tmp/count-movies",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        db.add(
+            MediaFile(
+                library_id=library.id,
+                relative_path="movie.mkv",
+                filename="movie.mkv",
+                extension="mkv",
+                size_bytes=1,
+                mtime=1.0,
+                search_fields_version=4,
+            )
+        )
+        db.commit()
+
+        first = list_library_files(db, library.id, limit=0, include_total=True)
+        first_count_queries = sum(
+            "count(" in statement.lower() and "media_files" in statement.lower()
+            for statement in statements
+        )
+        second = list_library_files(db, library.id, limit=0, include_total=True)
+        second_count_queries = sum(
+            "count(" in statement.lower() and "media_files" in statement.lower()
+            for statement in statements
+        )
+
+    assert first.total == 1
+    assert first.items == []
+    assert second.total == 1
+    assert second.items == []
+    assert first_count_queries >= 1
+    assert second_count_queries == first_count_queries
+
+
+def test_list_library_files_compact_page_does_not_load_heavy_relationships() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    statements: list[str] = []
+
+    with session_factory() as db:
+        library = Library(
+            name="Compact Movies",
+            path="/tmp/compact-movies",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        db.add(
+            MediaFile(
+                library_id=library.id,
+                relative_path="movie.mkv",
+                filename="movie.mkv",
+                extension="mkv",
+                size_bytes=1,
+                mtime=1.0,
+                search_fields_version=4,
+                primary_video_codec="hevc",
+                primary_video_width=3840,
+                primary_video_height=2160,
+                audio_codecs_search="aac",
+                audio_languages_search="eng",
+                subtitle_codecs_search="subrip",
+                subtitle_languages_search="deu",
+                subtitle_sources_search="internal",
+            )
+        )
+        db.commit()
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def _capture_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+            statements.append(statement)
+
+        list_library_files(db, library.id, limit=0, include_total=False)
+        statements.clear()
+        page = list_library_files(db, library.id, include_total=False)
+
+    selected_sql = "\n".join(
+        statement.lower()
+        for statement in statements
+        if statement.lstrip().lower().startswith("select")
+    )
+    assert [item.filename for item in page.items] == ["movie.mkv"]
+    assert page.items[0].video_codec == "hevc"
+    assert page.items[0].audio_codecs == ["aac"]
+    assert "from video_streams" not in selected_sql
+    assert "from audio_streams" not in selected_sql
+    assert "from subtitle_streams" not in selected_sql
+    assert "from external_subtitles" not in selected_sql
+    assert "raw_ffprobe_json" not in selected_sql
 
 
 def test_quality_score_detail_refreshes_stale_audio_only_video_categories() -> None:

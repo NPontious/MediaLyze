@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator, Literal
 
 from sqlalchemy import Float, String, and_, case, cast, func, literal, or_, select, union_all
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, defer, joinedload, selectinload
 
 from backend.app.models.entities import (
     AudioStream,
@@ -23,6 +23,7 @@ from backend.app.models.entities import (
     JellyfinUser,
     JellyfinUserItemData,
     Library,
+    LibraryRoot,
     MediaChapter,
     MediaFile,
     MediaFileHistory,
@@ -40,6 +41,7 @@ from backend.app.schemas.media import (
     MediaFileHistoryEntryRead,
     MediaFileHistoryRead,
     MediaFileQualityScoreDetail,
+    MediaFileRawProbeRead,
     MediaFileSearchResponse,
     MediaFileSearchResult,
     MediaFileStreamDetails,
@@ -59,6 +61,11 @@ from backend.app.services.media_search import (
     apply_field_search_filters,
     apply_legacy_search,
 )
+from backend.app.services.media_search_index import (
+    library_search_fields_ready,
+    mark_library_search_fields_ready,
+    media_file_search_index_available,
+)
 from backend.app.services.numeric_distributions import (
     audio_bitrate_value_expression,
     bitrate_value_expression,
@@ -71,6 +78,7 @@ from backend.app.services.quality import (
 from backend.app.services.quality_profiles import effective_quality_profile_for_media_file
 from backend.app.services.resolution_categories import classify_resolution_category
 from backend.app.services.spatial_audio import format_spatial_audio_profile
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.video_queries import primary_video_streams_subquery
 
 FileSortKey = Literal[
@@ -350,7 +358,7 @@ def _apply_cursor(query, sort_expression, sort_direction: FileSortDirection, cur
         return query
     cursor_path = str(cursor.get("path") or "")
     cursor_value = cursor.get("value")
-    path_expression = func.lower(MediaFile.relative_path)
+    path_expression = MediaFile.relative_path.collate("NOCASE")
     sort_clause = sort_expression < cursor_value if sort_direction == "desc" else sort_expression > cursor_value
     return query.where(
         or_(
@@ -494,6 +502,171 @@ def _row_from_model(media_file: MediaFile, resolution_categories=None) -> MediaF
         episode_number_end=media_file.episode_number_end,
         episode_title=media_file.episode_title,
     )
+
+
+def _search_values(raw_value: str | None) -> list[str]:
+    return sorted({value for value in (raw_value or "").split() if value})
+
+
+def _compact_row_from_model(
+    media_file: MediaFile,
+    resolution_categories=None,
+) -> MediaFileTableRow:
+    resolution = None
+    if media_file.primary_video_width and media_file.primary_video_height:
+        resolution = f"{media_file.primary_video_width}x{media_file.primary_video_height}"
+    resolution_category = classify_resolution_category(
+        media_file.primary_video_width,
+        media_file.primary_video_height,
+        resolution_categories,
+    )
+    root_name = media_file.library_root.display_name if media_file.library_root else None
+    display_path = f"{root_name}/{media_file.relative_path}" if root_name else media_file.relative_path
+    spatial_profiles = sorted(
+        {
+            label
+            for label in (
+                format_spatial_audio_profile(value)
+                for value in _search_values(media_file.audio_spatial_profiles_search)
+            )
+            if label
+        }
+    )
+    return MediaFileTableRow(
+        id=media_file.id,
+        library_id=media_file.library_id,
+        root_id=media_file.library_root_id,
+        root_name=root_name,
+        display_path=display_path,
+        relative_path=media_file.relative_path,
+        filename=media_file.filename,
+        extension=media_file.extension,
+        size_bytes=media_file.size_bytes,
+        mtime=media_file.mtime,
+        last_seen_at=media_file.last_seen_at,
+        last_analyzed_at=media_file.last_analyzed_at,
+        scan_status=media_file.scan_status,
+        quality_score=media_file.quality_score,
+        quality_score_raw=media_file.quality_score_raw,
+        container=normalize_container(media_file.extension),
+        duration=media_file.duration_seconds,
+        bitrate=media_file.bitrate or media_file.audio_bitrate,
+        audio_bitrate=media_file.audio_bitrate,
+        bit_depth=media_file.max_audio_bit_depth,
+        audio_title=media_file.audio_title or None,
+        audio_artist=media_file.audio_artist or None,
+        audio_album=media_file.audio_album or None,
+        audio_album_artist=media_file.audio_album_artist or None,
+        audio_genre=media_file.audio_genre or None,
+        audio_date=media_file.audio_date or None,
+        audio_disc=media_file.audio_disc or None,
+        audio_composer=media_file.audio_composer or None,
+        audio_channels=media_file.audio_channels,
+        sample_rate=media_file.sample_rate,
+        track_number=media_file.track_number or None,
+        bit_rate_mode=media_file.bit_rate_mode or None,
+        has_embedded_cover=media_file.has_embedded_cover,
+        chapter_count=media_file.chapter_count,
+        audiobook_narrator=media_file.audiobook_narrator or None,
+        audiobook_author=media_file.audiobook_author or None,
+        audiobook_publisher=media_file.audiobook_publisher or None,
+        audiobook_series=media_file.audiobook_series or None,
+        audiobook_series_part=media_file.audiobook_series_part or None,
+        audiobook_description=media_file.audiobook_description or None,
+        audiobook_copyright=media_file.audiobook_copyright or None,
+        audiobook_asin=media_file.audiobook_asin or None,
+        audiobook_isbn=media_file.audiobook_isbn or None,
+        audiobook_language=media_file.audiobook_language or None,
+        audiobook_abridged=media_file.audiobook_abridged or None,
+        embedded_cover_stream_index=media_file.embedded_cover_stream_index,
+        embedded_cover_codec=media_file.embedded_cover_codec or None,
+        embedded_cover_width=media_file.embedded_cover_width,
+        embedded_cover_height=media_file.embedded_cover_height,
+        analysis_failure_kind=media_file.analysis_failure_kind or None,
+        analysis_failure_reason=media_file.analysis_failure_reason or None,
+        analysis_failure_detail=media_file.analysis_failure_detail or None,
+        video_codec=media_file.primary_video_codec,
+        resolution=resolution,
+        resolution_category_id=resolution_category.id if resolution_category else None,
+        resolution_category_label=resolution_category.label if resolution_category else None,
+        hdr_type=media_file.primary_video_hdr_type,
+        audio_codecs=[
+            _normalize_audio_codec(value)
+            for value in _search_values(media_file.audio_codecs_search)
+        ],
+        audio_spatial_profiles=spatial_profiles,
+        audio_languages=sorted(
+            {
+                normalize_language_code(value) or "und"
+                for value in _search_values(media_file.audio_languages_search)
+            }
+        ),
+        subtitle_languages=sorted(
+            {
+                normalize_language_code(value) or "und"
+                for value in _search_values(media_file.subtitle_languages_search)
+            }
+        ),
+        subtitle_codecs=[
+            _normalize_subtitle_codec(value)
+            for value in _search_values(media_file.subtitle_codecs_search)
+        ],
+        subtitle_sources=_search_values(media_file.subtitle_sources_search),
+        content_category=getattr(
+            media_file.content_category,
+            "value",
+            media_file.content_category or "main",
+        ),
+        series_id=media_file.series_id,
+        series_title=media_file.series.title if media_file.series else None,
+        season_id=media_file.season_id,
+        season_number=media_file.season.season_number if media_file.season else None,
+        episode_number=media_file.episode_number,
+        episode_number_end=media_file.episode_number_end,
+        episode_title=media_file.episode_title,
+    )
+
+
+def _load_compact_table_rows(
+    db: Session,
+    selected_ids: list[int],
+    resolution_categories=None,
+) -> list[MediaFileTableRow]:
+    if not selected_ids:
+        return []
+
+    files = db.scalars(
+        select(MediaFile)
+        .where(MediaFile.id.in_(selected_ids))
+        .options(
+            defer(MediaFile.raw_ffprobe_json),
+            defer(MediaFile.quality_score_breakdown),
+            defer(MediaFile.recognition_details),
+            defer(MediaFile.filename_signature),
+            defer(MediaFile.content_hash),
+            defer(MediaFile.content_hash_algorithm),
+            defer(MediaFile.audio_metadata_search),
+            defer(MediaFile.chapter_titles_search),
+            joinedload(MediaFile.library_root).load_only(
+                LibraryRoot.id,
+                LibraryRoot.display_name,
+            ),
+            joinedload(MediaFile.series).load_only(
+                MediaSeries.id,
+                MediaSeries.title,
+            ),
+            joinedload(MediaFile.season).load_only(
+                MediaSeason.id,
+                MediaSeason.season_number,
+            ),
+        )
+    ).all()
+    order_map = {file_id: index for index, file_id in enumerate(selected_ids)}
+    files.sort(key=lambda media_file: order_map[media_file.id])
+    return [
+        _compact_row_from_model(media_file, resolution_categories)
+        for media_file in files
+    ]
 
 
 def _add_jellyfin_metadata(db: Session, rows: list[MediaFileTableRow]) -> None:
@@ -752,7 +925,7 @@ def _jellyfin_play_count_expression():
 
 def _sort_expression(sort_key: FileSortKey, primary_video_streams, audio_aggregates, subtitle_aggregates):
     if sort_key == "file":
-        return func.lower(MediaFile.relative_path)
+        return MediaFile.relative_path.collate("NOCASE")
     if sort_key == "container":
         return func.lower(func.coalesce(MediaFile.extension, ""))
     if sort_key == "size":
@@ -847,32 +1020,7 @@ def _sort_expression(sort_key: FileSortKey, primary_video_streams, audio_aggrega
         return func.lower(MediaFile.audiobook_asin)
     if sort_key == "audiobook_isbn":
         return func.lower(MediaFile.audiobook_isbn)
-    return func.lower(MediaFile.relative_path)
-
-
-def _load_media_files_by_ids(db: Session, selected_ids: list[int]) -> list[MediaFile]:
-    if not selected_ids:
-        return []
-
-    files = db.scalars(
-        select(MediaFile)
-        .where(MediaFile.id.in_(selected_ids))
-        .options(
-            selectinload(MediaFile.media_format),
-            selectinload(MediaFile.video_streams),
-            selectinload(MediaFile.audio_streams),
-            selectinload(MediaFile.chapters),
-            selectinload(MediaFile.subtitle_streams),
-            selectinload(MediaFile.external_subtitles),
-            selectinload(MediaFile.library_root),
-            selectinload(MediaFile.series),
-            selectinload(MediaFile.season),
-        )
-    ).all()
-
-    order_map = {file_id: index for index, file_id in enumerate(selected_ids)}
-    files.sort(key=lambda media_file: order_map[media_file.id])
-    return files
+    return MediaFile.relative_path.collate("NOCASE")
 
 
 def _build_library_file_id_query(
@@ -902,11 +1050,7 @@ def _build_library_file_id_query(
             audio_codecs_search=MediaFile.audio_codecs_search,
             audio_spatial_profiles_search=MediaFile.audio_spatial_profiles_search,
             total_audio_bitrate=MediaFile.audio_bitrate,
-            max_audio_bit_depth=(
-                select(func.max(AudioStream.bit_depth))
-                .where(AudioStream.media_file_id == MediaFile.id)
-                .scalar_subquery()
-            ),
+            max_audio_bit_depth=MediaFile.max_audio_bit_depth,
         )
     )
     subtitle_aggregates = SimpleNamespace(
@@ -925,7 +1069,15 @@ def _build_library_file_id_query(
         .select_from(MediaFile)
         .where(MediaFile.library_id == library_id)
     )
-    filtered_query = apply_legacy_search(base_query, primary_video_streams, audio_aggregates, subtitle_aggregates, search)
+    use_fts = media_file_search_index_available(db)
+    filtered_query = apply_legacy_search(
+        base_query,
+        primary_video_streams,
+        audio_aggregates,
+        subtitle_aggregates,
+        search,
+        use_fts=use_fts,
+    )
     filtered_query = apply_field_search_filters(
         filtered_query,
         primary_video_streams,
@@ -937,11 +1089,12 @@ def _build_library_file_id_query(
         bit_depth_expression=audio_aggregates.c.max_audio_bit_depth,
         duration_expression=MediaFile.duration_seconds,
         resolution_categories=get_app_settings(db).resolution_categories,
+        use_fts=use_fts,
     )
     sort_expression = _sort_expression(sort_key, primary_video_streams, audio_aggregates, subtitle_aggregates)
     return filtered_query.order_by(
         sort_expression.desc() if sort_direction == "desc" else sort_expression.asc(),
-        func.lower(MediaFile.relative_path).asc(),
+        MediaFile.relative_path.collate("NOCASE").asc(),
     )
 
 
@@ -970,13 +1123,19 @@ def _build_filtered_library_file_ids_subquery(
 
 
 def _ensure_library_search_fields(db: Session, library_id: int) -> None:
+    if library_search_fields_ready(db, library_id):
+        return
     audio_only_format_bitrate_backfill_needed = and_(
         MediaFile.search_fields_version < 4,
         MediaFile.audio_bitrate.is_(None),
         select(AudioStream.id).where(AudioStream.media_file_id == MediaFile.id).exists(),
         ~select(VideoStream.id).where(VideoStream.media_file_id == MediaFile.id).exists(),
         select(MediaFormat.bit_rate)
-        .where(MediaFormat.media_file_id == MediaFile.id, MediaFormat.bit_rate.is_not(None), MediaFormat.bit_rate > 0)
+        .where(
+            MediaFormat.media_file_id == MediaFile.id,
+            MediaFormat.bit_rate.is_not(None),
+            MediaFormat.bit_rate > 0,
+        )
         .exists(),
     )
     needs_backfill = db.scalar(
@@ -984,15 +1143,20 @@ def _ensure_library_search_fields(db: Session, library_id: int) -> None:
         .select_from(MediaFile)
         .where(
             MediaFile.library_id == library_id,
-            or_(MediaFile.search_fields_version < 2, audio_only_format_bitrate_backfill_needed),
+            or_(
+                MediaFile.search_fields_version < 2,
+                audio_only_format_bitrate_backfill_needed,
+            ),
         )
     )
     if not needs_backfill:
+        mark_library_search_fields_ready(db, library_id)
         return
     from backend.app.db.session import _backfill_media_file_search_fields
 
     with db.get_bind().begin() as connection:
         _backfill_media_file_search_fields(connection)
+    mark_library_search_fields_ready(db, library_id)
 
 
 def _active_export_search_entries(
@@ -1163,14 +1327,17 @@ def generate_library_files_csv_export(
 
         for offset in range(0, total, CSV_EXPORT_BATCH_SIZE):
             selected_ids = list(db.scalars(ordered_query.offset(offset).limit(CSV_EXPORT_BATCH_SIZE)).all())
-            files = _load_media_files_by_ids(db, selected_ids)
-            if not files:
+            rows = _load_compact_table_rows(
+                db,
+                selected_ids,
+                get_app_settings(db).resolution_categories,
+            )
+            if not rows:
                 continue
 
             batch_buffer = io.StringIO()
             batch_writer = csv.writer(batch_buffer, lineterminator="\n")
-            for media_file in files:
-                row = _row_from_model(media_file, get_app_settings(db).resolution_categories)
+            for row in rows:
                 if include_root_context and not row.root_name:
                     row.root_name = ""
                     row.display_path = row.relative_path
@@ -1368,11 +1535,38 @@ def list_library_files(
         sort_key=sort_key,
         sort_direction=sort_direction,
     )
-    total = (
-        (db.scalar(select(func.count()).select_from(ordered_query.order_by(None).subquery())) or 0)
-        if include_total
-        else None
+    normalized_filters = (search_filters or LibraryFileSearchFilters()).normalized()
+    count_query_key = (
+        search.strip().lower(),
+        *(
+            f"{field_name}={value}"
+            for field_name, value in sorted(normalized_filters.active().items())
+        ),
     )
+    total = None
+    if include_total:
+        cache_key = str(id(db.get_bind()))
+        total = stats_cache.get_or_compute_library_file_count(
+            cache_key,
+            library_id,
+            count_query_key,
+            lambda: (
+                db.scalar(
+                    select(func.count()).select_from(
+                        ordered_query.order_by(None).subquery()
+                    )
+                )
+                or 0
+            ),
+        )
+    if limit <= 0:
+        return MediaFileTablePage(
+            total=total,
+            offset=offset,
+            limit=limit,
+            items=[],
+            has_more=False,
+        )
     cursor_payload = _decode_cursor(cursor)
     if cursor_payload:
         primary_video_streams = SimpleNamespace(
@@ -1389,11 +1583,7 @@ def list_library_files(
                 min_audio_codec=MediaFile.min_audio_codec,
                 min_audio_spatial_profile=MediaFile.min_audio_spatial_profile,
                 total_audio_bitrate=MediaFile.audio_bitrate,
-                max_audio_bit_depth=(
-                    select(func.max(AudioStream.bit_depth))
-                    .where(AudioStream.media_file_id == MediaFile.id)
-                    .scalar_subquery()
-                ),
+                max_audio_bit_depth=MediaFile.max_audio_bit_depth,
             )
         )
         subtitle_aggregates = SimpleNamespace(
@@ -1415,9 +1605,8 @@ def list_library_files(
     if not selected_ids:
         return MediaFileTablePage(total=total, offset=offset, limit=limit, items=[], has_more=False)
 
-    files = _load_media_files_by_ids(db, selected_ids)
     resolution_categories = get_app_settings(db).resolution_categories
-    rows = [_row_from_model(media_file, resolution_categories) for media_file in files]
+    rows = _load_compact_table_rows(db, selected_ids, resolution_categories)
     _add_jellyfin_metadata(db, rows)
     next_cursor = (
         _encode_cursor(_cursor_sort_value(rows[-1], sort_key), rows[-1].relative_path)
@@ -1687,10 +1876,11 @@ def list_grouped_library_files(
     loose_file_ids = [int(row["file_id"]) for row in page_rows if row["kind"] == "file" and row["file_id"] is not None]
     series_ids = [int(row["series_id"]) for row in page_rows if row["kind"] == "series" and row["series_id"] is not None]
     resolution_categories = get_app_settings(db).resolution_categories
-    loose_file_rows = [
-        _row_from_model(media_file, resolution_categories)
-        for media_file in _load_media_files_by_ids(db, loose_file_ids)
-    ]
+    loose_file_rows = _load_compact_table_rows(
+        db,
+        loose_file_ids,
+        resolution_categories,
+    )
     _add_jellyfin_metadata(db, loose_file_rows)
     loose_files = {row.id: row for row in loose_file_rows}
     series_metrics_by_id: dict[int, dict[str, float | int | None]] = {}
@@ -1703,7 +1893,11 @@ def list_grouped_library_files(
                 .order_by(MediaFile.relative_path.asc())
             ).all()
         )
-        visible_series_rows = [_row_from_model(media_file, resolution_categories) for media_file in _load_media_files_by_ids(db, visible_series_file_ids)]
+        visible_series_rows = _load_compact_table_rows(
+            db,
+            visible_series_file_ids,
+            resolution_categories,
+        )
         _add_jellyfin_metadata(db, visible_series_rows)
         for series_id in series_ids:
             series_rows = [row for row in visible_series_rows if row.series_id == series_id]
@@ -1848,8 +2042,7 @@ def get_grouped_library_series_detail(
         return None
 
     resolution_categories = get_app_settings(db).resolution_categories
-    files = _load_media_files_by_ids(db, selected_ids)
-    rows = [_row_from_model(file, resolution_categories) for file in files]
+    rows = _load_compact_table_rows(db, selected_ids, resolution_categories)
     _add_jellyfin_metadata(db, rows)
     rows_by_season_id: dict[int, list[MediaFileTableRow]] = {}
     rows_without_season: list[MediaFileTableRow] = []
@@ -1904,29 +2097,46 @@ def get_grouped_library_series_detail(
     )
 
 
-def get_media_file_detail(db: Session, file_id: int) -> MediaFileDetail | None:
+def get_media_file_detail(
+    db: Session,
+    file_id: int,
+    *,
+    include_raw_ffprobe: bool = True,
+) -> MediaFileDetail | None:
+    options = [
+        selectinload(MediaFile.media_format),
+        selectinload(MediaFile.video_streams),
+        selectinload(MediaFile.audio_streams),
+        selectinload(MediaFile.chapters),
+        selectinload(MediaFile.subtitle_streams),
+        selectinload(MediaFile.external_subtitles),
+        selectinload(MediaFile.library_root),
+        selectinload(MediaFile.series),
+        selectinload(MediaFile.season),
+    ]
+    if not include_raw_ffprobe:
+        options.append(defer(MediaFile.raw_ffprobe_json))
     media_file = db.scalar(
         select(MediaFile)
         .where(MediaFile.id == file_id)
-        .options(
-            selectinload(MediaFile.media_format),
-            selectinload(MediaFile.video_streams),
-            selectinload(MediaFile.audio_streams),
-            selectinload(MediaFile.chapters),
-            selectinload(MediaFile.subtitle_streams),
-            selectinload(MediaFile.external_subtitles),
-            selectinload(MediaFile.library_root),
-            selectinload(MediaFile.series),
-            selectinload(MediaFile.season),
-        )
+        .options(*options)
     )
     if not media_file:
         return None
 
-    return serialize_media_file_detail(media_file, get_app_settings(db).resolution_categories)
+    return serialize_media_file_detail(
+        media_file,
+        get_app_settings(db).resolution_categories,
+        include_raw_ffprobe=include_raw_ffprobe,
+    )
 
 
-def serialize_media_file_detail(media_file: MediaFile, resolution_categories=None) -> MediaFileDetail:
+def serialize_media_file_detail(
+    media_file: MediaFile,
+    resolution_categories=None,
+    *,
+    include_raw_ffprobe: bool = True,
+) -> MediaFileDetail:
     row = _row_from_model(media_file, resolution_categories)
     return MediaFileDetail(
         **row.model_dump(),
@@ -1936,8 +2146,17 @@ def serialize_media_file_detail(media_file: MediaFile, resolution_categories=Non
         subtitle_streams=sorted(media_file.subtitle_streams, key=lambda stream: stream.stream_index),
         external_subtitles=sorted(media_file.external_subtitles, key=lambda subtitle: subtitle.path.lower()),
         chapters=sorted(media_file.chapters, key=lambda chapter: chapter.chapter_index),
-        raw_ffprobe_json=media_file.raw_ffprobe_json,
+        raw_ffprobe_json=media_file.raw_ffprobe_json if include_raw_ffprobe else None,
     )
+
+
+def get_media_file_raw_ffprobe(db: Session, file_id: int) -> MediaFileRawProbeRead | None:
+    row = db.execute(
+        select(MediaFile.id, MediaFile.raw_ffprobe_json).where(MediaFile.id == file_id)
+    ).one_or_none()
+    if row is None:
+        return None
+    return MediaFileRawProbeRead(id=row.id, raw_ffprobe_json=row.raw_ffprobe_json)
 
 
 def get_media_file_stream_details(db: Session, file_id: int) -> MediaFileStreamDetails | None:
@@ -1970,16 +2189,7 @@ def get_media_file_quality_score_detail(db: Session, file_id: int) -> MediaFileQ
     media_file = db.scalar(
         select(MediaFile)
         .where(MediaFile.id == file_id)
-        .options(
-            selectinload(MediaFile.library),
-            selectinload(MediaFile.library_root),
-            selectinload(MediaFile.media_format),
-            selectinload(MediaFile.video_streams),
-            selectinload(MediaFile.audio_streams),
-            selectinload(MediaFile.chapters),
-            selectinload(MediaFile.subtitle_streams),
-            selectinload(MediaFile.external_subtitles),
-        )
+        .options(defer(MediaFile.raw_ffprobe_json))
     )
     if media_file is None:
         return None
@@ -2063,7 +2273,14 @@ def get_media_file_history(db: Session, file_id: int, *, limit: int = 50) -> Med
         MediaFileHistory.library_id == media_file.library_id,
         or_(
             MediaFileHistory.media_file_id == media_file.id,
-            MediaFileHistory.relative_path == media_file.relative_path,
+            and_(
+                MediaFileHistory.library_root_id == media_file.library_root_id,
+                MediaFileHistory.relative_path == media_file.relative_path,
+            ),
+            and_(
+                MediaFileHistory.library_root_id.is_(None),
+                MediaFileHistory.relative_path == media_file.relative_path,
+            ),
         ),
     )
     total = db.scalar(select(func.count()).select_from(base_query.subquery())) or 0
@@ -2074,9 +2291,14 @@ def get_media_file_history(db: Session, file_id: int, *, limit: int = 50) -> Med
         ).limit(limit)
     ).all()
 
+    root_alias = media_file.library_root.display_name if media_file.library_root else None
+    display_path = f"{root_alias}/{media_file.relative_path}" if root_alias else media_file.relative_path
     return MediaFileHistoryRead(
         file_id=media_file.id,
         library_id=media_file.library_id,
+        library_root_id=media_file.library_root_id,
+        root_alias=root_alias,
+        display_path=display_path,
         relative_path=media_file.relative_path,
         total=total,
         items=[
@@ -2084,6 +2306,13 @@ def get_media_file_history(db: Session, file_id: int, *, limit: int = 50) -> Med
                 id=entry.id,
                 media_file_id=entry.media_file_id,
                 library_id=entry.library_id,
+                library_root_id=entry.library_root_id,
+                root_alias=entry.root_alias,
+                display_path=(
+                    f"{entry.root_alias}/{entry.relative_path}"
+                    if entry.root_alias
+                    else entry.relative_path
+                ),
                 relative_path=entry.relative_path,
                 filename=entry.filename,
                 captured_at=entry.captured_at,

@@ -19,6 +19,7 @@ Current baseline:
 
 Current `dev` already includes unreleased additions beyond `v0.2.0`, including:
 
+* a provider-neutral multi-connection catalog layer with Jellyfin migration, deterministic location-to-root bindings, generic staged synchronization, Shadow Mode comparison, and legacy Jellyfin compatibility
 * basic audio-file support with Music library type, type-aware file discovery, and music metadata extraction (title, artist, album, etc.)
 * path-browser filtering for placeholder directories such as `cdrom`, `floppy`, and `usb` when they are only container-exposed shadow directories
 * broader HDR10+ detection from additional ffprobe side-data metadata variants
@@ -44,6 +45,8 @@ MediaLyze currently implements:
 * library creation, update, rename, and deletion with library types (movies, series, music, mixed, other) and type-aware media discovery
 * basic audio-file support including extraction of music metadata (title, artist, album, etc.) from audio streams
 * per-library dashboard visibility toggles that can exclude selected libraries from dashboard statistics and comparison panels
+* stable multi-root library identity through `library_root_id + relative_path`, editable root aliases, and root-aware file history
+* multiple read-only external connector connections, with Jellyfin as the first adapter, many-to-many library links, root bindings, manual matches, and preferred metadata connections
 * safe directory browsing restricted to paths under `MEDIA_ROOT`
 * manual, scheduled, and watchdog-based scanning
 * full and incremental scans
@@ -59,7 +62,7 @@ MediaLyze currently implements:
 * dashboard and per-library statistics
 * dashboard and per-library metric-comparison panels with selectable X/Y dimensions and heatmap, scatter, or bar renderers where supported
 * theme selection and feature flags
-* English, German, and Spanish UI translations
+* English, German, Spanish, and Ukrainian UI translations
 * Docker-first deployment and GHCR image publishing
 * native desktop packaging for Windows, macOS, and Linux with a local backend sidecar
 
@@ -79,6 +82,9 @@ Open or clearly future-facing work includes:
 
 * improved broken-file reporting and diagnostics
 * additional future analysis and recommendation workflows
+* a Plex adapter; the connector core and shared accordion UI are implemented and Plex appears as a disabled `Soon™` option, but Plex transport, DTO normalization, descriptor registration, and provider-specific tests are not
+* generalization of provider image behavior beyond the preferred/standard Jellyfin connection
+* removal of the deprecated `/api/jellyfin/*` compatibility facade and legacy Jellyfin tables; both intentionally remain during the first connector release
 
 These items should be treated as backlog, not current behavior.
 
@@ -100,7 +106,11 @@ Each library currently stores:
 * `scan_config`
 * `quality_profile`
 * `show_on_dashboard`
+* one or more `LibraryRoot` rows with stable IDs and editable case-insensitively unique aliases
+* optional `preferred_connector_connection_id`
 * timestamps such as `created_at`, `updated_at`, and `last_scan_at`
+
+Canonical file identity is `library_root_id + relative_path`. Display paths are derived from the root alias and relative path and must never be used as stored identity. Structured root updates are supported while legacy `path` and `paths` request payloads remain compatible.
 
 Supported library types:
 
@@ -189,6 +199,10 @@ Actual implementation:
 * startup no longer auto-queues quality-recompute backfill jobs; recomputation is queued only from explicit follow-up actions such as library profile updates
 * old `queued` and `running` jobs from previous processes are canceled during startup instead of being resumed
 * startup also runs one history-retention maintenance pass, APScheduler registers a daily history-retention maintenance job, and deferred SQLite compaction is retried automatically once scans are idle
+* connector sync and binding-recompute jobs are persisted and single-flight per connection; different connections run concurrently on a dedicated connector executor without occupying scan or maintenance workers
+* connector sync uses connection/run-scoped staging and an atomic successful promote, while cancellation or failure preserves the last live snapshot; queued jobs are claimed atomically
+* startup cancels orphaned connector jobs and removes abandoned connector staging rows; scan changes compare pre/post root locators so additions, modifications, deletions, ignores, and renames trigger targeted connector rematching across connections
+* the migrated standard Jellyfin connection keeps the legacy users/playback/image sync active and mirrors its catalog into the provider-neutral tables with Shadow Mode counters
 
 ## 3.6 Scan Logs
 
@@ -527,6 +541,9 @@ Implemented UI behavior includes:
 * a file-detail `Preview` panel that can attempt in-browser playback for video and audio files, plus a direct file download action with explicit warnings that playback and download performance are not optimized yet
 * persistent app theme preference
 * persistent local UI state for selected statistics, per-dashboard and per-library statistic-panel layouts, analyzed-files column widths, file-detail panel layout, and some panel/section visibility
+* shared Connector Settings accordions for multiple Jellyfin connections, with lazy connection details, a collapsed searchable `Analyzed users` selector, generic lifecycle controls, capability-gated playback-user selection, active-job polling, and a disabled Plex `Soon™` add option; central bindings and item diagnostics remain deferred
+* file-detail External sources that return all matched provider items while retaining Jellyfin compatibility fields
+* a file-detail playback timeline that combines all matched capable connections without cross-server deduplication and labels events by connection when multiple sources contribute
 
 UI catalog maintenance rule:
 
@@ -541,7 +558,7 @@ UI catalog maintenance rule:
 Current translation state:
 
 * default language: English
-* additional shipped languages: German and Spanish
+* additional shipped languages: German, Spanish, and Ukrainian
 * translation assets stored under `frontend/locales/`
 * frontend uses `i18next`
 * when adding or changing UI text, settings, feature labels, validation messages, or other user-visible copy, update **all shipped locale files** under `frontend/locales/`, not only English and German
@@ -691,6 +708,7 @@ Important library contract concepts:
 * `GET /api/files/{file_id}/media`
 * `GET /api/files/{file_id}/streams`
 * `GET /api/files/{file_id}/quality-score`
+* `GET /api/files/{file_id}/connectors`
 
 Important file contract concepts:
 
@@ -702,8 +720,39 @@ Important file contract concepts:
 * `audio_spatial_profiles`
 * `subtitle_type`
 * lightweight stream-detail responses expose `video_streams`, `audio_streams`, `subtitle_streams`, and `external_subtitles` without the full raw ffprobe payload
+* connector source responses are arrays because one local file may match several remote items and providers
 
-## 9.7 Scan Job Contract
+## 9.7 Connectors
+
+* `GET /api/connectors/providers`
+* `GET /api/connectors/provider-descriptors`
+* `GET /api/connectors`
+* `POST /api/connectors`
+* `GET /api/connectors/{connection_id}`
+* `PATCH /api/connectors/{connection_id}`
+* `DELETE /api/connectors/{connection_id}`
+* `POST /api/connectors/{connection_id}/test`
+* `POST /api/connectors/{connection_id}/sync`
+* `POST /api/connectors/{connection_id}/sync/cancel`
+* `GET /api/connectors/{connection_id}/sync/status`
+* `GET /api/connectors/{connection_id}/libraries`
+* `GET /api/connectors/{connection_id}/users`
+* `PUT /api/connectors/{connection_id}/users`
+* `PUT /api/connectors/{connection_id}/library-links`
+* `GET /api/connectors/{connection_id}/locations`
+* `GET /api/connectors/{connection_id}/bindings`
+* `PUT /api/connectors/{connection_id}/bindings`
+* `GET /api/connectors/{connection_id}/items`
+* `GET /api/connectors/{connection_id}/item-status-summary`
+* `GET /api/connectors/{connection_id}/items/{item_id}/provider-payload`
+* `PUT /api/connectors/{connection_id}/items/{item_id}/match`
+* `DELETE /api/connectors/{connection_id}/items/{item_id}/match`
+* `POST /api/connectors/{connection_id}/items/{item_id}/automatic-match`
+* `GET /api/files/{file_id}/connector-playback`
+
+Important connector invariants and the provider contract are canonical in `docs/connectors.md`. Connector credentials are write-only through the API, secret-like config is rejected, normal DTOs omit raw item payloads, and diagnostic payloads are sanitized. Binding and manual library-link replacement are validated before writing. Deleting a match persists `ignored`; automatic matching resumes only through the explicit endpoint. Existing `/api/jellyfin/*` endpoints remain as a deprecated compatibility surface for the migrated standard Jellyfin connection.
+
+## 9.8 Scan Job Contract
 
 Important scan-job contract concepts:
 
@@ -739,6 +788,24 @@ Current logical schema includes:
 * `external_subtitles`
 * `library_history`
 * `scan_jobs`
+* `connector_connections`
+* `connector_credentials`
+* `connector_libraries`
+* `connector_library_locations`
+* `connector_library_links`
+* `connector_root_bindings`
+* `connector_items`
+* `connector_users`
+* `connector_user_item_data`
+* `connector_playback_events`
+* `connector_media_matches`
+* `connector_sync_jobs`
+* `connector_sync_stage_libraries`
+* `connector_sync_stage_locations`
+* `connector_sync_stage_items`
+* `connector_sync_stage_users`
+* `connector_sync_stage_user_data`
+* `connector_sync_stage_playback_events`
 
 Important post-`0.0.1` additions that must be treated as real schema surface:
 
@@ -754,7 +821,7 @@ Important post-`0.0.1` additions that must be treated as real schema surface:
 * media `quality_score_raw`
 * media `quality_score_breakdown`
 * media `raw_ffprobe_json`
-* media-file history snapshots keyed by `(library_id, relative_path)` over time
+* media-file history snapshots primarily keyed by `(library_root_id, relative_path)` over time, with nullable root identity for unresolved legacy rows
 * library daily history snapshots keyed by `(library_id, snapshot_day)`
 * subtitle `subtitle_type`
 * scan job `trigger_source`
@@ -790,6 +857,10 @@ Implemented backend structure:
 * `backend/app/services/scanner.py` performs discovery, change detection, ffprobe analysis, normalization, and scan-summary generation
 * `backend/app/services/runtime.py` orchestrates scheduled scans, watchdog scans, executor-backed execution, and cancelation
 * `backend/app/services/stats_cache.py` provides in-memory cache helpers for dashboard and library statistics
+* `backend/app/services/connector_contract.py` and `connector_registry.py` define the provider-neutral adapter boundary
+* `backend/app/services/connector_pathing.py` and `connector_matching.py` resolve external paths exclusively to stable root-relative file identities
+* `backend/app/services/connector_sync.py` manages connector staging, atomic promotion, persisted jobs, cancellation, recovery, and Jellyfin compatibility mirroring
+* `backend/app/services/jellyfin_connector.py` normalizes Jellyfin responses into connector DTOs; provider-specific response names must not leak into connector core services
 
 ## 11.2 Frontend
 
@@ -801,6 +872,7 @@ Implemented frontend structure:
 * `frontend/src/lib/scan-jobs.tsx` manages active scan polling state
 * page modules under `frontend/src/pages/` implement dashboard, settings/libraries, library detail, and file detail views, including separate comparison-data loading on dashboard and library pages; the Settings page also exposes history-retention controls and `GET /api/history-storage` forecast data
 * `frontend/src/lib/desktop.ts` exposes the optional Electron preload bridge used by desktop builds
+* `frontend/src/components/ConnectorSettingsPanel.tsx` implements the shared multi-connection accordions, lifecycle controls, capability-gated user selection, and add-provider dialog; central Location-to-Root bindings and item diagnostics remain deferred
 
 Desktop packaging structure:
 

@@ -1,17 +1,27 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const http = require("node:http");
 const https = require("node:https");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const { pipeline } = require("node:stream/promises");
 const { spawn } = require("node:child_process");
 const { resolveFfmpegPath, resolveFfprobePath } = require("./ffprobe-paths.cjs");
-const { buildLatestInstallerDownload, isAllowedInstallerDownloadUrl } = require("./update-download.cjs");
+const {
+  createInstallerIntegrityVerifier,
+  installerFilters,
+  isAllowedInstallerDownloadUrl,
+  isAllowedInstallerRedirectUrl,
+  selectInstallerAsset,
+  validateInstallerContentLength,
+} = require("./update-download.cjs");
 
 let mainWindow = null;
 let backendProcess = null;
 let quitting = false;
 let backendPort = null;
+let activeInstallerDownload = null;
 
 if (process.argv.includes("--version")) {
   console.log(app.getVersion());
@@ -126,6 +136,7 @@ function startBackend(port) {
   const backendEnv = {
     ...process.env,
     MEDIALYZE_RUNTIME: "desktop",
+    ...(app.isPackaged ? { MEDIALYZE_APP_VERSION: app.getVersion() } : {}),
     APP_HOST: "127.0.0.1",
     APP_PORT: String(port),
     CONFIG_PATH: configPath,
@@ -215,61 +226,212 @@ ipcMain.handle("medialyze:open-external-url", async (_event, url) => {
   return true;
 });
 
-function downloadToFile(url, destinationPath, redirectsLeft = 5) {
+class InstallerDownloadError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function getLocalUpdateStatus() {
   return new Promise((resolve, reject) => {
-    if (!isAllowedInstallerDownloadUrl(url)) {
-      reject(new Error("Installer URL is not allowed"));
+    if (!backendPort) {
+      reject(new InstallerDownloadError("network_error", "Backend is not running"));
       return;
     }
-    downloadUrlToFile(url, destinationPath, redirectsLeft, resolve, reject);
+    const request = http.get(
+      { host: "127.0.0.1", port: backendPort, path: "/api/update-status" },
+      (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          reject(new InstallerDownloadError("network_error", `Update status failed with HTTP ${response.statusCode}`));
+          return;
+        }
+        const chunks = [];
+        let bytes = 0;
+        response.on("data", (chunk) => {
+          bytes += chunk.length;
+          if (bytes > 2 * 1024 * 1024) {
+            request.destroy(new InstallerDownloadError("network_error", "Update status response is too large"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch {
+            reject(new InstallerDownloadError("network_error", "Update status response is invalid"));
+          }
+        });
+      },
+    );
+    request.on("error", reject);
   });
 }
 
-function downloadUrlToFile(url, destinationPath, redirectsLeft, resolve, reject) {
-  const request = https.get(url, (response) => {
-    if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-      if (redirectsLeft <= 0) {
-        reject(new Error("Too many installer download redirects"));
+function openInstallerResponse(url, asset, signal, redirectsLeft = 5) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { signal }, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        if (redirectsLeft <= 0) {
+          response.resume();
+          reject(new InstallerDownloadError("network_error", "Too many installer download redirects"));
+          return;
+        }
+        const redirectedUrl = new URL(response.headers.location, url).toString();
+        if (!isAllowedInstallerRedirectUrl(redirectedUrl)) {
+          response.resume();
+          reject(new InstallerDownloadError("network_error", "Installer redirect is not allowed"));
+          return;
+        }
+        response.resume();
+        void openInstallerResponse(redirectedUrl, asset, signal, redirectsLeft - 1).then(resolve, reject);
         return;
       }
-      const redirectedUrl = new URL(response.headers.location, url).toString();
-      if (!redirectedUrl.startsWith("https://")) {
-        reject(new Error("Installer redirect is not HTTPS"));
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new InstallerDownloadError("network_error", `Installer download failed with HTTP ${response.statusCode}`));
         return;
       }
-      response.resume();
-      downloadUrlToFile(redirectedUrl, destinationPath, redirectsLeft - 1, resolve, reject);
-      return;
+      const contentLength = response.headers["content-length"];
+      try {
+        validateInstallerContentLength(contentLength, asset.size_bytes);
+      } catch (error) {
+        response.resume();
+        reject(error);
+        return;
+      }
+      resolve(response);
+    });
+    if (activeInstallerDownload) {
+      activeInstallerDownload.request = request;
     }
-    if (response.statusCode !== 200) {
-      response.resume();
-      reject(new Error(`Installer download failed with HTTP ${response.statusCode}`));
-      return;
-    }
-    const file = fs.createWriteStream(destinationPath);
-    response.pipe(file);
-    file.on("finish", () => file.close(resolve));
-    file.on("error", reject);
+    request.on("error", (error) => {
+      if (signal.aborted) {
+        reject(new InstallerDownloadError("canceled", "Installer download was canceled"));
+      } else {
+        reject(error);
+      }
+    });
   });
-  request.on("error", reject);
+}
+
+async function downloadAndVerifyInstaller(asset, temporaryPath, controller) {
+  if (!isAllowedInstallerDownloadUrl(asset.download_url, asset.version, asset.filename)) {
+    throw new InstallerDownloadError("asset_unavailable", "Installer URL is not allowed");
+  }
+  const response = await openInstallerResponse(asset.download_url, asset, controller.signal);
+  const verifier = createInstallerIntegrityVerifier(asset);
+  try {
+    await pipeline(
+      response,
+      verifier.stream,
+      fs.createWriteStream(temporaryPath, { flags: "wx" }),
+      { signal: controller.signal },
+    );
+  } catch (error) {
+    if (
+      !(error instanceof InstallerDownloadError)
+      && error?.name !== "AbortError"
+      && ["EACCES", "EEXIST", "ENOSPC", "EROFS"].includes(error?.code)
+    ) {
+      throw new InstallerDownloadError("save_error", String(error));
+    }
+    throw error;
+  }
+  verifier.verify();
+}
+
+async function replaceVerifiedInstaller(temporaryPath, destinationPath) {
+  const backupPath = `${destinationPath}.${process.pid}-${Date.now()}.backup`;
+  let movedExistingFile = false;
+  try {
+    try {
+      await fs.promises.rename(destinationPath, backupPath);
+      movedExistingFile = true;
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await fs.promises.rename(temporaryPath, destinationPath);
+    if (movedExistingFile) {
+      await fs.promises.rm(backupPath, { force: true }).catch(() => undefined);
+    }
+  } catch (error) {
+    if (movedExistingFile) {
+      await fs.promises.rename(backupPath, destinationPath).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 ipcMain.handle("medialyze:download-latest-installer", async (_event, version) => {
   if (typeof version !== "string") {
-    return { ok: false, error: "Invalid target version" };
+    return { ok: false, status: "asset_unavailable", error: "Invalid target version" };
   }
-  const download = buildLatestInstallerDownload(process.platform, version);
-  if (!download) {
-    return { ok: false, error: "No installer available for this platform or version" };
+  if (activeInstallerDownload) {
+    return { ok: false, status: "network_error", error: "Another installer download is already running" };
   }
-  const destinationPath = path.join(app.getPath("desktop"), download.filename);
+
+  let temporaryPath = null;
   try {
-    await downloadToFile(download.url, destinationPath);
-    return { ok: true, path: destinationPath, filename: download.filename };
+    const updateStatus = await getLocalUpdateStatus();
+    const selection = selectInstallerAsset(updateStatus, process.platform, process.arch, version);
+    if (!selection.asset) {
+      return { ok: false, status: selection.status };
+    }
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: `Save MediaLyze v${version} installer`,
+      defaultPath: path.join(app.getPath("downloads"), selection.asset.localFilename),
+      filters: installerFilters(selection.target),
+    });
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { ok: false, status: "canceled" };
+    }
+
+    temporaryPath = `${saveResult.filePath}.${crypto.randomUUID()}.part`;
+    const controller = new AbortController();
+    activeInstallerDownload = { controller, request: null, temporaryPath };
+    await downloadAndVerifyInstaller(
+      { ...selection.asset, version },
+      temporaryPath,
+      controller,
+    );
+    try {
+      await replaceVerifiedInstaller(temporaryPath, saveResult.filePath);
+    } catch (error) {
+      throw new InstallerDownloadError("save_error", String(error));
+    }
+    temporaryPath = null;
+    return {
+      ok: true,
+      status: "success",
+      path: saveResult.filePath,
+      filename: path.basename(saveResult.filePath),
+    };
   } catch (error) {
-    await fs.promises.rm(destinationPath, { force: true });
-    return { ok: false, error: String(error) };
+    const status = error instanceof InstallerDownloadError || error?.status
+      ? error.status
+      : error?.name === "AbortError"
+        ? "canceled"
+        : "network_error";
+    return { ok: false, status, error: String(error) };
+  } finally {
+    if (temporaryPath) {
+      await fs.promises.rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
+    activeInstallerDownload = null;
   }
+});
+
+ipcMain.handle("medialyze:cancel-installer-download", () => {
+  if (!activeInstallerDownload) {
+    return false;
+  }
+  activeInstallerDownload.controller.abort();
+  return true;
 });
 
 async function launchDesktopApp() {

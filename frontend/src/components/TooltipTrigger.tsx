@@ -10,14 +10,18 @@ import {
 import { createPortal } from "react-dom";
 
 type TooltipAlign = "center" | "start";
+type TooltipPlacement = "below" | "auto";
 
 type TooltipTriggerProps = {
   content: ReactNode;
   ariaLabel: string;
   align?: TooltipAlign;
+  placement?: TooltipPlacement;
   className?: string;
+  style?: CSSProperties;
   tooltipClassName?: string;
   maxWidth?: number;
+  hoverOpenDelay?: number;
   preserveLineBreaks?: boolean;
   onOpen?: () => void;
   onClick?: MouseEventHandler<HTMLButtonElement>;
@@ -38,9 +42,12 @@ export function TooltipTrigger({
   content,
   ariaLabel,
   align = "center",
+  placement = "below",
   className,
+  style,
   tooltipClassName,
   maxWidth = TOOLTIP_MAX_WIDTH,
+  hoverOpenDelay = TOOLTIP_HOVER_OPEN_DELAY,
   preserveLineBreaks = false,
   onOpen,
   onClick,
@@ -95,7 +102,7 @@ export function TooltipTrigger({
     openTimerRef.current = window.setTimeout(() => {
       setIsHovered(true);
       openTimerRef.current = null;
-    }, TOOLTIP_HOVER_OPEN_DELAY);
+    }, hoverOpenDelay);
   });
 
   const updatePosition = useEffectEvent(() => {
@@ -111,6 +118,7 @@ export function TooltipTrigger({
     const availableWidth = Math.max(0, viewportWidth - TOOLTIP_VIEWPORT_MARGIN * 2);
     const resolvedWidth = Math.min(maxWidth, availableWidth);
     const tooltipWidth = Math.min(tooltip.offsetWidth || resolvedWidth, resolvedWidth);
+    const tooltipHeight = tooltip.offsetHeight;
     const idealLeft =
       align === "center"
         ? triggerRect.left + triggerRect.width / 2 - tooltipWidth / 2
@@ -119,8 +127,26 @@ export function TooltipTrigger({
       Math.max(TOOLTIP_VIEWPORT_MARGIN, idealLeft),
       Math.max(TOOLTIP_VIEWPORT_MARGIN, viewportWidth - TOOLTIP_VIEWPORT_MARGIN - tooltipWidth),
     );
-    const top = triggerRect.bottom + TOOLTIP_GAP;
-    const maxHeight = Math.max(64, viewportHeight - top - TOOLTIP_VIEWPORT_MARGIN);
+    const belowTop = triggerRect.bottom + TOOLTIP_GAP;
+    const availableBelow = Math.max(
+      0,
+      viewportHeight - belowTop - TOOLTIP_VIEWPORT_MARGIN,
+    );
+    const availableAbove = Math.max(
+      0,
+      triggerRect.top - TOOLTIP_GAP - TOOLTIP_VIEWPORT_MARGIN,
+    );
+    const placeAbove =
+      placement === "auto" &&
+      availableAbove > availableBelow &&
+      tooltipHeight > availableBelow;
+    const maxHeight = Math.max(64, placeAbove ? availableAbove : availableBelow);
+    const top = placeAbove
+      ? Math.max(
+          TOOLTIP_VIEWPORT_MARGIN,
+          triggerRect.top - TOOLTIP_GAP - Math.min(tooltipHeight, maxHeight),
+        )
+      : belowTop;
 
     setTooltipStyle((current) => {
       if (
@@ -150,7 +176,7 @@ export function TooltipTrigger({
       return;
     }
     updatePosition();
-  }, [align, isOpen, preserveLineBreaks, tooltipStyle, updatePosition]);
+  }, [align, isOpen, placement, preserveLineBreaks, tooltipStyle, updatePosition]);
 
   useLayoutEffect(() => {
     if (!isOpen) {
@@ -282,6 +308,7 @@ export function TooltipTrigger({
         data-toggle-key={dataToggleKey}
         disabled={disabled}
         className={["tooltip-trigger", className ?? ""].filter(Boolean).join(" ")}
+        style={style}
         onMouseEnter={() => {
           scheduleHoverOpen();
         }}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
   Archive,
@@ -29,8 +29,7 @@ import {
 import { AsyncPanel } from "../components/AsyncPanel";
 import { CheckIcon } from "../components/CheckIcon";
 import { CompatibilityProfilesPanel } from "../components/CompatibilityProfilesPanel";
-import { JellyfinSettingsPanel } from "../components/JellyfinSettingsPanel";
-import { JellyfinLibraryPathMappings } from "../components/JellyfinLibraryPathMappings";
+import { ConnectorSettingsPanel } from "../components/ConnectorSettingsPanel";
 import { CopyIcon } from "../components/CopyIcon";
 import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
@@ -52,7 +51,6 @@ import {
   type HistoryAddedDateSource,
   type HistoryStorage,
   type JellyfinLibrary,
-  type JellyfinPathMapping,
   type LibraryType,
   type LibrarySummary,
   type PathInspection,
@@ -761,7 +759,7 @@ const SETTINGS_NAV_GROUPS: SettingsNavigationGroup[] = [
     labelKey: "libraries.settingsGroups.librariesSources",
     items: [
       { id: "configuredLibraries", labelKey: "libraries.settingsNavigationLibraries", icon: Database },
-      { id: "jellyfin", labelKey: "jellyfin.title", icon: Server },
+      { id: "jellyfin", labelKey: "connectors.title", icon: Server },
     ],
   },
   {
@@ -853,7 +851,6 @@ export function LibrariesPage() {
   const [qualityProfileDraft, setQualityProfileDraft] = useState<QualityProfileDefinition | null>(null);
   const [qualityProfileMessage, setQualityProfileMessage] = useState<string | null>(null);
   const [qualityProfileSaving, setQualityProfileSaving] = useState(false);
-  const [isQualityProfilePickerOpen, setQualityProfilePickerOpen] = useState(false);
   const [expandedQualityProfileMetrics, setExpandedQualityProfileMetrics] = useState<Record<string, boolean>>({});
   const [isRenamingQualityProfile, setIsRenamingQualityProfile] = useState(false);
   const qualityProfileNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -861,9 +858,6 @@ export function LibrariesPage() {
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [libraryIdentityForms, setLibraryIdentityForms] = useState<Record<number, LibraryIdentityForm>>({});
   const [libraryIdentityPending, setLibraryIdentityPending] = useState<Record<number, boolean>>({});
-  const [jellyfinLinkPending, setJellyfinLinkPending] = useState<Record<number, boolean>>({});
-  const [jellyfinPathMappings, setJellyfinPathMappings] = useState<JellyfinPathMapping[]>([]);
-  const [jellyfinPathMappingsError, setJellyfinPathMappingsError] = useState<string | null>(null);
   const [selectedJellyfinLibraryId, setSelectedJellyfinLibraryId] = useState<number | null>(null);
   const [isRunningFullScanAll, setIsRunningFullScanAll] = useState(false);
   const [isCreateLibraryDialogOpen, setIsCreateLibraryDialogOpen] = useState(false);
@@ -929,6 +923,7 @@ export function LibrariesPage() {
   const [ignorePatternsStatus, setIgnorePatternsStatus] = useState<string | null>(null);
   const [isLoadingIgnorePatterns, setIsLoadingIgnorePatterns] = useState(true);
   const [isSavingIgnorePatterns, setIsSavingIgnorePatterns] = useState(false);
+  const [hideAutomaticUpdateReminders, setHideAutomaticUpdateReminders] = useState(false);
   const [showAnalyzedFilesCsvExport, setShowAnalyzedFilesCsvExport] = useState(false);
   const [showFullWidthAppShell, setShowFullWidthAppShell] = useState(false);
   const [hideQualityScoreMeter, setHideQualityScoreMeter] = useState(false);
@@ -981,7 +976,6 @@ export function LibrariesPage() {
   const persistedResolutionCategories = useRef<ResolutionCategory[]>(normalizeResolutionCategories(appSettings.resolution_categories));
   const ignorePatternsRequestId = useRef(0);
   const ignorePatternsSuccessId = useRef(0);
-  const jellyfinPathMappingsLoadedRef = useRef(false);
   const qualityProfilesLoadedRef = useRef(false);
   const recentScanJobsLoadedRef = useRef(false);
   const historyStorageLoadedRef = useRef(false);
@@ -1097,6 +1091,7 @@ export function LibrariesPage() {
   }, [appHistoryRetention]);
 
   function applyUpdatedAppSettingsState(updated: typeof appSettings) {
+    setHideAutomaticUpdateReminders(updated.feature_flags.hide_automatic_update_reminders === true);
     setShowAnalyzedFilesCsvExport(updated.feature_flags.show_analyzed_files_csv_export);
     setShowFullWidthAppShell(updated.feature_flags.show_full_width_app_shell);
     setHideQualityScoreMeter(updated.feature_flags.hide_quality_score_meter);
@@ -1324,7 +1319,6 @@ export function LibrariesPage() {
     setActiveQualityProfileMediaType(profile.media_type);
     setQualityProfileDraft(cloneQualityProfileDefinition(profile));
     setQualityProfileMessage(null);
-    setQualityProfilePickerOpen(false);
     setIsRenamingQualityProfile(false);
   }
 
@@ -1516,26 +1510,6 @@ export function LibrariesPage() {
       void loadJellyfinLibraries().catch(() => undefined);
     }
   }, [activeSettingsPanelId, jellyfinLibrariesLoaded, loadJellyfinLibraries]);
-
-  useEffect(() => {
-    if (activeSettingsPanelId !== "configuredLibraries" || jellyfinPathMappingsLoadedRef.current) {
-      return;
-    }
-    let active = true;
-    api.jellyfinPathMappings()
-      .then((mappings) => {
-        if (!active) return;
-        jellyfinPathMappingsLoadedRef.current = true;
-        setJellyfinPathMappings(mappings);
-        setJellyfinPathMappingsError(null);
-      })
-      .catch((reason: Error) => {
-        if (active) setJellyfinPathMappingsError(reason.message);
-      });
-    return () => {
-      active = false;
-    };
-  }, [activeSettingsPanelId]);
 
   useEffect(() => {
     if (activeSettingsPanelId !== "qualityProfiles" || qualityProfilesLoadedRef.current) {
@@ -1847,6 +1821,7 @@ export function LibrariesPage() {
     setDefaultIgnorePatternInputs(persisted.default);
     setPatternRecognitionInputs(normalizePatternRecognitionInputs(appSettings.pattern_recognition));
     setResolutionCategoryDrafts(cloneResolutionCategoryDrafts(persistedResolution));
+    setHideAutomaticUpdateReminders(appSettings.feature_flags.hide_automatic_update_reminders === true);
     setShowAnalyzedFilesCsvExport(appSettings.feature_flags.show_analyzed_files_csv_export);
     setShowFullWidthAppShell(appSettings.feature_flags.show_full_width_app_shell);
     setHideQualityScoreMeter(appSettings.feature_flags.hide_quality_score_meter);
@@ -2085,69 +2060,6 @@ export function LibrariesPage() {
     }
   }
 
-  async function updateLibraryJellyfinLink(library: LibrarySummary, jellyfinLibraryId: number | null) {
-    const current = jellyfinLibraries.find((candidate) => candidate.linked_library_id === library.id);
-    const selected = jellyfinLibraries.find((candidate) => candidate.id === jellyfinLibraryId);
-    if ((current?.id ?? null) === jellyfinLibraryId) return;
-    setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: true }));
-    setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
-    try {
-      let updatedLink: JellyfinLibrary | null = null;
-      if (jellyfinLibraryId === null) {
-        if (current) await api.updateJellyfinLibraryLink(current.id, null);
-      } else {
-        updatedLink = await api.updateJellyfinLibraryLink(jellyfinLibraryId, library.id);
-      }
-      for (const candidate of libraries) {
-        if (candidate.id === library.id) {
-          upsertLibrary({
-            ...candidate,
-            linked_jellyfin_library: updatedLink
-              ? {
-                  id: updatedLink.id,
-                  name: updatedLink.name,
-                  last_synced_at: updatedLink.last_synced_at,
-                }
-              : null,
-          });
-        } else if (selected?.linked_library_id === candidate.id) {
-          upsertLibrary({ ...candidate, linked_jellyfin_library: null });
-        }
-      }
-      await loadJellyfinLibraries(true);
-    } catch (reason) {
-      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
-    } finally {
-      setJellyfinLinkPending((pending) => ({ ...pending, [library.id]: false }));
-    }
-  }
-
-  function applyJellyfinPathMappingChange(mapping: JellyfinPathMapping | null, removedId?: number) {
-    if (mapping) {
-      setJellyfinPathMappings((current) => {
-        const exists = current.some((candidate) => candidate.id === mapping.id);
-        return exists
-          ? current.map((candidate) => candidate.id === mapping.id ? mapping : candidate)
-          : [...current, mapping];
-      });
-    } else if (removedId !== undefined) {
-      setJellyfinPathMappings((current) => current.filter((candidate) => candidate.id !== removedId));
-    }
-    setJellyfinPathMappingsError(null);
-    void loadJellyfinLibraries(true).catch(() => undefined);
-  }
-
-  async function applyJellyfinPathMappingBatchChange(mappings: JellyfinPathMapping[]) {
-    setJellyfinPathMappings((current) => {
-      const updatedById = new Map(mappings.map((mapping) => [mapping.id, mapping]));
-      const merged = current.map((mapping) => updatedById.get(mapping.id) ?? mapping);
-      const knownIds = new Set(current.map((mapping) => mapping.id));
-      return [...merged, ...mappings.filter((mapping) => !knownIds.has(mapping.id))];
-    });
-    setJellyfinPathMappingsError(null);
-    await loadJellyfinLibraries(true);
-  }
-
   function selectJellyfinLibraryForCreation(jellyfinLibrary: JellyfinLibrary) {
     setSelectedJellyfinLibraryId(jellyfinLibrary.id);
     setForm((current) => ({
@@ -2353,6 +2265,38 @@ export function LibrariesPage() {
         delete next[library.id];
         return next;
       });
+    }
+  }
+
+  async function updateLibraryRootAlias(library: LibrarySummary, rootId: number, displayName: string) {
+    const roots = library.roots ?? [];
+    const normalized = displayName.trim();
+    const current = roots.find((root) => root.id === rootId);
+    if (!normalized || !current || current.display_name === normalized) return;
+    try {
+      const updated = await api.updateLibrarySettings(library.id, {
+        roots: roots.map((root) => ({
+          id: root.id,
+          path: root.path,
+          display_name: root.id === rootId ? normalized : root.display_name,
+        })),
+      });
+      upsertLibrary(updated);
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    }
+  }
+
+  async function updatePreferredConnector(library: LibrarySummary, connectionId: number | null) {
+    try {
+      const updated = await api.updateLibrarySettings(library.id, {
+        preferred_connector_connection_id: connectionId,
+      });
+      upsertLibrary(updated);
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
     }
   }
 
@@ -2683,6 +2627,25 @@ export function LibrariesPage() {
       void refreshHistoryStorage().catch(() => undefined);
     } catch (reason) {
       setShowAnalyzedFilesCsvExport(previousValue);
+      setFeatureFlagsStatus((reason as Error).message);
+    } finally {
+      setIsSavingFeatureFlags(false);
+    }
+  }
+
+  async function toggleHideAutomaticUpdateReminders(hidden: boolean) {
+    const previousValue = hideAutomaticUpdateReminders;
+    setHideAutomaticUpdateReminders(hidden);
+    setFeatureFlagsStatus(null);
+    setIsSavingFeatureFlags(true);
+    try {
+      const updated = await api.updateAppSettings({
+        feature_flags: { hide_automatic_update_reminders: hidden },
+      });
+      applyUpdatedAppSettingsState(updated);
+      setFeatureFlagsStatus(null);
+    } catch (reason) {
+      setHideAutomaticUpdateReminders(previousValue);
       setFeatureFlagsStatus((reason as Error).message);
     } finally {
       setIsSavingFeatureFlags(false);
@@ -3755,6 +3718,7 @@ export function LibrariesPage() {
               <div className="ignore-pattern-control">
                 <input
                   id={inputId}
+                  className="settings-choice-input"
                   type="text"
                   value={ignorePatternDraft}
                   onChange={(event) => {
@@ -3780,6 +3744,7 @@ export function LibrariesPage() {
                 <div className="ignore-pattern-row ignore-pattern-row-saved" key={`ignore-pattern-${index}`}>
                   <div className="ignore-pattern-control">
                     <input
+                      className="settings-choice-input"
                       type="text"
                       value={pattern}
                       onChange={(event) => updateIgnorePattern(index, event.target.value)}
@@ -3833,6 +3798,7 @@ export function LibrariesPage() {
             <div className="ignore-pattern-row ignore-pattern-row-draft">
               <div className="ignore-pattern-control">
                 <input
+                  className="settings-choice-input"
                   type="text"
                   value={draftValue}
                   onChange={(event) => {
@@ -3858,6 +3824,7 @@ export function LibrariesPage() {
                 <div className="ignore-pattern-row ignore-pattern-row-saved" key={`${key}-${index}`}>
                   <div className="ignore-pattern-control">
                     <input
+                      className="settings-choice-input"
                       type="text"
                       value={pattern}
                       onChange={(event) => updatePatternRecognitionEntry(key, index, event.target.value)}
@@ -4132,48 +4099,23 @@ export function LibrariesPage() {
     onSelect: (value: T) => void,
     disabled = false,
   ) {
-    const open = qualityPickerOpenKey === qualityPickerKey(libraryId, fieldKey);
-    const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
     const pickerId = `${fieldKey}-${libraryId}`;
     return (
-      <div className="settings-choice-picker-shell quality-picker-field-shell search-filter-picker">
-        <button
-          id={pickerId}
-          type="button"
-          className={`settings-choice-picker-field${open ? " is-open" : ""}`}
-          aria-label={label}
-          aria-expanded={open}
-          disabled={disabled}
-          title={disabled ? t("libraries.qualityProfiles.builtInProtectedHint") : undefined}
-          onClick={() => toggleQualityPicker(libraryId, fieldKey)}
-        >
-          <span className="settings-choice-picker-value">{selectedLabel}</span>
-          <ChevronDown aria-hidden="true" className="nav-icon settings-choice-picker-chevron" />
-        </button>
-        {open && !disabled ? (
-          <div className="search-filter-picker-popover quality-picker-popover settings-choice-picker-popover">
-            {options.map((option) => {
-              const isSelected = option.value === value;
-              return (
-                <button
-                  type="button"
-                  key={option.value}
-                  className={`search-filter-picker-item${isSelected ? " is-selected" : ""}`}
-                  role="menuitemradio"
-                  aria-checked={isSelected}
-                  disabled={option.disabled}
-                  onClick={() => {
-                    onSelect(option.value);
-                    setQualityPickerOpenKey(null);
-                  }}
-                >
-                  <span>{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
+      <select
+        id={pickerId}
+        className="settings-choice-input"
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        title={disabled ? t("libraries.qualityProfiles.builtInProtectedHint") : undefined}
+        onChange={(event) => onSelect(event.target.value as T)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value} disabled={option.disabled}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     );
   }
 
@@ -4954,6 +4896,7 @@ export function LibrariesPage() {
           <label htmlFor={nameInputId}>{t("libraries.name")}</label>
           <input
             id={nameInputId}
+            className="settings-choice-input"
             value={form.name}
             onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
             placeholder={t("libraries.namePlaceholder")}
@@ -4973,6 +4916,7 @@ export function LibrariesPage() {
           </div>
           <select
             id={typeInputId}
+            className="settings-choice-input"
             value={form.type}
             onChange={(event) => setForm((current) => ({ ...current, type: event.target.value as LibraryType | "" }))}
             required
@@ -4993,6 +4937,7 @@ export function LibrariesPage() {
               <div className="desktop-path-row">
                 <input
                   id={pathInputId}
+                  className="settings-choice-input"
                   value={form.path}
                   onChange={(event) => setForm((current) => ({ ...current, path: event.target.value }))}
                   placeholder={t("libraries.desktopPathPlaceholder")}
@@ -5091,6 +5036,7 @@ export function LibrariesPage() {
               <div className="desktop-path-row">
                 <input
                   id={pathInputId}
+                  className="settings-choice-input"
                   value={pathDialogForm.path}
                   onChange={(event) =>
                     setPathDialogForm((current) => current ? { ...current, path: event.target.value } : current)
@@ -5232,7 +5178,6 @@ export function LibrariesPage() {
                 className={`quality-profile-segment${activeQualityProfileMediaType === mediaType ? " is-active" : ""}`}
                 aria-pressed={activeQualityProfileMediaType === mediaType}
                 onClick={() => {
-                  setQualityProfilePickerOpen(false);
                   setIsRenamingQualityProfile(false);
                   setActiveQualityProfileMediaType(mediaType);
                   const nextProfile =
@@ -5276,20 +5221,25 @@ export function LibrariesPage() {
                     }}
                   />
                 ) : (
-                  <button
-                    type="button"
+                  <select
                     className="quality-profile-picker-trigger"
-                    aria-haspopup="listbox"
-                    aria-expanded={isQualityProfilePickerOpen}
-                    onClick={() => setQualityProfilePickerOpen((current) => !current)}
+                    aria-label={t("libraries.qualityProfiles.selectProfile")}
+                    value={selectedQualityProfileId ?? ""}
+                    onChange={(event) => {
+                      const profile = visibleProfiles.find((candidate) => candidate.id === Number(event.target.value));
+                      if (profile) {
+                        selectQualityProfile(profile);
+                      }
+                    }}
                   >
-                    <span className="quality-profile-picker-name">
-                      <span>{draft.name}</span>
-                      {draft.is_default ? <span className="badge">{t("libraries.qualityProfiles.defaultBadge")}</span> : null}
-                      {draft.is_builtin ? <span className="badge">{t("libraries.qualityProfiles.builtInBadge")}</span> : null}
-                    </span>
-                    <ChevronDown aria-hidden="true" className="nav-icon" />
-                  </button>
+                    {visibleProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
+                        {profile.is_default ? ` — ${t("libraries.qualityProfiles.defaultBadge")}` : ""}
+                        {profile.is_builtin ? ` — ${t("libraries.qualityProfiles.builtInBadge")}` : ""}
+                      </option>
+                    ))}
+                  </select>
                 )}
                 <div className="quality-profile-picker-actions">
                   {isBuiltInProtected ? (
@@ -5320,10 +5270,7 @@ export function LibrariesPage() {
                     disabled={isBuiltInProtected || qualityProfileSaving}
                     title={isBuiltInProtected ? builtInProtectedHint : t("libraries.qualityProfiles.rename")}
                     aria-label={t("libraries.qualityProfiles.rename")}
-                    onClick={() => {
-                      setQualityProfilePickerOpen(false);
-                      setIsRenamingQualityProfile(true);
-                    }}
+                    onClick={() => setIsRenamingQualityProfile(true)}
                   >
                     <SquarePenIcon aria-hidden="true" className="nav-icon" size={18} />
                   </button>
@@ -5359,26 +5306,6 @@ export function LibrariesPage() {
                   </button>
                 </div>
               </div>
-              {isQualityProfilePickerOpen ? (
-                <div
-                  className="search-filter-picker-popover quality-picker-popover settings-choice-picker-popover quality-profile-picker-menu"
-                  role="listbox"
-                  aria-label={t("libraries.qualityProfiles.selectProfile")}
-                >
-                  {visibleProfiles.map((profile) => (
-                    <button
-                      type="button"
-                      key={profile.id}
-                      className={`search-filter-picker-item quality-profile-picker-option${profile.id === selectedQualityProfileId ? " is-selected" : ""}`}
-                      role="menuitemradio"
-                      aria-checked={profile.id === selectedQualityProfileId}
-                      onClick={() => selectQualityProfile(profile)}
-                    >
-                      <span>{profile.name}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
             </div>
           ) : null}
           <div className="quality-profile-workspace">
@@ -5756,9 +5683,6 @@ export function LibrariesPage() {
                 const isDeletingLibrary = Boolean(deletingLibraryIds[library.id]);
                 const activeLibraryScanJob = activeJobs.find((job) => job.library_id === library.id);
                 const areLibrarySettingsExpanded = Boolean(expandedLibrarySettings[library.id]);
-                const linkedJellyfinLibrary = jellyfinLibraries.find(
-                  (candidate) => candidate.linked_library_id === library.id,
-                );
                 const librarySettingsToggle = (
                   <button
                     type="button"
@@ -6016,48 +5940,20 @@ export function LibrariesPage() {
                     <div className="library-settings-body" id={`library-settings-body-${library.id}`}>
                       <section className="library-settings-section">
                         <div className="library-settings-section-heading">
-                          <h4>{t("libraries.sections.jellyfin.title")}</h4>
-                          <p>{t("libraries.sections.jellyfin.description")}</p>
+                          <h4>{t("connectors.libraryStatus.title")}</h4>
+                          <p>{t("connectors.libraryStatus.description")}</p>
                         </div>
                         <div className="library-settings-section-grid is-single-column">
-                          <div className="field">
-                            <label htmlFor={`jellyfin-library-link-${library.id}`}>{t("jellyfin.associatedJellyfinLibrary")}</label>
-                            <select
-                              id={`jellyfin-library-link-${library.id}`}
-                              className="settings-choice-input"
-                              value={linkedJellyfinLibrary?.id ?? ""}
-                              disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
-                              onChange={(event) => void updateLibraryJellyfinLink(
-                                library,
-                                event.target.value ? Number(event.target.value) : null,
-                              )}
-                            >
-                              <option value="">{t("jellyfin.noAssociatedLibrary")}</option>
-                              {jellyfinLibraries.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.name}{candidate.linked_library_id && candidate.linked_library_id !== library.id
-                                    ? ` (${candidate.linked_library_name})`
-                                    : ""}
-                                </option>
-                              ))}
-                            </select>
+                          <div className="connector-library-status-list">
+                            {(library.connector_links ?? []).map((link) => (
+                              <div className="connector-library-status-row" key={`${link.connection_id}-${link.connector_library_id}`}>
+                                <div><strong>{link.connection_name}</strong><span>{link.provider} · {link.connector_library_name}</span></div>
+                                <span className="badge">{link.link_method}</span>
+                                <Link className="secondary small connector-action-button" to={`/settings?section=jellyfin#connector-${link.connection_id}`}>{t("connectors.libraryStatus.openConnector")}<SquareArrowOutUpRight aria-hidden="true" /></Link>
+                              </div>
+                            ))}
+                            {!(library.connector_links?.length) ? <div className="notice">{t("connectors.libraryStatus.unassigned")}</div> : null}
                           </div>
-                          {linkedJellyfinLibrary ? (
-                            <JellyfinLibraryPathMappings
-                              jellyfinLibrary={linkedJellyfinLibrary}
-                              mappings={jellyfinPathMappings}
-                              suggestedTargets={(library.roots?.length
-                                ? library.roots.map((root) => root.path)
-                                : [library.path]
-                              )}
-                              disabled={isDeletingLibrary || Boolean(jellyfinLinkPending[library.id])}
-                              loadError={jellyfinPathMappingsError}
-                              onChanged={applyJellyfinPathMappingChange}
-                              onBatchChanged={applyJellyfinPathMappingBatchChange}
-                              sectionId={`library-path-mapping-${library.id}`}
-                              focused={targetLibraryId === library.id && focusedSettingsControl === "path-mapping"}
-                            />
-                          ) : null}
                         </div>
                       </section>
 
@@ -6082,7 +5978,10 @@ export function LibrariesPage() {
                             </div>
                             <div className="library-source-paths">
                               {(library.roots?.length ? library.roots : [{ id: 0, path: library.path, display_name: "", path_key: library.path }]).map((root) => (
-                                <code key={`${library.id}-${root.path}`}>{root.path}</code>
+                                <div className="library-root-row" key={`${library.id}-${root.path}`}>
+                                  {root.id ? <label><span>{t("connectors.rootAlias")}</span><input defaultValue={root.display_name} onBlur={(event) => void updateLibraryRootAlias(library, root.id, event.target.value)} /></label> : null}
+                                  <code>{root.path}</code>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -6136,8 +6035,25 @@ export function LibrariesPage() {
                       >
                         <option value="medialyze">{t("jellyfin.historySourceMedialyze")}</option>
                         <option value="jellyfin">{t("jellyfin.historySourceJellyfin")}</option>
+                        <option value="connector">{t("connectors.historySource")}</option>
                       </select>
                     </div>
+                    {(library.connector_links?.length ?? 0) > 0 ? (
+                      <div className="field">
+                        <label htmlFor={`preferred-connector-${library.id}`}>{t("connectors.preferredConnection")}</label>
+                        <select
+                          id={`preferred-connector-${library.id}`}
+                          className="settings-choice-input"
+                          value={library.preferred_connector_connection_id ?? ""}
+                          onChange={(event) => void updatePreferredConnector(library, event.target.value ? Number(event.target.value) : null)}
+                        >
+                          <option value="">{t("connectors.choosePreferred")}</option>
+                          {Array.from(new Map((library.connector_links ?? []).map((link) => [link.connection_id, link])).values()).map((link) => (
+                            <option key={link.connection_id} value={link.connection_id}>{link.provider} · {link.connection_name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
                     <div className="field">
                       <div className="field-label-row">
                         <label htmlFor={`duplicate-detection-mode-${library.id}`}>{t("libraries.duplicateDetectionMode")}</label>
@@ -6277,7 +6193,7 @@ export function LibrariesPage() {
           </AsyncPanel>
           ) : null}
           {activeSettingsPanelId === "jellyfin" ? (
-            <JellyfinSettingsPanel
+            <ConnectorSettingsPanel
               onCatalogChanged={() => {
                 void loadJellyfinLibraries(true);
                 void loadLibraries(true);
@@ -6318,6 +6234,7 @@ export function LibrariesPage() {
                         <label className="sr-only" htmlFor="resolution-category-new-label">Label</label>
                         <input
                           id="resolution-category-new-label"
+                          className="settings-choice-input"
                           type="text"
                           placeholder="New category"
                           value={newResolutionCategoryDraft.label}
@@ -6328,6 +6245,7 @@ export function LibrariesPage() {
                         <label className="sr-only" htmlFor="resolution-category-new-width">Min width</label>
                         <input
                           id="resolution-category-new-width"
+                          className="settings-choice-input"
                           type="number"
                           min={0}
                           placeholder="0"
@@ -6339,6 +6257,7 @@ export function LibrariesPage() {
                         <label className="sr-only" htmlFor="resolution-category-new-height">Min height</label>
                         <input
                           id="resolution-category-new-height"
+                          className="settings-choice-input"
                           type="number"
                           min={0}
                           placeholder="0"
@@ -6364,6 +6283,7 @@ export function LibrariesPage() {
                           <label className="sr-only" htmlFor={`resolution-category-label-${category.id}`}>Label</label>
                           <input
                             id={`resolution-category-label-${category.id}`}
+                            className="settings-choice-input"
                             type="text"
                             value={category.label}
                             onChange={(event) => updateResolutionCategoryDraft(index, { label: event.target.value })}
@@ -6374,6 +6294,7 @@ export function LibrariesPage() {
                           <label className="sr-only" htmlFor={`resolution-category-width-${category.id}`}>Min width</label>
                           <input
                             id={`resolution-category-width-${category.id}`}
+                            className="settings-choice-input"
                             type="number"
                             min={0}
                             value={category.min_width}
@@ -6387,6 +6308,7 @@ export function LibrariesPage() {
                           <label className="sr-only" htmlFor={`resolution-category-height-${category.id}`}>Min height</label>
                           <input
                             id={`resolution-category-height-${category.id}`}
+                            className="settings-choice-input"
                             type="number"
                             min={0}
                             value={category.min_height}
@@ -6497,6 +6419,7 @@ export function LibrariesPage() {
                   <label>
                     <span>{t("libraries.patternRecognition.modeLabel")}</span>
                     <select
+                      className="settings-choice-input"
                       value={patternRecognitionInputs.show_season_patterns.recognition_mode}
                       disabled={isSavingPatternRecognition}
                       onChange={(event) =>
@@ -6695,7 +6618,7 @@ export function LibrariesPage() {
                             <td>
                               <input
                                 id={`${bucket}-history-days`}
-                                className="history-retention-input"
+                                className="settings-choice-input history-retention-input"
                                 aria-label={t("libraries.historyRetention.daysLabel")}
                                 type="number"
                                 min="0"
@@ -6709,7 +6632,7 @@ export function LibrariesPage() {
                             <td>
                               <input
                                 id={`${bucket}-history-gb`}
-                                className="history-retention-input"
+                                className="settings-choice-input history-retention-input"
                                 aria-label={t("libraries.historyRetention.storageLimitLabel")}
                                 type="number"
                                 min="0"
@@ -6935,6 +6858,7 @@ export function LibrariesPage() {
                 <div className="telemetry-installation-id-row">
                   <div className="telemetry-installation-id-control">
                     <input
+                      className="settings-choice-input"
                       type="text"
                       readOnly
                       value={telemetryInstallationId || t("telemetry.stats.installationIdMissing")}
@@ -7130,6 +7054,25 @@ export function LibrariesPage() {
               <div className="app-settings-section">
                 <p className="app-settings-section-title">{t("libraries.featureFlagsTitle")}</p>
                 <div className="app-settings-flag-list">
+                  <div className="app-settings-flag-row">
+                    <label className="app-settings-flag-toggle" htmlFor="hide-automatic-update-reminders">
+                      <input
+                        id="hide-automatic-update-reminders"
+                        type="checkbox"
+                        checked={hideAutomaticUpdateReminders}
+                        disabled={isSavingFeatureFlags || !appSettingsLoaded}
+                        onChange={(event) => void toggleHideAutomaticUpdateReminders(event.target.checked)}
+                      />
+                      <span>{t("libraries.featureFlags.hideAutomaticUpdateReminders")}</span>
+                    </label>
+                    <TooltipTrigger
+                      ariaLabel={t("libraries.featureFlags.hideAutomaticUpdateRemindersTooltipAria")}
+                      content={t("libraries.featureFlags.hideAutomaticUpdateRemindersTooltip")}
+                      preserveLineBreaks
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
                   <div className="app-settings-flag-row">
                     <label className="app-settings-flag-toggle" htmlFor="show-analyzed-files-csv-export">
                       <input
@@ -7396,6 +7339,7 @@ export function LibrariesPage() {
               </label>
               <input
                 id="settings-delete-library-confirm-input"
+                className="settings-choice-input"
                 type="text"
                 autoFocus
                 value={deleteConfirmationInput}

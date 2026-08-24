@@ -225,6 +225,11 @@ class MediaFileStreamDetails(BaseModel):
     chapters: list[MediaChapterRead] = Field(default_factory=list)
 
 
+class MediaFileRawProbeRead(BaseModel):
+    id: int
+    raw_ffprobe_json: dict[str, Any] | None
+
+
 class MediaFileTablePage(BaseModel):
     total: int | None
     offset: int
@@ -268,6 +273,9 @@ class MediaFileHistoryEntryRead(BaseModel):
     id: int
     media_file_id: int | None
     library_id: int
+    library_root_id: int | None = None
+    root_alias: str | None = None
+    display_path: str
     relative_path: str
     filename: str
     captured_at: UtcDateTime
@@ -279,6 +287,9 @@ class MediaFileHistoryEntryRead(BaseModel):
 class MediaFileHistoryRead(BaseModel):
     file_id: int
     library_id: int
+    library_root_id: int | None = None
+    root_alias: str | None = None
+    display_path: str
     relative_path: str
     total: int
     items: list[MediaFileHistoryEntryRead]

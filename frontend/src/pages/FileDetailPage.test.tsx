@@ -2,7 +2,7 @@ import "../i18n";
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
 import {
@@ -432,6 +432,12 @@ function renderPage(fileId: number) {
   if (!vi.isMockFunction(api.compatibilityProfiles)) {
     vi.spyOn(api, "compatibilityProfiles").mockResolvedValue([]);
   }
+  if (!vi.isMockFunction(api.fileConnectors)) {
+    vi.spyOn(api, "fileConnectors").mockResolvedValue([]);
+  }
+  if (!vi.isMockFunction(api.fileConnectorPlayback)) {
+    vi.spyOn(api, "fileConnectorPlayback").mockResolvedValue([]);
+  }
 
   return render(
     <MemoryRouter initialEntries={[`/files/${fileId}`]}>
@@ -592,6 +598,49 @@ describe("FileDetailPage", () => {
     expect(await screen.findByText(file.filename)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Streaming" })).not.toBeInTheDocument();
     expect(screen.queryByText("Production year")).not.toBeInTheDocument();
+  });
+
+  it("shows playback from multiple generic connector sources without a legacy overlay", async () => {
+    const file = createFileDetail();
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileJellyfin").mockResolvedValue({
+      match: null,
+      item: null,
+      user_data: [],
+      playback_events: [],
+      individual_playback_history_start_at: null,
+    });
+    vi.spyOn(api, "fileConnectors").mockResolvedValue([]);
+    vi.spyOn(api, "fileConnectorPlayback").mockResolvedValue([
+      {
+        connection_id: 1,
+        connection_name: "Living Room",
+        provider: "jellyfin",
+        connector_item_id: 11,
+        user_data: [],
+        playback_events: [{ remote_event_id: "same", remote_user_id: "alex", user_name: "Alex", played_at: "2026-07-14T12:00:00Z" }],
+        individual_playback_history_start_at: "2026-07-01T00:00:00Z",
+      },
+      {
+        connection_id: 2,
+        connection_name: "Archive",
+        provider: "jellyfin",
+        connector_item_id: 22,
+        user_data: [],
+        playback_events: [{ remote_event_id: "same", remote_user_id: "alex", user_name: "Alex", played_at: "2026-07-14T12:00:00Z" }],
+        individual_playback_history_start_at: "2026-07-02T00:00:00Z",
+      },
+    ]);
+
+    const { container } = renderPage(file.id);
+    await screen.findByText(file.filename);
+    await selectFileDetailPanel("Streaming");
+
+    expect(await screen.findAllByText("Living Room")).not.toHaveLength(0);
+    expect(screen.getAllByText("Archive")).not.toHaveLength(0);
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(2);
   });
 
   it("groups favorite compatibility results into expandable hardware, software, and combination sections", async () => {
@@ -1431,6 +1480,30 @@ describe("FileDetailPage", () => {
     fireEvent.click(copyButton);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(file.raw_ffprobe_json, null, 2)));
     expect(screen.getByRole("button", { name: "Copied raw ffprobe JSON" })).toBeInTheDocument();
+  });
+
+  it("loads the large raw ffprobe payload only when its panel is opened", async () => {
+    const completeFile = createFileDetail();
+    const compactFile = { ...completeFile, raw_ffprobe_json: null };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    const fileSpy = vi.spyOn(api, "file").mockResolvedValue(compactFile);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    const rawSpy = vi.spyOn(api, "fileRawFfprobe").mockResolvedValue({
+      id: completeFile.id,
+      raw_ffprobe_json: completeFile.raw_ffprobe_json,
+    });
+
+    renderPage(completeFile.id);
+
+    await screen.findByRole("heading", { name: "Overview" });
+    expect(fileSpy).toHaveBeenCalledWith(String(completeFile.id), { includeRawFfprobe: false });
+    expect(rawSpy).not.toHaveBeenCalled();
+
+    await selectFileDetailPanel("Raw ffprobe JSON");
+    await waitFor(() =>
+      expect(rawSpy).toHaveBeenCalledWith(String(completeFile.id), expect.any(AbortSignal)),
+    );
+    expect(screen.getAllByText(/streams/).length).toBeGreaterThan(0);
   });
 
   it("copies raw JSON through the textarea fallback when the Clipboard API is unavailable", async () => {

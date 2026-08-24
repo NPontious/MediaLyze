@@ -59,6 +59,7 @@ def _media_file_history_fingerprint(snapshot: dict) -> str:
         external_subtitles = []
 
     payload = {
+        "library_root_id": snapshot.get("root_id"),
         "relative_path": snapshot.get("relative_path"),
         "extension": snapshot.get("extension"),
         "size_bytes": snapshot.get("size_bytes"),
@@ -97,6 +98,8 @@ def _media_file_history_fingerprint(snapshot: dict) -> str:
 
 def build_media_file_history_snapshot(media_file: MediaFile, resolution_categories) -> tuple[dict, str]:
     snapshot = serialize_media_file_detail(media_file, resolution_categories).model_dump(mode="json")
+    snapshot["library_root_id"] = media_file.library_root_id
+    snapshot["root_alias"] = media_file.library_root.display_name if media_file.library_root else None
     return _canonicalize_snapshot(snapshot)
 
 
@@ -114,6 +117,7 @@ def create_media_file_history_entry_if_changed(
         select(MediaFileHistory.snapshot)
         .where(
             MediaFileHistory.library_id == media_file.library_id,
+            MediaFileHistory.library_root_id == media_file.library_root_id,
             MediaFileHistory.relative_path == media_file.relative_path,
         )
         .order_by(MediaFileHistory.captured_at.desc(), MediaFileHistory.id.desc())
@@ -128,6 +132,8 @@ def create_media_file_history_entry_if_changed(
     db.add(
         MediaFileHistory(
             library_id=media_file.library_id,
+            library_root_id=media_file.library_root_id,
+            root_alias=media_file.library_root.display_name if media_file.library_root else None,
             media_file_id=media_file.id,
             relative_path=media_file.relative_path,
             filename=media_file.filename,

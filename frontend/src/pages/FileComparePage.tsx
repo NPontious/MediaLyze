@@ -27,7 +27,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 
 import { ChevronsRightLeftIcon } from "../components/ChevronsRightLeftIcon";
 import { DeleteIcon } from "../components/DeleteIcon";

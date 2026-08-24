@@ -43,6 +43,35 @@ SessionLocal = sessionmaker(bind=ENGINE, autoflush=False, autocommit=False, expi
 
 
 SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
+    "connector_connections": {
+        "path_mapping_mode": (
+            "ALTER TABLE connector_connections ADD COLUMN path_mapping_mode "
+            "VARCHAR(16) NOT NULL DEFAULT 'automatic'"
+        ),
+        "library_mapping_mode": (
+            "ALTER TABLE connector_connections ADD COLUMN library_mapping_mode "
+            "VARCHAR(16) NOT NULL DEFAULT 'automatic'"
+        ),
+    },
+    "connector_root_bindings": {
+        "origin": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN origin "
+            "VARCHAR(16) NOT NULL DEFAULT 'imported'"
+        ),
+        "confidence": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN confidence FLOAT NOT NULL DEFAULT 1"
+        ),
+        "evidence_count": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN evidence_count INTEGER NOT NULL DEFAULT 0"
+        ),
+        "verification_status": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN verification_status "
+            "VARCHAR(16) NOT NULL DEFAULT 'imported'"
+        ),
+        "last_verified_at": (
+            "ALTER TABLE connector_root_bindings ADD COLUMN last_verified_at DATETIME"
+        ),
+    },
     "libraries": {
         "last_scan_at": "ALTER TABLE libraries ADD COLUMN last_scan_at DATETIME",
         "scan_mode": "ALTER TABLE libraries ADD COLUMN scan_mode VARCHAR(16) NOT NULL DEFAULT 'manual'",
@@ -57,6 +86,10 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "history_added_date_source": (
             "ALTER TABLE libraries ADD COLUMN history_added_date_source "
             "VARCHAR(16) NOT NULL DEFAULT 'medialyze'"
+        ),
+        "preferred_connector_connection_id": (
+            "ALTER TABLE libraries ADD COLUMN preferred_connector_connection_id INTEGER "
+            "REFERENCES connector_connections(id) ON DELETE SET NULL"
         ),
         "created_at": "ALTER TABLE libraries ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
         "updated_at": "ALTER TABLE libraries ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -97,6 +130,43 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
             "ALTER TABLE jellyfin_sync_jobs ADD COLUMN sync_summary JSON NOT NULL DEFAULT '{}'"
         ),
     },
+    "media_file_history": {
+        "library_root_id": (
+            "ALTER TABLE media_file_history ADD COLUMN library_root_id INTEGER "
+            "REFERENCES library_roots(id) ON DELETE SET NULL"
+        ),
+        "root_alias": "ALTER TABLE media_file_history ADD COLUMN root_alias VARCHAR(255)",
+    },
+    "connector_sync_stage_items": {
+        "original_title": "ALTER TABLE connector_sync_stage_items ADD COLUMN original_title VARCHAR(1024)",
+        "series_name": "ALTER TABLE connector_sync_stage_items ADD COLUMN series_name VARCHAR(1024)",
+        "season_name": "ALTER TABLE connector_sync_stage_items ADD COLUMN season_name VARCHAR(1024)",
+        "index_number": "ALTER TABLE connector_sync_stage_items ADD COLUMN index_number INTEGER",
+        "parent_index_number": "ALTER TABLE connector_sync_stage_items ADD COLUMN parent_index_number INTEGER",
+        "date_created": "ALTER TABLE connector_sync_stage_items ADD COLUMN date_created DATETIME",
+        "premiere_date": "ALTER TABLE connector_sync_stage_items ADD COLUMN premiere_date DATETIME",
+        "production_year": "ALTER TABLE connector_sync_stage_items ADD COLUMN production_year INTEGER",
+        "overview": "ALTER TABLE connector_sync_stage_items ADD COLUMN overview VARCHAR(12000)",
+        "provider_ids": "ALTER TABLE connector_sync_stage_items ADD COLUMN provider_ids JSON NOT NULL DEFAULT '{}'",
+        "size_bytes": "ALTER TABLE connector_sync_stage_items ADD COLUMN size_bytes INTEGER",
+        "duration_seconds": "ALTER TABLE connector_sync_stage_items ADD COLUMN duration_seconds FLOAT",
+    },
+    "connector_items": {
+        "resolved_library_root_id": (
+            "ALTER TABLE connector_items ADD COLUMN resolved_library_root_id INTEGER "
+            "REFERENCES library_roots(id) ON DELETE SET NULL"
+        ),
+        "resolved_relative_path": "ALTER TABLE connector_items ADD COLUMN resolved_relative_path VARCHAR(2048)",
+        "resolved_relative_path_key": "ALTER TABLE connector_items ADD COLUMN resolved_relative_path_key VARCHAR(2048)",
+        "resolved_binding_id": (
+            "ALTER TABLE connector_items ADD COLUMN resolved_binding_id INTEGER "
+            "REFERENCES connector_root_bindings(id) ON DELETE SET NULL"
+        ),
+    },
+    "connector_sync_jobs": {
+        "job_type": "ALTER TABLE connector_sync_jobs ADD COLUMN job_type VARCHAR(24) NOT NULL DEFAULT 'sync'",
+        "sync_run_id": "ALTER TABLE connector_sync_jobs ADD COLUMN sync_run_id VARCHAR(64)",
+    },
     "media_files": {
         "library_root_id": "ALTER TABLE media_files ADD COLUMN library_root_id INTEGER",
         "last_seen_at": "ALTER TABLE media_files ADD COLUMN last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -112,6 +182,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "duration_seconds": "ALTER TABLE media_files ADD COLUMN duration_seconds FLOAT",
         "bitrate": "ALTER TABLE media_files ADD COLUMN bitrate INTEGER",
         "audio_bitrate": "ALTER TABLE media_files ADD COLUMN audio_bitrate INTEGER",
+        "max_audio_bit_depth": "ALTER TABLE media_files ADD COLUMN max_audio_bit_depth INTEGER",
         "primary_video_codec": "ALTER TABLE media_files ADD COLUMN primary_video_codec VARCHAR(64)",
         "primary_video_width": "ALTER TABLE media_files ADD COLUMN primary_video_width INTEGER",
         "primary_video_height": "ALTER TABLE media_files ADD COLUMN primary_video_height INTEGER",
@@ -249,6 +320,10 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_root_id ON media_files (library_root_id)",
     "CREATE INDEX IF NOT EXISTS ix_library_roots_library_id ON library_roots (library_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_library_roots_library_path_key ON library_roots (library_id, path_key)",
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_library_roots_library_display_name_nocase "
+        "ON library_roots (library_id, display_name COLLATE NOCASE)"
+    ),
     "CREATE INDEX IF NOT EXISTS ix_media_files_scan_status ON media_files (scan_status)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_quality_score ON media_files (quality_score)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_size_bytes ON media_files (library_id, size_bytes)",
@@ -260,6 +335,14 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_duration_seconds ON media_files (library_id, duration_seconds)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_bitrate ON media_files (library_id, bitrate)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_audio_bitrate ON media_files (library_id, audio_bitrate)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_files_library_max_audio_bit_depth "
+        "ON media_files (library_id, max_audio_bit_depth)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_files_library_relative_path_nocase "
+        "ON media_files (library_id, relative_path COLLATE NOCASE)"
+    ),
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_primary_video_codec ON media_files (library_id, primary_video_codec)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_audio_artist ON media_files (library_id, audio_artist)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_audio_album ON media_files (library_id, audio_album)",
@@ -331,6 +414,14 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     ),
     "CREATE INDEX IF NOT EXISTS ix_media_file_history_captured_at ON media_file_history (captured_at)",
     (
+        "CREATE INDEX IF NOT EXISTS ix_connector_items_resolved_locator "
+        "ON connector_items (resolved_library_root_id, resolved_relative_path_key)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_file_history_root_path_captured_at "
+        "ON media_file_history (library_root_id, relative_path, captured_at)"
+    ),
+    (
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_library_history_library_snapshot_day "
         "ON library_history (library_id, snapshot_day)"
     ),
@@ -384,6 +475,12 @@ def _backfill_media_file_search_fields(connection) -> None:
                     ELSE NULL
                   END
                 )
+              ),
+              max_audio_bit_depth = (
+                SELECT MAX(bit_depth)
+                FROM audio_streams
+                WHERE media_file_id = media_files.id
+                  AND bit_depth > 0
               ),
               primary_video_codec = (
                 SELECT codec FROM video_streams
@@ -767,6 +864,548 @@ def _ensure_library_roots_backfill(connection) -> None:
         )
 
 
+def _ensure_unique_library_root_aliases(connection) -> None:
+    if not _sqlite_has_table(connection, "library_roots"):
+        return
+    rows = connection.execute(
+        text("SELECT id, library_id, display_name FROM library_roots ORDER BY library_id, id")
+    ).mappings().all()
+    used_by_library: dict[int, set[str]] = {}
+    for row in rows:
+        library_id = int(row["library_id"])
+        used = used_by_library.setdefault(library_id, set())
+        base = str(row["display_name"] or "Root").strip() or "Root"
+        alias = base
+        suffix = 2
+        while alias.casefold() in used:
+            alias = f"{base} ({suffix})"
+            suffix += 1
+        used.add(alias.casefold())
+        if alias != row["display_name"]:
+            connection.execute(
+                text("UPDATE library_roots SET display_name = :alias WHERE id = :root_id"),
+                {"alias": alias, "root_id": int(row["id"])},
+            )
+
+
+def _backfill_media_file_history_roots(connection) -> None:
+    if not _sqlite_has_table(connection, "media_file_history"):
+        return
+    columns = _sqlite_column_names(connection, "media_file_history")
+    if "library_root_id" not in columns:
+        return
+    if _sqlite_has_table(connection, "media_files"):
+        connection.execute(
+            text(
+                """
+                UPDATE media_file_history
+                SET library_root_id = (
+                    SELECT media_files.library_root_id
+                    FROM media_files
+                    WHERE media_files.id = media_file_history.media_file_id
+                      AND media_files.library_id = media_file_history.library_id
+                )
+                WHERE library_root_id IS NULL AND media_file_id IS NOT NULL
+                """
+            )
+        )
+    connection.execute(
+        text(
+            """
+            UPDATE media_file_history
+            SET library_root_id = (
+                SELECT MIN(library_roots.id)
+                FROM library_roots
+                WHERE library_roots.library_id = media_file_history.library_id
+            )
+            WHERE library_root_id IS NULL
+              AND 1 = (
+                SELECT COUNT(*) FROM library_roots
+                WHERE library_roots.library_id = media_file_history.library_id
+              )
+            """
+        )
+    )
+    if "root_alias" in columns:
+        connection.execute(
+            text(
+                """
+                UPDATE media_file_history
+                SET root_alias = (
+                    SELECT display_name FROM library_roots
+                    WHERE library_roots.id = media_file_history.library_root_id
+                )
+                WHERE root_alias IS NULL AND library_root_id IS NOT NULL
+                """
+            )
+        )
+
+
+def _legacy_connector_binding_specs(connection) -> list[dict]:
+    if not all(
+        _sqlite_has_table(connection, table)
+        for table in (
+            "jellyfin_path_mappings",
+            "connector_library_locations",
+            "library_roots",
+        )
+    ):
+        return []
+    mappings = connection.execute(
+        text(
+            "SELECT id, jellyfin_path_prefix, medialyze_path_prefix "
+            "FROM jellyfin_path_mappings WHERE enabled = 1 ORDER BY id"
+        )
+    ).mappings().all()
+    locations = connection.execute(
+        text("SELECT id, remote_path FROM connector_library_locations ORDER BY id")
+    ).mappings().all()
+    roots = connection.execute(
+        text("SELECT id, path FROM library_roots ORDER BY id")
+    ).mappings().all()
+    specs: list[dict] = []
+    for mapping in mappings:
+        source_display = str(mapping["jellyfin_path_prefix"] or "").replace("\\", "/").rstrip("/")
+        target_display = str(mapping["medialyze_path_prefix"] or "").replace("\\", "/").rstrip("/")
+        source_key = _normalize_path_key(source_display)
+        target_key = _normalize_path_key(target_display)
+        target_candidates: list[tuple[int, int, str]] = []
+        for root in roots:
+            root_display = str(root["path"] or "").replace("\\", "/").rstrip("/")
+            root_key = _normalize_path_key(root_display)
+            if target_key == root_key:
+                target_candidates.append((len(root_key), int(root["id"]), ""))
+            elif target_key.startswith(f"{root_key}/"):
+                target_candidates.append(
+                    (len(root_key), int(root["id"]), target_display[len(root_display) :].strip("/"))
+                )
+        if not target_candidates:
+            continue
+        longest = max(length for length, _root_id, _subpath in target_candidates)
+        best_targets = [candidate for candidate in target_candidates if candidate[0] == longest]
+        if len(best_targets) != 1:
+            continue
+        _length, root_id, target_subpath = best_targets[0]
+        for location in locations:
+            location_key = _normalize_path_key(str(location["remote_path"] or ""))
+            if not (
+                source_key == location_key
+                or source_key.startswith(f"{location_key}/")
+                or location_key.startswith(f"{source_key}/")
+            ):
+                continue
+            specs.append(
+                {
+                    "location_id": int(location["id"]),
+                    "library_root_id": root_id,
+                    "source_prefix": source_display,
+                    "normalized_source_prefix": source_key,
+                    "target_subpath": target_subpath,
+                }
+            )
+    return specs
+
+
+def _migrate_legacy_jellyfin_to_connectors(connection) -> None:
+    required = (
+        "connector_connections",
+        "connector_libraries",
+        "connector_library_locations",
+        "connector_items",
+    )
+    if not all(_sqlite_has_table(connection, table) for table in required):
+        return
+    if not _sqlite_has_table(connection, "jellyfin_connection"):
+        return
+
+    connection.execute(
+        text(
+            """
+            INSERT OR IGNORE INTO connector_connections (
+                provider, name, base_url, config, capabilities, enabled,
+                sync_interval_minutes, path_mapping_mode, library_mapping_mode,
+                server_name, server_version, last_status,
+                last_error, last_sync_started_at, last_sync_finished_at,
+                last_successful_sync_at, created_at, updated_at
+            )
+            SELECT 'jellyfin', 'Jellyfin', base_url, :config,
+                   :capabilities,
+                   enabled, sync_interval_minutes, 'automatic', 'automatic',
+                   server_name, server_version, last_status,
+                   last_error, last_sync_started_at, last_sync_finished_at,
+                   last_successful_sync_at, created_at, updated_at
+            FROM jellyfin_connection
+            WHERE id = 1
+              AND (COALESCE(base_url, '') != '' OR COALESCE(api_key, '') != '' OR enabled = 1)
+            """
+        ),
+        {
+            "config": json.dumps({"legacy_default": True}),
+            "capabilities": json.dumps(
+                {
+                    "users": True,
+                    "user_states": True,
+                    "playback_events": True,
+                    "images": True,
+                }
+            )
+        },
+    )
+    connector_id = connection.execute(
+        text(
+            "SELECT connector_connections.id FROM connector_connections "
+            "WHERE provider = 'jellyfin' AND name = 'Jellyfin' "
+            "AND (json_extract(COALESCE(config, '{}'), '$.legacy_default') = 1 "
+            "OR EXISTS (SELECT 1 FROM jellyfin_connection "
+            "WHERE jellyfin_connection.id = 1 "
+            "AND (COALESCE(jellyfin_connection.base_url, '') != '' "
+            "OR COALESCE(jellyfin_connection.api_key, '') != '' "
+            "OR jellyfin_connection.enabled = 1))) "
+            "ORDER BY connector_connections.id LIMIT 1"
+        )
+    ).scalar_one_or_none()
+    if connector_id is None:
+        return
+
+    connection.execute(
+        text(
+            "UPDATE connector_connections "
+            "SET config = json_set(COALESCE(config, '{}'), '$.legacy_default', json('true')) "
+            "WHERE id = :connection_id"
+        ),
+        {"connection_id": connector_id},
+    )
+
+    if _sqlite_has_table(connection, "connector_credentials"):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_credentials (
+                    connection_id, secret_payload, created_at, updated_at
+                )
+                SELECT :connection_id, api_key, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                FROM jellyfin_connection
+                WHERE id = 1 AND api_key IS NOT NULL AND api_key != ''
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+
+    if _sqlite_has_table(connection, "jellyfin_libraries"):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_libraries (
+                    connection_id, remote_id, name, media_type, provider_payload,
+                    last_synced_at, created_at, updated_at
+                )
+                SELECT :connection_id, COALESCE(NULLIF(remote_item_id, ''), 'legacy:' || id),
+                       name, collection_type, '{}', last_synced_at, created_at, updated_at
+                FROM jellyfin_libraries
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_library_locations (
+                    connector_library_id, remote_path, normalized_path, created_at, updated_at
+                )
+                SELECT connector_libraries.id, CAST(json_each.value AS TEXT),
+                       lower(rtrim(replace(CAST(json_each.value AS TEXT), '\\', '/'), '/')),
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                FROM jellyfin_libraries
+                JOIN connector_libraries
+                  ON connector_libraries.connection_id = :connection_id
+                 AND connector_libraries.remote_id = COALESCE(
+                       NULLIF(jellyfin_libraries.remote_item_id, ''), 'legacy:' || jellyfin_libraries.id
+                 )
+                JOIN json_each(jellyfin_libraries.locations)
+                WHERE json_each.value IS NOT NULL AND CAST(json_each.value AS TEXT) != ''
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+        if _sqlite_has_table(connection, "connector_library_links"):
+            connection.execute(
+                text(
+                    """
+                    INSERT OR IGNORE INTO connector_library_links (
+                        connector_library_id, library_id, link_method, created_at, updated_at
+                    )
+                    SELECT connector_libraries.id, jellyfin_libraries.linked_library_id,
+                           CASE WHEN jellyfin_libraries.link_method = 'manual' THEN 'manual' ELSE 'imported' END,
+                           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    FROM jellyfin_libraries
+                    JOIN connector_libraries
+                      ON connector_libraries.connection_id = :connection_id
+                     AND connector_libraries.remote_id = COALESCE(
+                           NULLIF(jellyfin_libraries.remote_item_id, ''), 'legacy:' || jellyfin_libraries.id
+                     )
+                    WHERE jellyfin_libraries.linked_library_id IS NOT NULL
+                    """
+                ),
+                {"connection_id": connector_id},
+            )
+
+    if _sqlite_has_table(connection, "jellyfin_items"):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_items (
+                    connection_id, connector_library_id, remote_id, item_type,
+                    remote_path, normalized_remote_path, title, original_title,
+                    series_name, season_name, index_number, parent_index_number,
+                    date_created, premiere_date, production_year, overview,
+                    provider_ids, provider_payload, size_bytes, duration_seconds,
+                    match_status, mismatch_reason, suggested_media_file_id,
+                    last_synced_at, created_at, updated_at
+                )
+                SELECT :connection_id, connector_libraries.id, jellyfin_items.jellyfin_item_id,
+                       jellyfin_items.item_type, jellyfin_items.path,
+                       lower(rtrim(replace(jellyfin_items.path, '\\', '/'), '/')),
+                       jellyfin_items.title, jellyfin_items.original_title,
+                       jellyfin_items.series_name, jellyfin_items.season_name,
+                       jellyfin_items.index_number, jellyfin_items.parent_index_number,
+                       jellyfin_items.date_created, jellyfin_items.premiere_date,
+                       jellyfin_items.production_year, jellyfin_items.overview,
+                       jellyfin_items.provider_ids, jellyfin_items.raw_limited_payload,
+                       jellyfin_items.size_bytes, jellyfin_items.duration_seconds,
+                       CASE
+                         WHEN jellyfin_items.match_status = 'matched' THEN 'matched'
+                         WHEN jellyfin_items.match_status = 'ignored' THEN 'ignored'
+                         WHEN jellyfin_items.match_status = 'ambiguous' THEN 'ambiguous_file'
+                         ELSE COALESCE(jellyfin_items.mismatch_reason, 'unmapped')
+                       END,
+                       jellyfin_items.mismatch_reason, NULL,
+                       jellyfin_items.last_synced_at, jellyfin_items.created_at, jellyfin_items.updated_at
+                FROM jellyfin_items
+                LEFT JOIN jellyfin_libraries ON jellyfin_libraries.id = jellyfin_items.library_id
+                LEFT JOIN connector_libraries
+                  ON connector_libraries.connection_id = :connection_id
+                 AND connector_libraries.remote_id = COALESCE(
+                       NULLIF(jellyfin_libraries.remote_item_id, ''), 'legacy:' || jellyfin_libraries.id
+                 )
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+    if _sqlite_has_table(connection, "jellyfin_media_matches") and _sqlite_has_table(
+        connection, "connector_media_matches"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_media_matches (
+                    connector_item_id, media_file_id, binding_id, match_method,
+                    confidence, status, created_at, updated_at
+                )
+                SELECT connector_items.id, jellyfin_media_matches.media_file_id, NULL,
+                       jellyfin_media_matches.match_method, jellyfin_media_matches.confidence,
+                       jellyfin_media_matches.status, jellyfin_media_matches.created_at,
+                       jellyfin_media_matches.updated_at
+                FROM jellyfin_media_matches
+                JOIN jellyfin_items ON jellyfin_items.id = jellyfin_media_matches.jellyfin_item_id
+                JOIN connector_items
+                  ON connector_items.connection_id = :connection_id
+                 AND connector_items.remote_id = jellyfin_items.jellyfin_item_id
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+
+    if _sqlite_has_table(connection, "jellyfin_users") and _sqlite_has_table(
+        connection, "connector_users"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_users (
+                    connection_id, remote_id, name, enabled_for_sync,
+                    last_synced_at, created_at, updated_at
+                )
+                SELECT :connection_id, jellyfin_user_id, name, enabled_for_sync,
+                       last_synced_at, created_at, updated_at
+                FROM jellyfin_users
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+    if _sqlite_has_table(connection, "jellyfin_user_item_data") and _sqlite_has_table(
+        connection, "connector_user_item_data"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_user_item_data (
+                    connector_item_id, connector_user_id, play_count, played,
+                    playback_position_ticks, last_played_date, is_favorite,
+                    last_synced_at
+                )
+                SELECT connector_items.id, connector_users.id,
+                       jellyfin_user_item_data.play_count,
+                       jellyfin_user_item_data.played,
+                       jellyfin_user_item_data.playback_position_ticks,
+                       jellyfin_user_item_data.last_played_date,
+                       jellyfin_user_item_data.is_favorite,
+                       jellyfin_user_item_data.last_synced_at
+                FROM jellyfin_user_item_data
+                JOIN jellyfin_items
+                  ON jellyfin_items.id = jellyfin_user_item_data.jellyfin_item_id
+                JOIN connector_items
+                  ON connector_items.connection_id = :connection_id
+                 AND connector_items.remote_id = jellyfin_items.jellyfin_item_id
+                JOIN connector_users
+                  ON connector_users.connection_id = :connection_id
+                 AND connector_users.remote_id = jellyfin_user_item_data.jellyfin_user_id
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+    if _sqlite_has_table(connection, "jellyfin_playback_events") and _sqlite_has_table(
+        connection, "connector_playback_events"
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO connector_playback_events (
+                    connection_id, remote_event_id, connector_item_id,
+                    connector_user_id, played_at, last_synced_at
+                )
+                SELECT :connection_id, CAST(jellyfin_playback_events.jellyfin_activity_id AS TEXT),
+                       connector_items.id, connector_users.id,
+                       jellyfin_playback_events.played_at,
+                       jellyfin_playback_events.last_synced_at
+                FROM jellyfin_playback_events
+                JOIN jellyfin_items
+                  ON jellyfin_items.id = jellyfin_playback_events.jellyfin_item_id
+                JOIN connector_items
+                  ON connector_items.connection_id = :connection_id
+                 AND connector_items.remote_id = jellyfin_items.jellyfin_item_id
+                JOIN connector_users
+                  ON connector_users.connection_id = :connection_id
+                 AND connector_users.remote_id = jellyfin_playback_events.jellyfin_user_id
+                """
+            ),
+            {"connection_id": connector_id},
+        )
+
+    if _sqlite_has_table(connection, "connector_root_bindings"):
+        for spec in _legacy_connector_binding_specs(connection):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO connector_root_bindings (
+                        location_id, library_root_id, source_prefix,
+                        normalized_source_prefix, target_subpath, case_mode,
+                        priority, active, origin, confidence, evidence_count,
+                        verification_status, last_verified_at, created_at, updated_at
+                    )
+                    SELECT :location_id, :library_root_id, :source_prefix,
+                           :normalized_source_prefix, :target_subpath, 'insensitive',
+                           0, 1, 'automatic', 1, 0,
+                           'imported', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM connector_root_bindings
+                        WHERE location_id = :location_id
+                          AND normalized_source_prefix = :normalized_source_prefix
+                          AND library_root_id = :library_root_id
+                    )
+                    """
+                ),
+                spec,
+            )
+
+    connection.execute(
+        text(
+            "UPDATE libraries SET history_added_date_source = 'connector', "
+            "preferred_connector_connection_id = :connection_id "
+            "WHERE history_added_date_source = 'jellyfin'"
+        ),
+        {"connection_id": connector_id},
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE libraries
+            SET preferred_connector_connection_id = (
+                SELECT MIN(connector_libraries.connection_id)
+                FROM connector_library_links
+                JOIN connector_libraries
+                  ON connector_libraries.id = connector_library_links.connector_library_id
+                WHERE connector_library_links.library_id = libraries.id
+            )
+            WHERE preferred_connector_connection_id IS NULL
+              AND 1 = (
+                SELECT COUNT(DISTINCT connector_libraries.connection_id)
+                FROM connector_library_links
+                JOIN connector_libraries
+                  ON connector_libraries.id = connector_library_links.connector_library_id
+                WHERE connector_library_links.library_id = libraries.id
+              )
+            """
+        )
+    )
+    if _sqlite_has_table(connection, "app_settings"):
+        connection.execute(
+            text(
+                "INSERT INTO app_settings (key, value) VALUES ('connector_migration', :value) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            ),
+            {
+                "value": json.dumps(
+                    {
+                        "version": 1,
+                        "legacy_jellyfin_connection_id": int(connector_id),
+                        "status": "completed",
+                    }
+                )
+            },
+        )
+
+
+def _remove_manual_item_matching_state(connection) -> None:
+    if _sqlite_has_table(connection, "connector_items"):
+        if _sqlite_has_table(connection, "connector_media_matches"):
+            connection.execute(
+                text(
+                    "UPDATE connector_items SET match_status = 'unmapped', mismatch_reason = NULL, "
+                    "suggested_media_file_id = NULL WHERE match_status = 'ignored' OR id IN ("
+                    "SELECT connector_item_id FROM connector_media_matches "
+                    "WHERE match_method = 'manual')"
+                )
+            )
+            connection.execute(
+                text("DELETE FROM connector_media_matches WHERE match_method = 'manual'")
+            )
+        connection.execute(
+            text("UPDATE connector_items SET suggested_media_file_id = NULL")
+        )
+    if _sqlite_has_table(connection, "jellyfin_items"):
+        if _sqlite_has_table(connection, "jellyfin_media_matches"):
+            connection.execute(
+                text(
+                    "UPDATE jellyfin_items SET match_status = 'unmatched', mismatch_reason = NULL, "
+                    "suggested_media_file_id = NULL WHERE match_status = 'ignored' OR id IN ("
+                    "SELECT jellyfin_item_id FROM jellyfin_media_matches "
+                    "WHERE match_method = 'manual')"
+                )
+            )
+            connection.execute(
+                text("DELETE FROM jellyfin_media_matches WHERE match_method = 'manual'")
+            )
+        connection.execute(text("UPDATE jellyfin_items SET suggested_media_file_id = NULL"))
+    if _sqlite_has_table(connection, "app_settings"):
+        connection.execute(
+            text(
+                "INSERT INTO app_settings (key, value) VALUES ('connector_mapping_migration', :value) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            ),
+            {"value": json.dumps({"version": 1, "status": "completed"})},
+        )
+
+
 def _rebuild_libraries_table_without_unique_path(connection) -> None:
     if not _sqlite_has_table(connection, "libraries"):
         return
@@ -838,6 +1477,8 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
 
         _rebuild_libraries_table_without_unique_path(connection)
         _ensure_library_roots_backfill(connection)
+        _ensure_unique_library_root_aliases(connection)
+        _backfill_media_file_history_roots(connection)
         _drop_sqlite_index_if_exists(connection, "ix_media_files_library_relative_path")
         # Library names are display data in Jellyfin and can change or collide.
         # Identity is carried by remote_item_id instead.
@@ -867,6 +1508,7 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
                     ") WHERE library_id IS NULL AND library_name IS NOT NULL"
                 )
             )
+
             connection.execute(
                 text(
                     "UPDATE jellyfin_items SET "
@@ -875,6 +1517,9 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
                     "WHERE size_bytes IS NULL OR duration_seconds IS NULL"
                 )
             )
+
+        _migrate_legacy_jellyfin_to_connectors(connection)
+        _remove_manual_item_matching_state(connection)
 
         if _sqlite_has_table(connection, "libraries"):
             connection.execute(
@@ -894,6 +1539,30 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
                 text("UPDATE libraries SET show_on_dashboard = 1 WHERE show_on_dashboard IS NULL")
             )
         _backfill_media_file_search_fields(connection)
+        if _sqlite_has_table(connection, "media_files"):
+            connection.execute(
+                text(
+                    """
+                    UPDATE media_files
+                    SET max_audio_bit_depth = (
+                      SELECT MAX(bit_depth)
+                      FROM audio_streams
+                      WHERE media_file_id = media_files.id
+                        AND bit_depth > 0
+                    )
+                    WHERE max_audio_bit_depth IS NULL
+                      AND EXISTS (
+                        SELECT 1
+                        FROM audio_streams
+                        WHERE media_file_id = media_files.id
+                          AND bit_depth > 0
+                      )
+                    """
+                )
+            )
+        from backend.app.services.media_search_index import ensure_media_file_search_index
+
+        ensure_media_file_search_index(connection)
 
 
 def init_db(engine: Engine | None = None) -> None:

@@ -131,6 +131,7 @@ export function PlaybackHistoryPanel({
   individualEventsAvailable = true,
   individualPlaybackHistoryStartAt,
   showAllWhenUnstacked = false,
+  showProvider = true,
 }: {
   entries: PlaybackHistoryEntry[];
   undatedEntries?: PlaybackUndatedEntry[];
@@ -138,6 +139,7 @@ export function PlaybackHistoryPanel({
   individualEventsAvailable?: boolean;
   individualPlaybackHistoryStartAt?: string | null;
   showAllWhenUnstacked?: boolean;
+  showProvider?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const entries = useMemo<PlaybackHistoryEntry[]>(
@@ -371,7 +373,7 @@ export function PlaybackHistoryPanel({
             ariaLabel={t("jellyfin.playbackHistory.range")}
           />
         </div>
-        {providers.length > 1 ? (
+        {showProvider && providers.length > 1 ? (
           <label className="playback-history-provider-filter">
             <span className="playback-history-control-label">{t("jellyfin.playbackHistory.provider")}</span>
             <select value={selectedProvider} onChange={(event) => setSelectedProvider(event.target.value)}>
@@ -457,6 +459,7 @@ export function PlaybackHistoryPanel({
                     style={{ "--playback-user-color": USER_COLORS[index % USER_COLORS.length] } as CSSProperties}
                   />
                   <span>{user.userName}</span>
+                  {showProvider && providers.length > 1 ? <small>{user.provider}</small> : null}
                   <span className="playback-history-user-check">{active ? "✓" : ""}</span>
                 </button>
               );
@@ -591,7 +594,7 @@ export function PlaybackHistoryPanel({
                   <tr>
                     <th>{t("jellyfin.playbackHistory.lastPlayback")}</th>
                     <th>{t("jellyfin.playbackHistory.user")}</th>
-                    <th>{t("jellyfin.playbackHistory.provider")}</th>
+                    {showProvider ? <th>{t("jellyfin.playbackHistory.provider")}</th> : null}
                     <th>{t("jellyfin.playbackHistory.plays")}</th>
                     {hasCompletionState ? <th>{t("jellyfin.playbackHistory.state")}</th> : null}
                     {hasResumePosition ? <th>{t("jellyfin.playbackHistory.resumePosition")}</th> : null}
@@ -619,7 +622,7 @@ export function PlaybackHistoryPanel({
                           </span>
                         </td>
                         <td>{entry.userName}</td>
-                        <td><span className="playback-history-provider"><Server aria-hidden="true" />{entry.provider}</span></td>
+                        {showProvider ? <td><span className="playback-history-provider"><Server aria-hidden="true" />{entry.provider}</span></td> : null}
                         <td>{entry.playCount}</td>
                         {hasCompletionState ? (
                           <td>
@@ -709,10 +712,10 @@ export function PlaybackHistoryPanel({
                         } as CSSProperties}
                       />
                       <strong>{entry.userName}</strong>
-                      <span className="playback-history-provider">
+                      {showProvider ? <span className="playback-history-provider">
                         <Server aria-hidden="true" />
                         {entry.provider}
-                      </span>
+                      </span> : null}
                       <span className="playback-history-undated-count">
                         {t("jellyfin.playbackHistory.unknownPlayCount", {
                           count: entry.playCount,
@@ -747,10 +750,10 @@ export function PlaybackHistoryPanel({
                 <dt>{t("jellyfin.playbackHistory.lastPlayback")}</dt>
                 <dd>{formatTimestamp(selectedEntry.lastPlayedAt, i18n.language)}</dd>
               </div>
-              <div>
+              {showProvider ? <div>
                 <dt>{t("jellyfin.playbackHistory.provider")}</dt>
                 <dd><span className="playback-history-provider"><Server aria-hidden="true" />{selectedEntry.provider}</span></dd>
-              </div>
+              </div> : null}
               <div>
                 <dt>{t("jellyfin.playbackHistory.plays")}</dt>
                 <dd>{selectedEntry.playCount}</dd>

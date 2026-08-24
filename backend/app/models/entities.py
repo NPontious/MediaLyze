@@ -66,6 +66,11 @@ class JobStatus(str, Enum):
     failed = "failed"
 
 
+class ConnectorMappingMode(str, Enum):
+    automatic = "automatic"
+    manual = "manual"
+
+
 class ScanTriggerSource(str, Enum):
     manual = "manual"
     scheduled = "scheduled"
@@ -91,6 +96,7 @@ class MediaContentCategory(str, Enum):
 class HistoryAddedDateSource(str, Enum):
     medialyze = "medialyze"
     jellyfin = "jellyfin"
+    connector = "connector"
 
 
 class Library(TimestampMixin, Base):
@@ -122,6 +128,10 @@ class Library(TimestampMixin, Base):
         SqlEnum(HistoryAddedDateSource, native_enum=False),
         default=HistoryAddedDateSource.medialyze,
         nullable=False,
+    )
+    preferred_connector_connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     media_files: Mapped[list[MediaFile]] = relationship(
@@ -181,6 +191,408 @@ class LibraryRoot(TimestampMixin, Base):
 
     library: Mapped[Library] = relationship(back_populates="roots")
     media_files: Mapped[list[MediaFile]] = relationship(back_populates="library_root")
+
+
+class ConnectorConnection(TimestampMixin, Base):
+    __tablename__ = "connector_connections"
+    __table_args__ = (
+        Index("ix_connector_connections_provider", "provider"),
+        UniqueConstraint("provider", "name", name="uq_connector_connections_provider_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(2048), default="", nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    path_mapping_mode: Mapped[ConnectorMappingMode] = mapped_column(
+        SqlEnum(ConnectorMappingMode, native_enum=False),
+        default=ConnectorMappingMode.automatic,
+        nullable=False,
+    )
+    library_mapping_mode: Mapped[ConnectorMappingMode] = mapped_column(
+        SqlEnum(ConnectorMappingMode, native_enum=False),
+        default=ConnectorMappingMode.automatic,
+        nullable=False,
+    )
+    sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    server_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    server_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_status: Mapped[str] = mapped_column(String(32), default="never", nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    last_sync_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_sync_finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_successful_sync_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ConnectorCredential(TimestampMixin, Base):
+    __tablename__ = "connector_credentials"
+
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    secret_payload: Mapped[str] = mapped_column(String(12000), default="", nullable=False)
+
+
+class ConnectorLibrary(TimestampMixin, Base):
+    __tablename__ = "connector_libraries"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "remote_id", name="uq_connector_libraries_connection_remote"),
+        Index("ix_connector_libraries_connection", "connection_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ConnectorLibraryLocation(TimestampMixin, Base):
+    __tablename__ = "connector_library_locations"
+    __table_args__ = (
+        UniqueConstraint("connector_library_id", "normalized_path", name="uq_connector_locations_library_path"),
+        Index("ix_connector_locations_library", "connector_library_id"),
+        Index("ix_connector_locations_normalized_path", "normalized_path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connector_library_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_libraries.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_path: Mapped[str] = mapped_column(String(4096), nullable=False)
+    normalized_path: Mapped[str] = mapped_column(String(4096), nullable=False)
+
+
+class ConnectorLibraryLink(TimestampMixin, Base):
+    __tablename__ = "connector_library_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "connector_library_id", "library_id", name="uq_connector_library_links_pair"
+        ),
+        Index("ix_connector_library_links_library", "library_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connector_library_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_libraries.id", ondelete="CASCADE"), nullable=False
+    )
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("libraries.id", ondelete="CASCADE"), nullable=False
+    )
+    link_method: Mapped[str] = mapped_column(String(16), default="derived", nullable=False)
+
+
+class ConnectorRootBinding(TimestampMixin, Base):
+    __tablename__ = "connector_root_bindings"
+    __table_args__ = (
+        Index("ix_connector_root_bindings_location", "location_id"),
+        Index("ix_connector_root_bindings_root", "library_root_id"),
+        Index("ix_connector_root_bindings_active", "location_id", "active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    location_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_library_locations.id", ondelete="CASCADE"), nullable=False
+    )
+    library_root_id: Mapped[int] = mapped_column(
+        ForeignKey("library_roots.id", ondelete="CASCADE"), nullable=False
+    )
+    source_prefix: Mapped[str] = mapped_column(String(4096), nullable=False)
+    normalized_source_prefix: Mapped[str] = mapped_column(String(4096), nullable=False)
+    target_subpath: Mapped[str] = mapped_column(String(2048), default="", nullable=False)
+    case_mode: Mapped[str] = mapped_column(String(16), default="sensitive", nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), default="automatic", nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    verification_status: Mapped[str] = mapped_column(
+        String(16), default="imported", nullable=False
+    )
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ConnectorItem(TimestampMixin, Base):
+    __tablename__ = "connector_items"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "remote_id", name="uq_connector_items_connection_remote"),
+        Index("ix_connector_items_connection", "connection_id"),
+        Index("ix_connector_items_library", "connector_library_id"),
+        Index("ix_connector_items_match_status", "connection_id", "match_status"),
+        Index("ix_connector_items_remote_path", "connection_id", "normalized_remote_path"),
+        Index(
+            "ix_connector_items_resolved_locator",
+            "resolved_library_root_id",
+            "resolved_relative_path_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    connector_library_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connector_libraries.id", ondelete="SET NULL"), nullable=True
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    item_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    remote_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    normalized_remote_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    title: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    original_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    series_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    season_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_created: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    premiere_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    production_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overview: Mapped[str | None] = mapped_column(String(12000), nullable=True)
+    provider_ids: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    provider_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    match_status: Mapped[str] = mapped_column(String(32), default="unmapped", nullable=False)
+    mismatch_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    suggested_media_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_library_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("library_roots.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_relative_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    resolved_relative_path_key: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    resolved_binding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connector_root_bindings.id", ondelete="SET NULL"), nullable=True
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ConnectorMediaMatch(TimestampMixin, Base):
+    __tablename__ = "connector_media_matches"
+    __table_args__ = (
+        UniqueConstraint("connector_item_id", name="uq_connector_media_matches_item"),
+        Index("ix_connector_media_matches_media_file", "media_file_id"),
+        Index("ix_connector_media_matches_binding", "binding_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connector_item_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_items.id", ondelete="CASCADE"), nullable=False
+    )
+    media_file_id: Mapped[int] = mapped_column(
+        ForeignKey("media_files.id", ondelete="CASCADE"), nullable=False
+    )
+    binding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connector_root_bindings.id", ondelete="SET NULL"), nullable=True
+    )
+    match_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="matched", nullable=False)
+
+
+class ConnectorUser(TimestampMixin, Base):
+    __tablename__ = "connector_users"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "remote_id", name="uq_connector_users_connection_remote"),
+        Index("ix_connector_users_connection", "connection_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ConnectorUserItemData(Base):
+    __tablename__ = "connector_user_item_data"
+    __table_args__ = (
+        UniqueConstraint(
+            "connector_item_id", "connector_user_id", name="uq_connector_user_item_data"
+        ),
+        Index("ix_connector_user_item_data_user", "connector_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connector_item_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_items.id", ondelete="CASCADE"), nullable=False
+    )
+    connector_user_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_users.id", ondelete="CASCADE"), nullable=False
+    )
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    played: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class ConnectorPlaybackEvent(Base):
+    __tablename__ = "connector_playback_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id", "remote_event_id", name="uq_connector_playback_events_remote"
+        ),
+        Index("ix_connector_playback_events_item_played_at", "connector_item_id", "played_at"),
+        Index("ix_connector_playback_events_user", "connector_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    remote_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    connector_item_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_items.id", ondelete="CASCADE"), nullable=False
+    )
+    connector_user_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_users.id", ondelete="CASCADE"), nullable=False
+    )
+    played_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
+class ConnectorSyncJob(Base):
+    __tablename__ = "connector_sync_jobs"
+    __table_args__ = (
+        Index("ix_connector_sync_jobs_connection_status", "connection_id", "status"),
+        Index("ix_connector_sync_jobs_queued_at", "queued_at"),
+        UniqueConstraint("connection_id", "active_lock", name="uq_connector_sync_jobs_active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[JobStatus] = mapped_column(
+        SqlEnum(JobStatus, native_enum=False), default=JobStatus.queued, nullable=False
+    )
+    trigger_source: Mapped[str] = mapped_column(String(16), default="manual", nullable=False)
+    job_type: Mapped[str] = mapped_column(String(24), default="sync", nullable=False)
+    sync_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    active_lock: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancellation_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    progress_phase: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    progress_detail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    queued_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    sync_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class ConnectorSyncStageLibrary(Base):
+    __tablename__ = "connector_sync_stage_libraries"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class ConnectorSyncStageLocation(Base):
+    __tablename__ = "connector_sync_stage_locations"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    library_remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    normalized_path: Mapped[str] = mapped_column(String(4096), primary_key=True)
+    remote_path: Mapped[str] = mapped_column(String(4096), nullable=False)
+
+
+class ConnectorSyncStageItem(Base):
+    __tablename__ = "connector_sync_stage_items"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    library_remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    remote_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    normalized_remote_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    title: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    original_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    series_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    season_name: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_index_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_created: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    premiere_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    production_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overview: Mapped[str | None] = mapped_column(String(12000), nullable=True)
+    provider_ids: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    core_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    provider_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class ConnectorSyncStageUser(Base):
+    __tablename__ = "connector_sync_stage_users"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class ConnectorSyncStageUserData(Base):
+    __tablename__ = "connector_sync_stage_user_data"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    item_remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    user_remote_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    played: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playback_position_ticks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class ConnectorSyncStagePlaybackEvent(Base):
+    __tablename__ = "connector_sync_stage_playback_events"
+
+    sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connector_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+    remote_event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    item_remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_remote_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    played_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    last_synced_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 
 class AppSetting(Base):
@@ -265,7 +677,7 @@ class JellyfinSyncStageUser(Base):
     sync_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
@@ -336,7 +748,7 @@ class JellyfinUser(TimestampMixin, Base):
 
     jellyfin_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled_for_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
@@ -579,6 +991,7 @@ class MediaFile(Base):
         Index("ix_media_files_library_duration_seconds", "library_id", "duration_seconds"),
         Index("ix_media_files_library_bitrate", "library_id", "bitrate"),
         Index("ix_media_files_library_audio_bitrate", "library_id", "audio_bitrate"),
+        Index("ix_media_files_library_max_audio_bit_depth", "library_id", "max_audio_bit_depth"),
         Index("ix_media_files_library_primary_video_codec", "library_id", "primary_video_codec"),
         Index("ix_media_files_library_resolution_pixels", "library_id", "primary_video_resolution_pixels"),
         Index("ix_media_files_library_primary_video_hdr_type", "library_id", "primary_video_hdr_type"),
@@ -618,6 +1031,7 @@ class MediaFile(Base):
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     bitrate: Mapped[int | None] = mapped_column(Integer, nullable=True)
     audio_bitrate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_audio_bit_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     primary_video_codec: Mapped[str | None] = mapped_column(String(64), nullable=True)
     primary_video_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     primary_video_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -918,6 +1332,10 @@ class MediaFileHistory(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     library_id: Mapped[int] = mapped_column(ForeignKey("libraries.id", ondelete="CASCADE"), nullable=False)
+    library_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("library_roots.id", ondelete="SET NULL"), nullable=True
+    )
+    root_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
     media_file_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     relative_path: Mapped[str] = mapped_column(String(2048), nullable=False)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)

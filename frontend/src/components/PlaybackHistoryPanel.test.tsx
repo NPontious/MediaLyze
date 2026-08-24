@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { groupPlaybackEntries } from "../lib/playback-history";
-import { JellyfinStreamingDetails } from "./JellyfinMetadataDetails";
+import { ConnectorStreamingDetails, JellyfinStreamingDetails } from "./JellyfinMetadataDetails";
 import {
   PlaybackHistoryPanel,
   type PlaybackHistoryEntry,
@@ -90,6 +90,58 @@ describe("PlaybackHistoryPanel", () => {
 
     const table = screen.getByRole("table");
     expect(within(table).getByText("2m")).toBeInTheDocument();
+  });
+
+  it("keeps colliding events from different connections and labels both sources", () => {
+    const { container } = render(
+      <ConnectorStreamingDetails
+        durationSeconds={7200}
+        sources={[
+          {
+            connection_id: 1,
+            connection_name: "Living Room",
+            provider: "jellyfin",
+            connector_item_id: 10,
+            user_data: [],
+            playback_events: [{ remote_event_id: "event-1", remote_user_id: "user-1", user_name: "Alex", played_at: "2026-07-27T20:41:13Z" }],
+            individual_playback_history_start_at: "2026-07-01T00:00:00Z",
+          },
+          {
+            connection_id: 2,
+            connection_name: "Archive",
+            provider: "jellyfin",
+            connector_item_id: 20,
+            user_data: [],
+            playback_events: [{ remote_event_id: "event-1", remote_user_id: "user-1", user_name: "Alex", played_at: "2026-07-27T20:41:13Z" }],
+            individual_playback_history_start_at: "2026-07-10T00:00:00Z",
+          },
+        ]}
+      />,
+    );
+
+    expect(container.querySelectorAll(".playback-history-timeline-event")).toHaveLength(2);
+    expect(screen.getAllByText("Living Room")).not.toHaveLength(0);
+    expect(screen.getAllByText("Archive")).not.toHaveLength(0);
+    expect(screen.getByText("Timestamped: 2 of 2 · Without an individual timestamp: 0")).toBeInTheDocument();
+  });
+
+  it("keeps a single connector source compact without an origin column", () => {
+    render(
+      <ConnectorStreamingDetails
+        sources={[{
+          connection_id: 1,
+          connection_name: "Living Room",
+          provider: "jellyfin",
+          connector_item_id: 10,
+          user_data: [],
+          playback_events: [{ remote_event_id: "event-1", remote_user_id: "user-1", user_name: "Alex", played_at: "2026-07-27T20:41:13Z" }],
+          individual_playback_history_start_at: "2026-07-01T00:00:00Z",
+        }]}
+      />,
+    );
+
+    expect(within(screen.getByRole("table")).queryByRole("columnheader", { name: "Provider" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Living Room")).not.toBeInTheDocument();
   });
 
   it("filters latest-playback rows with the shared historic-data range control", () => {
