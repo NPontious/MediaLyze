@@ -38,6 +38,7 @@ New Storage map to view your entire library at once!
 - reorganize connector library assignments into compact source-to-target mapping rows with clearer coverage and required-link states
 - align expanded connector settings with the boxed Library settings accordion layout and section spacing
 - replace the remaining oversized custom single-choice menus in Settings with native platform dropdowns
+- include the second-generation suffix in the "Fire TV Stick 4K Max (2. Gen)" hardware profile ID
 
 ## v0.17.0
 
