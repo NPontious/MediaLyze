@@ -419,7 +419,6 @@ html[data-theme="dark"] {
   }
 
   input,
-  select,
   textarea {
     background: #1c1a16;
     border-color: rgba(240, 236, 228, 0.16);
