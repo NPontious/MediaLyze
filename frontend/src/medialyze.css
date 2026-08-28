@@ -7007,9 +7007,9 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
 }
 
 .compatibility-capability-section {
-  border: 1px solid rgba(31, 28, 22, 0.08);
+  border: 1px solid var(--nested-surface-border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.36);
+  background-color: var(--nested-surface);
 }
 
 .compatibility-capability-section summary {
@@ -7019,7 +7019,7 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
 }
 
 .compatibility-capability-section-body {
-  border-top: 1px solid rgba(31, 28, 22, 0.08);
+  border-top: 1px solid var(--nested-surface-border);
   padding: 12px;
 }
 
@@ -7163,9 +7163,9 @@ html[data-theme="dark"] .library-jellyfin-path-mapping-switch-track {
   display: grid;
   gap: 10px;
   padding: 10px;
-  border: 1px solid rgba(31, 28, 22, 0.08);
+  border: 1px solid var(--nested-surface-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.28);
+  background-color: var(--nested-surface-muted);
 }
 
 .compatibility-capability-limits {
