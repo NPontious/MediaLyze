@@ -1282,7 +1282,7 @@ export function UiElementsPage() {
                   </article>
                 </div>
               </VariantCard>
-              <VariantCard title="Structured compatibility capability editor" source={`${settings} > Hard/Software Profiles > Profile details`} classes={["compatibility-capability-section", "compatibility-capability-row", "compatibility-capability-limits"]} wide>
+              <VariantCard title="Structured compatibility capability editor" source={`${settings} > Hard/Software Profiles > Profile details`} classes={["compatibility-capability-section", "compatibility-capability-row", "compatibility-capability-limits"]} status="Nested surfaces follow the active theme without light gray fallbacks." wide>
                 <details className="compatibility-capability-section" open>
                   <summary>Sources</summary>
                   <div className="compatibility-capability-section-body">
@@ -1503,12 +1503,16 @@ export function UiElementsPage() {
               <VariantCard title="Collapsed settings sidebar" source={`${settings} > Navigation`} classes={["is-settings-nav-collapsed", "settings-navigation-item-content"]}>
                 <SettingsNavigationFixture collapsed />
               </VariantCard>
-              <VariantCard title="Native settings select · single chevron" source={`${settings} > Libraries / Quality profiles`} classes={["settings-choice-input"]}>
-                <select className="settings-choice-input" defaultValue="system" aria-label="Theme">
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
+              <VariantCard title="Native settings select · persistent single chevron" source={`${settings} > Libraries / Quality profiles`} classes={["settings-choice-input"]} status="Theme colors must not reset the chevron background layer.">
+                <div className="settings-main-column">
+                  <div className="field">
+                    <select className="settings-choice-input" defaultValue="system" aria-label="Theme">
+                      <option value="system">System</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                    </select>
+                  </div>
+                </div>
               </VariantCard>
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />

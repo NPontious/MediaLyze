@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Bug fixes
+
+- keep custom select chevrons single and correctly positioned when applying light or dark theme background colors, and render compatibility capability sections with theme-aware nested surfaces instead of light gray dark-mode fallbacks [#180](https://github.com/frederikemmer/MediaLyze/pull/180) by [@MadsThy](https://github.com/MadsThy)
+
+### New Contributors
+
+[@MadsThy](https://github.com/MadsThy) in [#180](https://github.com/frederikemmer/MediaLyze/pull/180)
+
 ## v0.18.0
 
 >2026-08-24

@@ -7,6 +7,9 @@
   --muted: #5f5b52;
   --panel: rgba(255, 255, 255, 0.86);
   --panel-strong: rgba(255, 255, 255, 0.95);
+  --nested-surface: rgba(255, 255, 255, 0.36);
+  --nested-surface-muted: rgba(255, 255, 255, 0.28);
+  --nested-surface-border: rgba(31, 28, 22, 0.08);
   --accent: #ff6b3d;
   --accent-2: #1b998b;
   --accent-3: #3f51b5;
@@ -64,7 +67,7 @@ textarea {
   border-radius: 12px;
   padding: 12px 14px;
   font: inherit;
-  background: #fffaf3;
+  background-color: #fffaf3;
   color: var(--ink);
 }
 
@@ -405,6 +408,9 @@ html[data-theme="dark"] {
     --muted: #9a968d;
     --panel: rgba(38, 35, 31, 0.88);
     --panel-strong: rgba(46, 43, 39, 0.96);
+    --nested-surface: rgba(38, 35, 31, 0.64);
+    --nested-surface-muted: rgba(38, 35, 31, 0.48);
+    --nested-surface-border: rgba(240, 236, 228, 0.1);
     --shadow: 0 18px 45px rgba(0, 0, 0, 0.40);
     background: radial-gradient(circle at top left, #251f12, transparent 55%),
       radial-gradient(circle at 80% 20%, #101f1e, transparent 40%),
@@ -419,8 +425,9 @@ html[data-theme="dark"] {
   }
 
   input,
+  select,
   textarea {
-    background: #1c1a16;
+    background-color: #1c1a16;
     border-color: rgba(240, 236, 228, 0.16);
     outline: none;
     color: var(--ink);
