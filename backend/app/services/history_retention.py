@@ -3,11 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings, get_settings
-from backend.app.models.entities import JobStatus, LibraryHistory, MediaFileHistory, ScanJob
+from backend.app.models.entities import (
+    JobStatus,
+    LibraryHistory,
+    MediaFileHistory,
+    ScanJob,
+    TranscodeJob,
+    TranscodeVariant,
+)
 from backend.app.services.app_settings import get_app_settings
 from backend.app.services.history_storage import GIGABYTE_BYTES, _json_length, _text_length
 from backend.app.utils.time import utc_now
@@ -24,8 +31,14 @@ class HistoryRetentionResult:
 
 
 def has_active_scan_jobs(db: Session) -> bool:
-    return (
+    return bool(
         db.scalar(select(ScanJob.id).where(ScanJob.status.in_([JobStatus.queued, JobStatus.running])).limit(1))
+        is not None
+        or db.scalar(
+            select(TranscodeJob.id)
+            .where(TranscodeJob.status.in_([JobStatus.queued, JobStatus.running]))
+            .limit(1)
+        )
         is not None
     )
 
@@ -161,6 +174,69 @@ def _prune_scan_history(db: Session, *, days: int, storage_limit_bytes: int) -> 
     return deleted_entries
 
 
+def _transcode_job_estimated_bytes(job: TranscodeJob) -> int:
+    return (
+        _text_length(job.profile)
+        + _json_length(job.plan)
+        + _json_length(job.ffmpeg_arguments)
+        + _text_length(job.ffmpeg_command)
+        + _json_length(job.warnings)
+        + _text_length(job.source_path_snapshot)
+        + _text_length(job.output_path_snapshot)
+        + _text_length(job.error)
+    )
+
+
+def _prune_transcode_history(db: Session, *, days: int, storage_limit_bytes: int) -> int:
+    deleted_entries = 0
+    terminal_statuses = (JobStatus.completed, JobStatus.failed, JobStatus.canceled)
+    if days > 0:
+        cutoff = utc_now() - timedelta(days=days)
+        expired_job_ids = select(TranscodeJob.id).where(
+            TranscodeJob.status.in_(terminal_statuses),
+            TranscodeJob.finished_at.is_not(None),
+            TranscodeJob.finished_at < cutoff,
+        )
+        db.execute(
+            update(TranscodeVariant)
+            .where(TranscodeVariant.job_id.in_(expired_job_ids))
+            .values(job_id=None)
+        )
+        deleted_entries += db.execute(
+            delete(TranscodeJob).where(
+                TranscodeJob.status.in_(terminal_statuses),
+                TranscodeJob.finished_at.is_not(None),
+                TranscodeJob.finished_at < cutoff,
+            )
+        ).rowcount or 0
+        db.commit()
+    if storage_limit_bytes <= 0:
+        return deleted_entries
+    jobs = db.scalars(
+        select(TranscodeJob)
+        .where(TranscodeJob.status.in_(terminal_statuses))
+        .order_by(TranscodeJob.finished_at.asc(), TranscodeJob.id.asc())
+    ).all()
+    total_bytes = sum(_transcode_job_estimated_bytes(job) for job in jobs)
+    ids_to_delete: list[int] = []
+    for job in jobs:
+        if total_bytes <= storage_limit_bytes:
+            break
+        total_bytes -= _transcode_job_estimated_bytes(job)
+        ids_to_delete.append(job.id)
+    if ids_to_delete:
+        db.execute(
+            update(TranscodeVariant)
+            .where(TranscodeVariant.job_id.in_(ids_to_delete))
+            .values(job_id=None)
+        )
+        deleted_entries += db.execute(
+            delete(TranscodeJob).where(TranscodeJob.id.in_(ids_to_delete))
+        ).rowcount or 0
+        db.commit()
+    return deleted_entries
+
+
 def _compact_database(db: Session, *, allow_vacuum: bool) -> bool:
     bind = db.get_bind()
     with bind.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
@@ -190,6 +266,13 @@ def apply_history_retention(db: Session, settings: Settings | None = None) -> Hi
         db,
         days=app_settings.history_retention.scan_history.days,
         storage_limit_bytes=_storage_limit_bytes(app_settings.history_retention.scan_history.storage_limit_gb),
+    )
+    deleted_entries += _prune_transcode_history(
+        db,
+        days=app_settings.history_retention.transcode_history.days,
+        storage_limit_bytes=_storage_limit_bytes(
+            app_settings.history_retention.transcode_history.storage_limit_gb
+        ),
     )
 
     result = HistoryRetentionResult(deleted_entries=deleted_entries)

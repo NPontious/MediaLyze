@@ -47,6 +47,7 @@ const DEFAULT_HISTORY_RETENTION = {
   file_history: { days: 30, storage_limit_gb: 0 },
   library_history: { days: 365, storage_limit_gb: 0 },
   scan_history: { days: 30, storage_limit_gb: 0 },
+  transcode_history: { days: 90, storage_limit_gb: 0 },
 };
 
 const DEFAULT_PATTERN_RECOGNITION = defaultPatternRecognitionSettings();
@@ -160,6 +161,12 @@ function normalizeAppSettings(payload: Partial<AppSettings> | null | undefined):
         storage_limit_gb:
           payload?.history_retention?.scan_history?.storage_limit_gb ??
           DEFAULT_HISTORY_RETENTION.scan_history.storage_limit_gb,
+      },
+      transcode_history: {
+        days: payload?.history_retention?.transcode_history?.days ?? DEFAULT_HISTORY_RETENTION.transcode_history.days,
+        storage_limit_gb:
+          payload?.history_retention?.transcode_history?.storage_limit_gb ??
+          DEFAULT_HISTORY_RETENTION.transcode_history.storage_limit_gb,
       },
     },
     ui_preferences: {

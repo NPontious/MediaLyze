@@ -140,7 +140,7 @@ function createFileDetail(): MediaFileDetail {
         subtitle_type: "text",
       },
     ],
-    external_subtitles: [{ path: "Shows/Season01/file.en.srt", language: "en", format: "srt" }],
+    external_subtitles: [{ id: 1, path: "Shows/Season01/file.en.srt", language: "en", format: "srt" }],
     chapters: [
       {
         chapter_index: 0,
@@ -856,6 +856,7 @@ describe("FileDetailPage", () => {
     const { container } = renderPage(file.id);
 
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Transcode" })).toBeInTheDocument();
     expect(screen.getByText("UHD")).toBeInTheDocument();
     expect(screen.getByText("10.0 GB")).toBeInTheDocument();
     expect(screen.getAllByText("56m").length).toBeGreaterThan(0);
@@ -1058,6 +1059,8 @@ describe("FileDetailPage", () => {
 
     const { container } = renderPage(file.id);
 
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Transcode" })).toBeInTheDocument();
     await selectFileDetailPanel("Preview (Beta)");
     expect(await screen.findByRole("heading", { name: "Preview (Beta)" })).toBeInTheDocument();
     expect(
@@ -1113,6 +1116,8 @@ describe("FileDetailPage", () => {
 
     const { container } = renderPage(file.id);
 
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Transcode" })).not.toBeInTheDocument();
     await selectFileDetailPanel("Preview (Beta)");
     expect(await screen.findByRole("heading", { name: "Preview (Beta)" })).toBeInTheDocument();
     const player = container.querySelector(".file-detail-preview-player") as HTMLAudioElement | null;

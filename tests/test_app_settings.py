@@ -505,6 +505,8 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
     assert updated.history_retention.library_history.days == 730
     assert updated.history_retention.scan_history.days == 45
     assert updated.history_retention.scan_history.storage_limit_gb == 0.25
+    assert updated.history_retention.transcode_history.days == 90
+    assert updated.history_retention.transcode_history.storage_limit_gb == 0.0
     assert updated.feature_flags.hide_automatic_update_reminders is True
     assert updated.feature_flags.show_analyzed_files_csv_export is True
     assert updated.feature_flags.show_full_width_app_shell is True
@@ -527,6 +529,7 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
             "file_history": {"days": 120, "storage_limit_gb": 1.5},
             "library_history": {"days": 730, "storage_limit_gb": 0.0},
             "scan_history": {"days": 45, "storage_limit_gb": 0.25},
+            "transcode_history": {"days": 90, "storage_limit_gb": 0.0},
         },
         "ui_preferences": {
             "interface_language": "en",

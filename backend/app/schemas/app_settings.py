@@ -104,12 +104,14 @@ class HistoryRetentionRead(BaseModel):
     file_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=30))
     library_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=365))
     scan_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=30))
+    transcode_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=90))
 
 
 class HistoryRetentionUpdate(BaseModel):
     file_history: HistoryRetentionBucketUpdate | None = None
     library_history: HistoryRetentionBucketUpdate | None = None
     scan_history: HistoryRetentionBucketUpdate | None = None
+    transcode_history: HistoryRetentionBucketUpdate | None = None
 
 
 class ShowSeasonRecognitionMode(str, Enum):

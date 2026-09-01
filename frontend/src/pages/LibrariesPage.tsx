@@ -38,6 +38,7 @@ import { PathBrowser } from "../components/PathBrowser";
 import { RemoveIcon } from "../components/RemoveIcon";
 import { SquarePenIcon } from "../components/SquarePenIcon";
 import { TelemetryModeToggle } from "../components/TelemetryModeToggle";
+import { TranscodeHistorySettingsPanel } from "../components/TranscodeHistorySettingsPanel";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { SUPPORTED_INTERFACE_LANGUAGES, type SupportedInterfaceLanguage } from "../i18n";
 import { useAppData } from "../lib/app-data";
@@ -378,6 +379,7 @@ const DEFAULT_HISTORY_RETENTION = {
   file_history: { days: 30, storage_limit_gb: 0 },
   library_history: { days: 365, storage_limit_gb: 0 },
   scan_history: { days: 30, storage_limit_gb: 0 },
+  transcode_history: { days: 90, storage_limit_gb: 0 },
 };
 const SCAN_WORKER_OPTIONS = Array.from({ length: SCAN_WORKER_COUNT_MAX }, (_, index) => index + 1);
 const PARALLEL_SCAN_JOB_OPTIONS = Array.from({ length: PARALLEL_SCAN_JOB_COUNT_MAX }, (_, index) => index + 1);
@@ -594,6 +596,7 @@ const HISTORY_RETENTION_BUCKETS: HistoryRetentionBucketKey[] = [
   "file_history",
   "library_history",
   "scan_history",
+  "transcode_history",
 ];
 
 type HistoryRetentionInputs = Record<
@@ -619,6 +622,10 @@ function historyRetentionInputsFromSettings(
     scan_history: {
       days: String(historyRetention.scan_history.days),
       storage_limit_gb: String(historyRetention.scan_history.storage_limit_gb),
+    },
+    transcode_history: {
+      days: String(historyRetention.transcode_history.days),
+      storage_limit_gb: String(historyRetention.transcode_history.storage_limit_gb),
     },
   };
 }
@@ -2533,7 +2540,15 @@ export function LibrariesPage() {
       default_ignore_patterns: normalizeIgnorePatterns(effectiveDefaultPatterns),
       ...(nextResolutionCategories ? { resolution_categories: normalizeResolutionCategories(nextResolutionCategories) } : {}),
       scan_performance: nextScanPerformance,
-      history_retention: nextHistoryRetention,
+      history_retention: {
+        file_history: nextHistoryRetention.file_history,
+        library_history: nextHistoryRetention.library_history,
+        scan_history: nextHistoryRetention.scan_history,
+        ...(nextHistoryRetention.transcode_history.days !== appHistoryRetention.transcode_history.days
+          || nextHistoryRetention.transcode_history.storage_limit_gb !== appHistoryRetention.transcode_history.storage_limit_gb
+          ? { transcode_history: nextHistoryRetention.transcode_history }
+          : {}),
+      },
       feature_flags: {
         show_analyzed_files_csv_export: nextShowAnalyzedFilesCsvExport,
         show_full_width_app_shell: nextShowFullWidthAppShell,
@@ -6681,6 +6696,7 @@ export function LibrariesPage() {
                   </table>
                 </div>
               </div>
+              <TranscodeHistorySettingsPanel libraries={libraries} />
               {historyReconstruction && isHistoryReconstructionActive ? (
                 <div className="history-reconstruction-progress" role="status" aria-live="polite">
                   <div className="distribution-copy">

@@ -458,6 +458,9 @@
         },
         "scan_history": {
           "title": "Scan-Verlauf"
+        },
+        "transcode_history": {
+          "title": "Transcoding-Verlauf"
         }
       }
     },
@@ -1871,7 +1874,64 @@
       "metadataOnly": "Nur Jellyfin-Metadaten", "library": "Jellyfin-Library", "libraries": "Libraries", "item": "Jellyfin-Asset", "items": "Assets", "lastSync": "Zuletzt synchronisiert: {{date}}", "configureAccess": "Pfadzugriff konfigurieren", "limitedTitle": "Eingeschränkte Kataloganalyse", "limitedDescription": "MediaLyze kann nur die von Jellyfin gelieferten Metadaten auswerten. Gib Dateisystemzugriff und mappe diese Library, um ffprobe-, Stream-, Untertitel-, HDR-, Qualitäts- und Duplikatanalysen zu erhalten.", "itemScopeDescription": "Diese Ansicht enthält von Jellyfin gelieferte Katalog- und Wiedergabedaten, keine technische Analyse der Mediendatei.", "overview": "Jellyfin-Katalogübersicht", "knownStorage": "Bekannter Speicher", "knownDuration": "Bekannte Laufzeit", "coverage": "Laufzeitabdeckung", "itemTypes": "Asset-Typen", "productionYears": "Produktionsjahre", "addedTimeline": "Hinzugefügt im Zeitverlauf", "playback": "Wiedergabestatus", "played": "Wiedergegeben", "unplayed": "Nicht wiedergegeben", "catalog": "Katalog", "resultCount": "{{count}} Assets", "search": "Jellyfin-Katalog durchsuchen", "typeFilter": "Asset-Typ filtern", "allTypes": "Alle Typen", "userFilter": "Wiedergabe-Nutzer", "allUsers": "Alle Nutzer", "playedFilter": "Wiedergabestatus filtern", "allPlayback": "Alle Wiedergabestatus", "sortBy": "Katalog sortieren", "toggleSort": "Sortierreihenfolge wechseln", "title": "Titel", "type": "Typ", "year": "Jahr", "added": "Hinzugefügt", "duration": "Laufzeit", "size": "Größe", "plays": "Wiedergaben", "release": "Veröffentlichung", "empty": "Keine Jellyfin-Assets entsprechen diesen Filtern.", "loading": "Jellyfin-Katalog wird geladen…", "previous": "Vorherige Seite", "next": "Nächste Seite", "back": "Zurück", "openFullAnalysis": "Vollständige MediaLyze-Analyse öffnen", "dashboardTitle": "Jellyfin-Katalog", "notIncluded": "Separat von den technischen MediaLyze-Summen"
     }
   },
+  "transcoding": {
+    "title": "Transcodieren",
+    "unavailable": "Transcoding-Daten sind nicht verfügbar.",
+    "ffmpegUnavailable": "FFmpeg ist nicht verfügbar.",
+    "profile": "Profil",
+    "profiles": { "compatibility": "Kompatibilität", "storage": "Speicher sparen", "modern": "Modern", "expert": "Experte" },
+    "container": "Zielcontainer",
+    "encoder": "Encoder",
+    "encoderOptions": "Lokal gemeldete Encoder-Optionen",
+    "hardware": "Hardware",
+    "cpu": "CPU",
+    "dynamicRange": "Dynamikbereich",
+    "dynamicRanges": { "preserve": "Beibehalten", "sdr": "SDR", "hdr10": "HDR10", "hlg": "HLG", "dolby_vision": "Dolby-Vision-Passthrough" },
+    "streamGroups": { "video_streams": "Videospuren", "audio_streams": "Audiospuren", "subtitle_streams": "Untertitelspuren" },
+    "externalSubtitles": "Externe Untertitel",
+    "attachments": "Attachments",
+    "attachment": "Attachment",
+    "noAttachments": "Keine eingebetteten Attachments erkannt.",
+    "streamAction": "Aktion für Spur {{index}}",
+    "actions": { "keep": "Beibehalten", "copy": "Kopieren", "encode": "Codieren", "drop": "Entfernen" },
+    "bitrate": "Bitrate",
+    "options": { "chapters": "Kapitel beibehalten", "metadata": "Metadaten beibehalten", "cover": "Cover beibehalten", "attachments": "Anhänge beibehalten" },
+    "filenameTemplate": "Dateinamen-Template",
+    "filenameTokens": "Tokens: {resolution}, {dynRange}, {codec}, {audioLanguages}, {container}, {videoBitrate}",
+    "expertMode": "Strukturierter Expertenplan",
+    "validate": "Plan validieren",
+    "start": "Transcoding starten",
+    "validation": { "title": "Änderungsvorschau", "kept_streams": "Beibehalten", "changed_streams": "Geändert", "removed_streams": "Entfernt", "added_streams": "Hinzugefügt" },
+    "command": "Erzeugter FFmpeg-Befehl",
+    "status": { "queued": "Wartend", "running": "Läuft", "completed": "Abgeschlossen", "canceled": "Abgebrochen", "failed": "Fehlgeschlagen" },
+    "eta": "noch etwa {{seconds}} s",
+    "variants": "Verknüpfte Varianten",
+    "noVariants": "Noch keine transcodierten Varianten.",
+    "analysisStatus": { "awaiting_analysis": "Wartet auf Analyse", "pending": "Analyse ausstehend", "analyzing": "Wird analysiert", "ready": "Analysiert", "failed": "Analyse fehlgeschlagen" },
+    "wipeComparison": "Synchronisierter Wipe-Vergleich",
+    "openVariant": "Variante öffnen",
+    "openComparison": "Metadatenvergleich öffnen",
+    "openSource": "Quelldatei öffnen",
+    "sourcePath": "Quellpfad",
+    "outputPath": "Zielpfad",
+    "history": { "title": "Transcoding-Verlauf", "empty": "Keine Transcoding-Jobs vorhanden.", "plan": "Vollständiger Transcoding-Plan" },
+    "globalHistory": "Globaler Transcoding-Verlauf",
+    "globalHistoryHint": "Persistierte Jobs filtern, ohne erzeugte Mediendateien oder Variantenverknüpfungen zu löschen.",
+    "filters": { "library": "Medienbibliothek", "status": "Status", "from": "Von", "to": "Bis" }
+  },
+  "videoWipe": {
+    "play": "Beide Videos abspielen",
+    "pause": "Beide Videos pausieren",
+    "seek": "Beide Videos durchsuchen",
+    "mute": "Beide Videos stummschalten",
+    "unmute": "Stummschaltung aufheben",
+    "volume": "Lautstärke beider Videos",
+    "wipe": "Sichtbarer Anteil des zweiten Videos",
+    "durationWarning": "Die Videos haben unterschiedliche Laufzeiten; die Synchronisierung folgt dem ersten Video.",
+    "unsupported": "Eine Datei kann in diesem Browser nicht abgespielt werden. Nutze stattdessen den Metadatenvergleich."
+  },
   "common": {
+    "all": "Alle",
     "close": "Schliessen",
     "save": "Speichern",
     "cancel": "Abbrechen",

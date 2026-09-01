@@ -982,7 +982,12 @@ def queue_scan_job(
         )
         .order_by(ScanJob.id.desc())
     )
-    if existing_job is not None:
+    # A completed transcode must be discovered after publication. Coalescing it
+    # into a scan that is already running could miss the newly created output,
+    # so persist a follow-up job for the runtime's per-library queue instead.
+    if existing_job is not None and not (
+        trigger_source == ScanTriggerSource.transcode and existing_job.status == JobStatus.running
+    ):
         existing_job.trigger_details = _append_coalesced_trigger(existing_job.trigger_details, trigger_source, trigger_details)
         db.commit()
         db.refresh(existing_job)

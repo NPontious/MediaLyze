@@ -27,7 +27,9 @@ from backend.app.models.entities import (
     ScanJob,
     ScanMode,
     ScanTriggerSource,
+    TranscodeJob,
 )
+from backend.app.schemas.transcoding import TranscodePlan, TranscodeValidationRead
 from backend.app.schemas.history import (
     HistoryReconstructionJobStatus,
     HistoryReconstructionPhase,
@@ -91,6 +93,13 @@ from backend.app.services.telemetry import (
     send_initial_telemetry_snapshot,
     send_update_telemetry_snapshot,
 )
+from backend.app.services.transcoding import (
+    cancel_transcode_job,
+    execute_transcode_job,
+    queue_transcode_job,
+    reconcile_transcode_variants,
+    recover_orphaned_transcode_jobs,
+)
 from backend.app.services.update_status import check_for_updates
 from backend.app.utils.time import utc_now
 
@@ -152,6 +161,8 @@ class ScanRuntimeManager:
         self.active_library_ids: set[int] = set()
         self.submitted_job_ids: set[int] = set()
         self.cancel_requested_job_ids: set[int] = set()
+        self.submitted_transcode_job_ids: set[int] = set()
+        self.cancel_requested_transcode_job_ids: set[int] = set()
         self.history_compaction_pending = False
         self.history_storage_refresh_submitted = False
         self.stats_warmup_timer: Timer | None = None
@@ -178,6 +189,7 @@ class ScanRuntimeManager:
         self.refresh_jellyfin_schedule()
         self.refresh_connector_schedules()
         self._recover_orphaned_jobs()
+        self._recover_orphaned_transcode_jobs()
         self.request_update_check()
         self.sync_all_libraries()
         self.run_history_retention()
@@ -344,6 +356,80 @@ class ScanRuntimeManager:
         if job_id is None:
             raise ValueError(f"Failed to request quality recompute for library {library_id}")
         return job_id, created
+
+    def request_transcode(self, file_id: int, plan: TranscodePlan) -> tuple[TranscodeJob, TranscodeValidationRead]:
+        db = SessionLocal()
+        try:
+            media_file = db.get(MediaFile, file_id)
+            if media_file is None:
+                raise ValueError("Media file not found")
+            job, validation = queue_transcode_job(db, self.settings, media_file, plan)
+        finally:
+            db.close()
+        with self.lock:
+            self.submitted_transcode_job_ids.add(job.id)
+        try:
+            self.executor.submit(self._run_transcode_job, job.id)
+        except Exception:
+            with self.lock:
+                self.submitted_transcode_job_ids.discard(job.id)
+            failed_db = SessionLocal()
+            try:
+                failed_job = failed_db.get(TranscodeJob, job.id)
+                if failed_job is not None:
+                    failed_job.status = JobStatus.failed
+                    failed_job.error = "Unable to submit transcoding job to the runtime executor"
+                    failed_job.finished_at = utc_now()
+                    failed_db.commit()
+            finally:
+                failed_db.close()
+            raise
+        return job, validation
+
+    def _run_transcode_job(self, job_id: int) -> None:
+        library_id = 0
+        completed = False
+        try:
+            library_id = execute_transcode_job(
+                job_id,
+                is_cancel_requested=self.is_transcode_cancel_requested,
+            )
+            db = SessionLocal()
+            try:
+                job = db.get(TranscodeJob, job_id)
+                completed = job is not None and job.status == JobStatus.completed
+            finally:
+                db.close()
+            if completed and library_id:
+                self.request_scan(
+                    library_id,
+                    "incremental",
+                    trigger_source=ScanTriggerSource.transcode,
+                    trigger_details={"reason": "transcode_completed", "transcode_job_id": job_id},
+                )
+        finally:
+            with self.lock:
+                self.submitted_transcode_job_ids.discard(job_id)
+                self.cancel_requested_transcode_job_ids.discard(job_id)
+            self.request_history_storage_refresh()
+
+    def is_transcode_cancel_requested(self, job_id: int) -> bool:
+        with self.lock:
+            return job_id in self.cancel_requested_transcode_job_ids
+
+    def cancel_transcode(self, job_id: int) -> TranscodeJob:
+        db = SessionLocal()
+        try:
+            job = db.get(TranscodeJob, job_id)
+            if job is None:
+                raise ValueError("Transcoding job not found")
+            if job.status == JobStatus.running:
+                with self.lock:
+                    self.cancel_requested_transcode_job_ids.add(job_id)
+                return job
+            return cancel_transcode_job(db, job_id)
+        finally:
+            db.close()
 
     def get_history_reconstruction_status(self) -> HistoryReconstructionStatusRead:
         with self.lock:
@@ -954,6 +1040,7 @@ class ScanRuntimeManager:
                             )
                         )
                     )
+                reconcile_transcode_variants(match_db, library_id)
             except Exception:
                 match_db.rollback()
                 logger.exception("Failed to refresh Jellyfin matches after scan %s", job_id)
@@ -1333,6 +1420,15 @@ class ScanRuntimeManager:
                 job.finished_at = finished_at
 
             db.commit()
+        finally:
+            db.close()
+
+    def _recover_orphaned_transcode_jobs(self) -> None:
+        db = SessionLocal()
+        try:
+            recovered = recover_orphaned_transcode_jobs(db)
+            if recovered:
+                logger.info("Canceled %s orphaned transcoding job(s)", recovered)
         finally:
             db.close()
 

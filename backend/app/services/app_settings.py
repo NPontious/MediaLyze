@@ -221,6 +221,9 @@ def _deserialize_history_retention(payload: Any) -> HistoryRetentionRead:
         file_history=_deserialize_history_retention_bucket(candidate.get("file_history"), defaults.file_history),
         library_history=_deserialize_history_retention_bucket(candidate.get("library_history"), defaults.library_history),
         scan_history=_deserialize_history_retention_bucket(candidate.get("scan_history"), defaults.scan_history),
+        transcode_history=_deserialize_history_retention_bucket(
+            candidate.get("transcode_history"), defaults.transcode_history
+        ),
     )
 
 
@@ -481,7 +484,7 @@ def update_app_settings(
     validate_pattern_recognition_settings(next_pattern_recognition)
     history_retention_updates = {}
     if payload.history_retention is not None:
-        for key in ("file_history", "library_history", "scan_history"):
+        for key in ("file_history", "library_history", "scan_history", "transcode_history"):
             bucket_update = getattr(payload.history_retention, key)
             if bucket_update is None:
                 continue

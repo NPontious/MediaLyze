@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Captions,
   ChevronDown,
+  Clapperboard,
   Cpu,
   FileClock,
   FileJson,
@@ -46,6 +47,7 @@ import { ProfileFavoriteButton } from "../components/ProfileFavoriteButton";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
 import { StreamDetailsList } from "../components/StreamDetailsList";
 import { TooltipTrigger } from "../components/TooltipTrigger";
+import { FileTranscodeHistory, TranscodingPanel } from "../components/TranscodingPanel";
 import {
   api,
   type CompatibilityEvaluation,
@@ -82,6 +84,7 @@ function JsonPreview({ value }: { value: unknown }) {
 type FileDetailPanelId =
   | "overview"
   | "preview"
+  | "transcoding"
   | "qualityBreakdown"
   | "compatibility"
   | "jellyfin"
@@ -108,6 +111,7 @@ const PREVIEW_REPORT_URL = "https://www.medialyze.app/report?source=file_detail_
 const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "overview", labelKey: "fileDetail.navigation.overview", icon: Info },
   { id: "preview", labelKey: "fileDetail.preview", icon: Play },
+  { id: "transcoding", labelKey: "transcoding.title", icon: Clapperboard },
   { id: "qualityBreakdown", labelKey: "fileDetail.qualityBreakdown", icon: Gauge },
   { id: "compatibility", labelKey: "fileDetail.compatibility.title", icon: Cpu },
   { id: "jellyfin", labelKey: "jellyfin.streaming", icon: Radio },
@@ -671,6 +675,9 @@ function buildAvailableFileDetailPanelIds(
   const ids: FileDetailPanelId[] = ["overview"];
   if (hasPreviewMetadata(file)) {
     ids.push("preview");
+  }
+  if (hasVideoMetadata(file)) {
+    ids.push("transcoding");
   }
   if (hasQualityMetadata(file, qualityDetail)) {
     ids.push("qualityBreakdown");
@@ -1908,6 +1915,12 @@ export function FileDetailPage() {
       ),
       body: <PreviewDetailsPanel detail={file} t={t} />,
     },
+    transcoding: {
+      title: t("transcoding.title"),
+      loading: !file && !error,
+      error,
+      body: file ? <TranscodingPanel file={file} /> : null,
+    },
     qualityBreakdown: {
       title: t("fileDetail.qualityBreakdown"),
       loading: !qualityDetail && !qualityError && !error,
@@ -2015,11 +2028,14 @@ export function FileDetailPage() {
       loading: !fileHistory && !fileHistoryError,
       error: fileHistoryError,
       body: (
-        <FileHistoryPanel
-          history={fileHistory}
-          t={t}
-          inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles}
-        />
+        <div className="file-history-with-transcoding">
+          <FileHistoryPanel
+            history={fileHistory}
+            t={t}
+            inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles}
+          />
+          {file && hasVideoMetadata(file) ? <FileTranscodeHistory fileId={file.id} /> : null}
+        </div>
       ),
     },
     videoStreams: {

@@ -109,6 +109,7 @@ class SubtitleStreamRead(BaseModel):
 class ExternalSubtitleRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
     path: str
     language: str | None
     format: str | None

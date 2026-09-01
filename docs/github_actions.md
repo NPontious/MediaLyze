@@ -106,7 +106,7 @@ Three jobs run in parallel:
 | `macos-latest` | macOS Apple Silicon disk image | `MediaLyze-arm64.dmg` |
 | `windows-latest` | Windows installer | `MediaLyze.Setup.exe` |
 
-Every job builds the frontend, packages the Python backend sidecar, bundles the platform-specific `ffprobe`, creates the installer, and verifies the expected artifact. Linux additionally extracts the AppImage and smoke-tests the bundled static `ffprobe`.
+Every job builds the frontend, packages the Python backend sidecar, bundles the platform-specific `ffprobe` and `ffmpeg`, creates the installer, and verifies the expected artifact. Windows, macOS, and Linux enumerate the packaged FFmpeg capabilities and run a one-frame encode; Linux additionally repeats the smoke test after extracting the AppImage.
 
 ### Manual development desktop build
 

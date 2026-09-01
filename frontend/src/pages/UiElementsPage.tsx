@@ -88,6 +88,7 @@ import { StreamDetailsList } from "../components/StreamDetailsList";
 import { TableViewSettingsEditor } from "../components/TableViewSettingsEditor";
 import { TelemetryModeToggle } from "../components/TelemetryModeToggle";
 import { TooltipTrigger } from "../components/TooltipTrigger";
+import { VideoWipeCompare } from "../components/VideoWipeCompare";
 import { api, type BrowseResponse, type ComparisonResponse, type MediaFileStreamDetails } from "../lib/api";
 import { buildDefaultLibraryStatisticsSettings } from "../lib/library-statistics-settings";
 import type { ComparisonSelection } from "../lib/statistic-comparisons";
@@ -281,7 +282,7 @@ const streamDetails: MediaFileStreamDetails = {
   subtitle_streams: [
     { stream_index: 2, codec: "subrip", language: "de", default_flag: false, forced_flag: false, subtitle_type: "text" },
   ],
-  external_subtitles: [{ path: "Arrival.2016.de.srt", language: "de", format: "srt" }],
+  external_subtitles: [{ id: 1, path: "Arrival.2016.de.srt", language: "de", format: "srt" }],
 };
 
 const availablePanelDefinitions: StatisticPanelLayoutMenuDefinition[] = [
@@ -2331,6 +2332,25 @@ export function UiElementsPage() {
                       <ChevronRight size={18} />
                     </button>
                   </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Transcoding plan and Wipe comparison" source="TranscodingPanel / VideoWipeCompare" classes={["transcoding-panel", "transcode-stream-row", "transcode-validation", "video-wipe-compare"]} wide>
+                <div className="transcoding-panel">
+                  <div className="transcode-configuration-grid">
+                    <label><span>Profile</span><select defaultValue="compatibility"><option value="compatibility">Compatibility</option></select></label>
+                    <label><span>Target container</span><select defaultValue="mp4"><option value="mp4">MP4</option></select></label>
+                    <label><span>Encoder</span><select defaultValue="libx264"><option value="libx264">libx264 · CPU</option></select></label>
+                  </div>
+                  <div className="transcode-stream-group">
+                    <h3>Video streams</h3>
+                    <article className="transcode-stream-row">
+                      <div><strong>#0</strong><span>HEVC</span></div>
+                      <select defaultValue="encode"><option value="encode">Encode</option></select>
+                      <div className="transcode-stream-encode-fields"><input defaultValue="libx264" /><input defaultValue="20" /></div>
+                    </article>
+                  </div>
+                  <section className="transcode-validation is-valid"><h3><Check aria-hidden="true" />Change preview</h3><strong>Arrival [1920x1080, SDR, H264] [en].mp4</strong><code>ffmpeg -i Arrival.mkv -map 0:0 -c:v:0 libx264 …</code></section>
+                  <VideoWipeCompare first={{ src: "data:video/mp4;base64,", label: "Original" }} second={{ src: "data:video/mp4;base64,", label: "Variant" }} />
                 </div>
               </VariantCard>
               <VariantCard title="Path browser fixture" source={`${settings} > Create library`} classes={["path-browser", "path-entry", "path-browser-selected-item"]}>

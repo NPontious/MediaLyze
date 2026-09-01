@@ -41,6 +41,7 @@ Bring your own auth (for now).
 ## Features
 
 - Technical media analysis powered by `ffprobe`
+- Safe FFmpeg transcoding into linked video variants while leaving original files untouched
 - Full and incremental scans using `path + size + mtime`
 - historical analysis
 - many different charts for all metrics
@@ -223,6 +224,7 @@ Relevant environment variables:
 - `MEDIALYZE_TELEMETRY_DISABLED`: optional; when set to `true`, telemetry is forced off and the UI toggle is locked
 - `MEDIALYZE_TELEMETRY_ENDPOINT`: optional; overrides the telemetry ingest endpoint, default `https://www.medialyze.app/api/telemetry/ingest`
 - `FFPROBE_PATH`: optional override for the `ffprobe` binary path
+- `FFMPEG_PATH`: optional override for the `ffmpeg` binary used for preview generation and transcoding
 - `JELLYFIN_API_KEY_FILE`: optional path to a Jellyfin API-key secret file; see [Jellyfin integration](docs/jellyfin.md)
 - `PUID` / `PGID`: optional runtime user/group ids for shared-folder permission setups; set both or leave both unset to keep the default root runtime user
 

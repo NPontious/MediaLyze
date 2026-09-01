@@ -33,6 +33,7 @@ import { ChevronsRightLeftIcon } from "../components/ChevronsRightLeftIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
 import { LoaderPinwheelIcon } from "../components/LoaderPinwheelIcon";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
+import { VideoWipeCompare } from "../components/VideoWipeCompare";
 import {
   api,
   type LibrarySummary,
@@ -1122,6 +1123,21 @@ export function FileComparePage() {
             {!loading && !error && canCompare ? (
               visibleSections.length > 0 ? (
                 <div className="file-compare-sections">
+                  {selectedVisibleFiles.length === 2 && selectedVisibleFiles.every((entry) => entry.detail?.video_streams.length) ? (
+                    <section className="panel file-compare-section file-compare-wipe-section">
+                      <h3>{t("transcoding.wipeComparison")}</h3>
+                      <VideoWipeCompare
+                        first={{
+                          src: api.fileMediaUrl(selectedVisibleFiles[0].detail!.id),
+                          label: selectedVisibleFiles[0].detail!.filename,
+                        }}
+                        second={{
+                          src: api.fileMediaUrl(selectedVisibleFiles[1].detail!.id),
+                          label: selectedVisibleFiles[1].detail!.filename,
+                        }}
+                      />
+                    </section>
+                  ) : null}
                   {visibleSections.map((section) => (
                     <CompareSectionView
                       key={section.id}

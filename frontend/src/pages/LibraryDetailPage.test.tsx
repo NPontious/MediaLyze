@@ -541,6 +541,7 @@ function createStreamDetails(fileId: number): MediaFileStreamDetails {
     ],
     external_subtitles: [
       {
+        id: 1,
         path: "episode-01.de.srt",
         language: "de",
         format: "srt",

@@ -75,6 +75,7 @@ class ScanTriggerSource(str, Enum):
     manual = "manual"
     scheduled = "scheduled"
     watchdog = "watchdog"
+    transcode = "transcode"
 
 
 class JellyfinSyncTriggerSource(str, Enum):
@@ -1321,6 +1322,107 @@ class ScanJob(Base):
     scan_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     library: Mapped[Library] = relationship(back_populates="scan_jobs")
+
+
+class TranscodeVariantGroup(TimestampMixin, Base):
+    __tablename__ = "transcode_variant_groups"
+    __table_args__ = (
+        Index("ix_transcode_variant_groups_library", "library_id"),
+        Index("ix_transcode_variant_groups_original_file", "original_file_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("libraries.id", ondelete="CASCADE"), nullable=False
+    )
+    original_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    original_library_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("library_roots.id", ondelete="SET NULL"), nullable=True
+    )
+    original_relative_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(512), nullable=False)
+
+
+class TranscodeJob(TimestampMixin, Base):
+    __tablename__ = "transcode_jobs"
+    __table_args__ = (
+        Index("ix_transcode_jobs_status", "status"),
+        Index("ix_transcode_jobs_library", "library_id"),
+        Index("ix_transcode_jobs_source_file", "source_file_id"),
+        Index("ix_transcode_jobs_finished_at", "finished_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("transcode_variant_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("libraries.id", ondelete="CASCADE"), nullable=False
+    )
+    source_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    result_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[JobStatus] = mapped_column(
+        SqlEnum(JobStatus, native_enum=False), default=JobStatus.queued, nullable=False
+    )
+    profile: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    plan: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    ffmpeg_arguments: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    ffmpeg_command: Mapped[str] = mapped_column(String(32000), default="", nullable=False)
+    warnings: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_path_snapshot: Mapped[str] = mapped_column(String(4096), nullable=False)
+    source_size_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_mtime_snapshot: Mapped[float] = mapped_column(Float, nullable=False)
+    output_path_snapshot: Mapped[str] = mapped_column(String(4096), nullable=False)
+    output_relative_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    temporary_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    progress_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    processed_seconds: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    speed: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    eta_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(32000), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class TranscodeVariant(TimestampMixin, Base):
+    __tablename__ = "transcode_variants"
+    __table_args__ = (
+        Index("ix_transcode_variants_group", "group_id"),
+        Index("ix_transcode_variants_original_file", "original_file_id"),
+        Index("ix_transcode_variants_output_file", "output_file_id"),
+        Index("ix_transcode_variants_job", "job_id", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("transcode_variant_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transcode_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    original_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    output_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_files.id", ondelete="SET NULL"), nullable=True
+    )
+    library_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("library_roots.id", ondelete="SET NULL"), nullable=True
+    )
+    output_relative_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    output_filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_path_snapshot: Mapped[str] = mapped_column(String(4096), nullable=False)
+    output_path_snapshot: Mapped[str] = mapped_column(String(4096), nullable=False)
+    analysis_status: Mapped[str] = mapped_column(
+        String(32), default="awaiting_analysis", nullable=False
+    )
 
 
 class MediaFileHistory(Base):

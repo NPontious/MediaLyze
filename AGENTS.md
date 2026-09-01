@@ -65,6 +65,7 @@ MediaLyze currently implements:
 * English, German, Spanish, and Ukrainian UI translations
 * Docker-first deployment and GHCR image publishing
 * native desktop packaging for Windows, macOS, and Linux with a local backend sidecar
+* safe FFmpeg transcoding for regular video files with editable structured plans, linked analyzed variants, Wipe comparison, job history, cancellation, and independent retention
 
 ## 2.2 Explicit Non-Goals
 
@@ -73,7 +74,7 @@ MediaLyze does **not** currently:
 * play media
 * scrape movie or TV metadata
 * connect to external metadata APIs
-* modify, rename, or transcode media files
+* modify, rename, or transcode original media files; transcoding only creates a new linked variant beside the unchanged source
 * manage authentication internally
 
 ## 2.3 Backlog / Not Yet Implemented
@@ -199,6 +200,7 @@ Actual implementation:
 * startup no longer auto-queues quality-recompute backfill jobs; recomputation is queued only from explicit follow-up actions such as library profile updates
 * old `queued` and `running` jobs from previous processes are canceled during startup instead of being resumed
 * startup also runs one history-retention maintenance pass, APScheduler registers a daily history-retention maintenance job, and deferred SQLite compaction is retried automatically once scans are idle
+* transcoding jobs share the executor capacity configured by `parallel_scan_jobs`, consume one slot each, and do not fan out through `scan_worker_count`
 * connector sync and binding-recompute jobs are persisted and single-flight per connection; different connections run concurrently on a dedicated connector executor without occupying scan or maintenance workers
 * connector sync uses connection/run-scoped staging and an atomic successful promote, while cancellation or failure preserves the last live snapshot; queued jobs are claimed atomically
 * startup cancels orphaned connector jobs and removes abandoned connector staging rows; scan changes compare pre/post root locators so additions, modifications, deletions, ignores, and renames trigger targeted connector rematching across connections
@@ -788,6 +790,9 @@ Current logical schema includes:
 * `external_subtitles`
 * `library_history`
 * `scan_jobs`
+* `transcode_variant_groups`
+* `transcode_variants`
+* `transcode_jobs`
 * `connector_connections`
 * `connector_credentials`
 * `connector_libraries`

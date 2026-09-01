@@ -207,6 +207,23 @@ jobs:
         env:
           MEDIALYZE_FFPROBE_DIR: ${{ github.workspace }}/dist/ffprobe-bundle
 
+      - name: Smoke-test bundled FFmpeg capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            suffix=".exe"
+          fi
+          ffmpeg_bin="dist/desktop-backend/ffmpeg/ffmpeg${suffix}"
+          ffprobe_bin="dist/desktop-backend/ffprobe/ffprobe${suffix}"
+          test -f "${ffmpeg_bin}"
+          test -f "${ffprobe_bin}"
+          "${ffmpeg_bin}" -hide_banner -version >/dev/null
+          "${ffmpeg_bin}" -hide_banner -encoders >/dev/null
+          "${ffprobe_bin}" -hide_banner -version >/dev/null
+          "${ffmpeg_bin}" -hide_banner -loglevel error -f lavfi -i color=c=black:s=64x64:d=0.1 -frames:v 1 -c:v mpeg4 -f null -
+
       - name: Build desktop artifacts
         if: matrix.os != 'windows-latest'
         run: npm run dist -- --publish never
@@ -264,9 +281,16 @@ jobs:
 
           ffprobe_dir="squashfs-root/resources/backend/ffprobe"
           ffprobe_bin="$ffprobe_dir/ffprobe"
+          ffmpeg_dir="squashfs-root/resources/backend/ffmpeg"
+          ffmpeg_bin="$ffmpeg_dir/ffmpeg"
 
           if [[ ! -x "$ffprobe_bin" ]]; then
             echo "Bundled ffprobe executable is missing from AppImage: $ffprobe_bin" >&2
+            exit 1
+          fi
+
+          if [[ ! -x "$ffmpeg_bin" ]]; then
+            echo "Bundled ffmpeg executable is missing from AppImage: $ffmpeg_bin" >&2
             exit 1
           fi
 
@@ -288,6 +312,9 @@ jobs:
           fi
 
           "$ffprobe_bin" -version >/dev/null
+          "$ffmpeg_bin" -hide_banner -version >/dev/null
+          "$ffmpeg_bin" -hide_banner -encoders >/dev/null
+          "$ffmpeg_bin" -hide_banner -loglevel error -f lavfi -i color=c=black:s=64x64:d=0.1 -frames:v 1 -c:v mpeg4 -f null -
 
           python3 - <<'PY'
           import wave

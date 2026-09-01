@@ -24,6 +24,7 @@ function createAppSettings(): AppSettings {
       file_history: { days: 90, storage_limit_gb: 0 },
       library_history: { days: 365, storage_limit_gb: 0 },
       scan_history: { days: 30, storage_limit_gb: 0 },
+      transcode_history: { days: 90, storage_limit_gb: 0 },
     },
     ui_preferences: { interface_language: "en", color_theme: "system" },
     feature_flags: {
@@ -214,6 +215,7 @@ describe("FileComparePage", () => {
     );
     expect(resolutionRows[0]).toHaveClass("is-identical");
     expect(screen.getByRole("button", { name: "Video streams" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("heading", { name: "Synchronized wipe comparison" })).toBeInTheDocument();
   });
 
   it("can show only differing comparison rows without the old comparison header", async () => {

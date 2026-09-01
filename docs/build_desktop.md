@@ -6,7 +6,7 @@ Important:
 
 - Build the macOS app on macOS.
 - Build the Windows installer on Windows.
-- The packaged desktop app expects a bundled `ffprobe` binary.
+- The packaged desktop app expects bundled `ffprobe` and `ffmpeg` binaries.
 - The frontend bundle must exist before running the Electron packaging step.
 - `npm run dist` and `npm run dist:dir` only work inside `desktop/`, because the repository root does not have a `package.json`.
 - If you want to run the desktop build from the repository root, use `npm --prefix desktop run dist` or `npm --prefix desktop run dist:dir`.
@@ -152,6 +152,8 @@ Output:
 ## Notes
 
 - `npm run build:backend` creates the packaged Python sidecar in `dist/desktop-backend/`.
+- `npm run build:backend` also bundles `ffmpeg` from `MEDIALYZE_FFMPEG_DIR` when set, otherwise from the platform-specific `ffmpeg-static` dependency. `FFMPEG_PATH` and `FFPROBE_PATH` remain explicit runtime overrides.
+- Release jobs run `ffmpeg -version`, enumerate encoders, and perform a one-frame encode against the packaged binary on Windows, macOS, and Linux. Linux repeats the encode after extracting the AppImage.
 - `npm run dist:dir` creates an unpacked app.
 - `npm run dist` creates the platform installer format configured in `desktop/package.json`.
 - The desktop build also regenerates the native app icons from `frontend/public/favicon.svg`.

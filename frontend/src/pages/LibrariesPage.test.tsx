@@ -36,6 +36,7 @@ type AppSettingsOverrides = Omit<
     file_history?: Partial<NonNullable<AppSettings["history_retention"]>["file_history"]>;
     library_history?: Partial<NonNullable<AppSettings["history_retention"]>["library_history"]>;
     scan_history?: Partial<NonNullable<AppSettings["history_retention"]>["scan_history"]>;
+    transcode_history?: Partial<NonNullable<AppSettings["history_retention"]>["transcode_history"]>;
   };
   feature_flags?: Partial<AppSettings["feature_flags"]>;
   ui_preferences?: Partial<NonNullable<AppSettings["ui_preferences"]>>;
@@ -83,6 +84,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       file_history: { days: 30, storage_limit_gb: 0, ...overrideHistoryRetention.file_history },
       library_history: { days: 365, storage_limit_gb: 0, ...overrideHistoryRetention.library_history },
       scan_history: { days: 30, storage_limit_gb: 0, ...overrideHistoryRetention.scan_history },
+      transcode_history: { days: 90, storage_limit_gb: 0, ...overrideHistoryRetention.transcode_history },
     },
     ui_preferences: {
       interface_language: "en",
@@ -150,6 +152,17 @@ function createHistoryStorage(overrides: Partial<HistoryStorage> = {}): HistoryS
         storage_limit_bytes: 0,
         oldest_recorded_at: "2026-02-15T10:03:00Z",
         newest_recorded_at: "2026-03-16T10:03:00Z",
+      },
+      transcode_history: {
+        entry_count: 0,
+        current_estimated_bytes: 0,
+        average_daily_bytes: 0,
+        projected_bytes_30d: 0,
+        projected_bytes_for_configured_days: 0,
+        days_limit: 90,
+        storage_limit_bytes: 0,
+        oldest_recorded_at: null,
+        newest_recorded_at: null,
       },
     },
     ...overrides,
@@ -1195,14 +1208,16 @@ describe("LibrariesPage ignore patterns", () => {
     expect(screen.getAllByText("File history")).toHaveLength(2);
     expect(screen.getAllByText("Media library history")).toHaveLength(2);
     expect(screen.getAllByText("Scan history")).toHaveLength(2);
+    expect(screen.getAllByText("Transcoding history").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole("button", { name: "Reconstruct history" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Explain retention days" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Explain storage limit" })).toBeInTheDocument();
     expect(screen.getByText(/File history retention only affects per-file snapshots/)).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Retention days")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Retention days")).toHaveLength(4);
     expect(screen.getAllByLabelText("Retention days")[0]).toHaveClass("settings-choice-input", "history-retention-input");
-    expect(screen.getAllByLabelText("Storage limit (GB)")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Storage limit (GB)")).toHaveLength(4);
     expect(screen.getAllByLabelText("Storage limit (GB)")[0]).toHaveClass("settings-choice-input", "history-retention-input");
+    expect(screen.getAllByLabelText("Retention days")[3]).toHaveValue(90);
     expect(await screen.findByText("977 KB")).toBeInTheDocument();
     expect((await screen.findAllByText("2.9 MB")).length).toBeGreaterThan(0);
   });
@@ -1351,6 +1366,34 @@ describe("LibrariesPage ignore patterns", () => {
       }),
     );
     await waitFor(() => expect(historyStorageSpy).toHaveBeenCalledTimes(2));
+  });
+
+  it("persists the independent transcoding history retention bucket", async () => {
+    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
+      createAppSettings({
+        history_retention: {
+          transcode_history: { days: 45, storage_limit_gb: 2 },
+        },
+      }),
+    );
+    renderPage({ activePanel: "historyRetention" });
+
+    const daysInput = await screen.findByLabelText("Retention days", {
+      selector: "#transcode_history-history-days",
+    });
+    const storageInput = screen.getByLabelText("Storage limit (GB)", {
+      selector: "#transcode_history-history-gb",
+    });
+    await waitFor(() => expect(daysInput).toBeEnabled());
+    fireEvent.change(daysInput, { target: { value: "45" } });
+    fireEvent.change(storageInput, { target: { value: "2" } });
+    fireEvent.blur(storageInput);
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+      history_retention: expect.objectContaining({
+        transcode_history: { days: 45, storage_limit_gb: 2 },
+      }),
+    })));
   });
 
   it("auto-saves renamed resolution categories on blur", async () => {
@@ -2498,6 +2541,6 @@ describe("LibrariesPage settings panels", () => {
         beforeId: 10,
       }),
     );
-    expect(await screen.findByText("Mar 15, 2026, 11:03 AM")).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelectorAll(".scan-log-card")).toHaveLength(2));
   });
 });

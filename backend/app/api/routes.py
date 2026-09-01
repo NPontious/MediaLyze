@@ -105,6 +105,14 @@ from backend.app.schemas.scan import (
     ScanRequest,
 )
 from backend.app.schemas.storage_map import LibraryStorageMapRead
+from backend.app.schemas.transcoding import (
+    FileTranscodeRead,
+    TranscodeCapabilitiesRead,
+    TranscodeJobPageRead,
+    TranscodeJobRead,
+    TranscodePlan,
+    TranscodeValidationRead,
+)
 from backend.app.schemas.update_status import (
     DesktopUpdateReminderMark,
     DesktopUpdateReminderRead,
@@ -138,6 +146,7 @@ from backend.app.models.entities import (
     MediaFile,
     ScanJob,
     ScanTriggerSource,
+    TranscodeJob,
 )
 from backend.app.services.connector_credentials import read_connector_secret
 from backend.app.services.connector_registry import connector_registry
@@ -225,6 +234,14 @@ from backend.app.services.media_service import (
     list_library_series,
     list_library_files,
     search_media_files,
+)
+from backend.app.services.transcoding import (
+    TranscodeValidationError,
+    get_file_transcode,
+    get_transcode_capabilities,
+    list_transcode_jobs,
+    serialize_transcode_job,
+    validate_transcode_plan,
 )
 from backend.app.services.path_access import inspect_desktop_path
 from backend.app.services.quality_profiles import (
@@ -2799,6 +2816,106 @@ def file_search(
     if library_id is not None and not library_exists(db, library_id):
         raise HTTPException(status_code=404, detail="Library not found")
     return search_media_files(db, query=query, library_id=library_id, limit=limit)
+
+
+@router.get("/transcoding/capabilities", response_model=TranscodeCapabilitiesRead)
+def transcoding_capabilities(
+    refresh: bool = Query(default=False),
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeCapabilitiesRead:
+    return get_transcode_capabilities(settings, refresh=refresh)
+
+
+@router.get("/files/{file_id}/transcode", response_model=FileTranscodeRead)
+def file_transcode_detail(
+    file_id: int,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> FileTranscodeRead:
+    media_file = db.get(MediaFile, file_id)
+    if media_file is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    if not media_file.video_streams:
+        raise HTTPException(status_code=409, detail="Transcoding requires a regular video stream")
+    return get_file_transcode(db, settings, media_file)
+
+
+@router.post("/files/{file_id}/transcode/validate", response_model=TranscodeValidationRead)
+def file_transcode_validate(
+    file_id: int,
+    payload: TranscodePlan,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeValidationRead:
+    media_file = db.get(MediaFile, file_id)
+    if media_file is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return validate_transcode_plan(db, settings, media_file, payload)
+
+
+@router.post("/files/{file_id}/transcode", response_model=TranscodeJobRead, status_code=202)
+def file_transcode_start(
+    file_id: int,
+    payload: TranscodePlan,
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> TranscodeJobRead:
+    try:
+        job, _validation = runtime.request_transcode(file_id, payload)
+    except TranscodeValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.validation.model_dump(mode="json")) from exc
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "Media file not found" else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return serialize_transcode_job(job)
+
+
+@router.get("/transcode-jobs/active", response_model=TranscodeJobPageRead)
+def transcode_jobs_active(db: Session = Depends(get_db_session)) -> TranscodeJobPageRead:
+    return list_transcode_jobs(db, active_only=True, limit=200)
+
+
+@router.get("/transcode-jobs", response_model=TranscodeJobPageRead)
+def transcode_jobs_list(
+    library_id: int | None = Query(default=None, ge=1),
+    status: JobStatus | None = Query(default=None),
+    started_after: datetime | None = Query(default=None),
+    started_before: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db_session),
+) -> TranscodeJobPageRead:
+    return list_transcode_jobs(
+        db,
+        library_id=library_id,
+        status=status,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/transcode-jobs/{job_id}", response_model=TranscodeJobRead)
+def transcode_job_detail(
+    job_id: int,
+    db: Session = Depends(get_db_session),
+) -> TranscodeJobRead:
+    job = db.get(TranscodeJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Transcoding job not found")
+    return serialize_transcode_job(job)
+
+
+@router.post("/transcode-jobs/{job_id}/cancel", response_model=TranscodeJobRead)
+def transcode_job_cancel(
+    job_id: int,
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> TranscodeJobRead:
+    try:
+        return serialize_transcode_job(runtime.cancel_transcode(job_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/files/{file_id}", response_model=MediaFileDetail)

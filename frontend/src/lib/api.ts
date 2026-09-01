@@ -1155,6 +1155,7 @@ export type SubtitleStream = {
 };
 
 export type ExternalSubtitle = {
+  id: number;
   path: string;
   language: string | null;
   format: string | null;
@@ -1312,6 +1313,163 @@ export type MediaFileDetail = MediaFileRow &
     probe_score: number | null;
   } | null;
   raw_ffprobe_json: Record<string, unknown> | null;
+};
+
+export type TranscodeStreamAction = "keep" | "drop" | "copy" | "encode";
+
+export type TranscodeStreamPlan = {
+  stream_index: number;
+  action: TranscodeStreamAction;
+  codec?: string | null;
+  encoder?: string | null;
+  bitrate?: number | null;
+  crf?: number | null;
+  cq?: number | null;
+  width?: number | null;
+  height?: number | null;
+  frame_rate?: number | null;
+  pixel_format?: string | null;
+  profile?: string | null;
+  level?: string | null;
+  preset?: string | null;
+  gop_size?: number | null;
+  language?: string | null;
+  title?: string | null;
+};
+
+export type TranscodePlan = {
+  version: 1;
+  profile: "compatibility" | "storage" | "modern" | "expert";
+  container: "mkv" | "mp4" | "webm";
+  video_streams: TranscodeStreamPlan[];
+  audio_streams: TranscodeStreamPlan[];
+  subtitle_streams: TranscodeStreamPlan[];
+  external_subtitles: Array<{
+    subtitle_id: number;
+    action: "drop" | "copy" | "encode";
+    codec?: string | null;
+    language?: string | null;
+    title?: string | null;
+  }>;
+  dynamic_range: "preserve" | "sdr" | "hdr10" | "hlg" | "dolby_vision";
+  chapters: "keep" | "drop";
+  metadata: "keep" | "drop";
+  cover: "keep" | "drop";
+  attachments: "keep" | "drop";
+  filename_template: string;
+};
+
+export type TranscodeEncoderCapability = {
+  name: string;
+  codec: string;
+  hardware: boolean;
+  available: boolean;
+  tested: boolean;
+  test_error: string | null;
+  options: string[];
+};
+
+export type TranscodeCapabilities = {
+  ffmpeg_available: boolean;
+  ffmpeg_path: string;
+  version: string | null;
+  containers: Array<"mkv" | "mp4" | "webm">;
+  encoders: TranscodeEncoderCapability[];
+  dolby_vision_passthrough: boolean;
+  error: string | null;
+};
+
+export type TranscodeValidation = {
+  valid: boolean;
+  output_path: string;
+  output_filename: string;
+  normalized_plan: TranscodePlan;
+  ffmpeg_arguments: string[];
+  ffmpeg_command: string;
+  kept_streams: string[];
+  changed_streams: string[];
+  removed_streams: string[];
+  added_streams: string[];
+  warnings: string[];
+  errors: string[];
+  detected_hardware_encoders: string[];
+};
+
+export type TranscodeFileSummary = {
+  id: number | null;
+  filename: string;
+  relative_path: string;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  dynamic_range: string | null;
+  video_codec: string | null;
+  audio_codecs: string[];
+  audio_languages: string[];
+};
+
+export type TranscodeJob = {
+  id: number;
+  group_id: number;
+  library_id: number;
+  source_file_id: number | null;
+  result_file_id: number | null;
+  status: "queued" | "running" | "completed" | "canceled" | "failed";
+  profile: string;
+  plan_version: number;
+  plan: TranscodePlan;
+  ffmpeg_arguments: string[];
+  ffmpeg_command: string;
+  warnings: string[];
+  source_path_snapshot: string;
+  output_path_snapshot: string;
+  output_relative_path: string;
+  progress_percent: number;
+  processed_seconds: number;
+  speed: string | null;
+  eta_seconds: number | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type TranscodeVariant = {
+  id: number;
+  group_id: number;
+  job_id: number | null;
+  original_file_id: number | null;
+  output_file_id: number | null;
+  library_root_id: number | null;
+  output_relative_path: string;
+  output_filename: string;
+  source_path_snapshot: string;
+  output_path_snapshot: string;
+  analysis_status: string;
+  created_at: string;
+  updated_at: string;
+  file: TranscodeFileSummary | null;
+};
+
+export type FileTranscode = {
+  original: TranscodeFileSummary;
+  profiles: Record<"compatibility" | "storage" | "modern", TranscodePlan>;
+  attachments: Array<{
+    stream_index: number;
+    codec?: string | null;
+    filename?: string | null;
+    mimetype?: string | null;
+    title?: string | null;
+  }>;
+  variants: TranscodeVariant[];
+  jobs: TranscodeJob[];
+};
+
+export type TranscodeJobPage = {
+  items: TranscodeJob[];
+  total: number;
 };
 
 export type MediaFileRawProbe = {
@@ -1483,6 +1641,10 @@ export type AppSettings = {
       days: number;
       storage_limit_gb: number;
     };
+    transcode_history: {
+      days: number;
+      storage_limit_gb: number;
+    };
   };
   ui_preferences?: {
     interface_language: "en" | "de" | "es" | "uk";
@@ -1538,6 +1700,7 @@ export type HistoryStorage = {
     file_history: HistoryStorageCategory;
     library_history: HistoryStorageCategory;
     scan_history: HistoryStorageCategory;
+    transcode_history: HistoryStorageCategory;
   };
 };
 
@@ -2199,6 +2362,43 @@ export const api = {
   fileQualityScore: (id: string | number) => request<MediaFileQualityScoreDetail>(`/files/${id}/quality-score`),
   fileHistory: (id: string | number, signal?: AbortSignal) =>
     request<MediaFileHistory>(`/files/${id}/history`, { signal }),
+  transcodeCapabilities: (refresh = false) =>
+    request<TranscodeCapabilities>(`/transcoding/capabilities${refresh ? "?refresh=true" : ""}`),
+  fileTranscode: (id: string | number, signal?: AbortSignal) =>
+    request<FileTranscode>(`/files/${id}/transcode`, { signal }),
+  validateFileTranscode: (id: string | number, plan: TranscodePlan, signal?: AbortSignal) =>
+    request<TranscodeValidation>(`/files/${id}/transcode/validate`, {
+      method: "POST",
+      body: JSON.stringify(plan),
+      signal,
+    }),
+  startFileTranscode: (id: string | number, plan: TranscodePlan) =>
+    request<TranscodeJob>(`/files/${id}/transcode`, {
+      method: "POST",
+      body: JSON.stringify(plan),
+    }),
+  activeTranscodeJobs: () => request<TranscodeJobPage>("/transcode-jobs/active"),
+  transcodeJobs: (params: {
+    libraryId?: number;
+    status?: TranscodeJob["status"];
+    startedAfter?: string;
+    startedBefore?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.libraryId) query.set("library_id", String(params.libraryId));
+    if (params.status) query.set("status", params.status);
+    if (params.startedAfter) query.set("started_after", params.startedAfter);
+    if (params.startedBefore) query.set("started_before", params.startedBefore);
+    if (params.limit) query.set("limit", String(params.limit));
+    if (params.offset) query.set("offset", String(params.offset));
+    const suffix = query.toString();
+    return request<TranscodeJobPage>(`/transcode-jobs${suffix ? `?${suffix}` : ""}`);
+  },
+  transcodeJob: (id: string | number) => request<TranscodeJob>(`/transcode-jobs/${id}`),
+  cancelTranscodeJob: (id: string | number) =>
+    request<TranscodeJob>(`/transcode-jobs/${id}/cancel`, { method: "POST" }),
   browse: (path = ".") => request<BrowseResponse>(`/browse?path=${encodeURIComponent(path)}`),
   telemetryPreview: (mode: TelemetryPreviewMode = "minimal") =>
     request<TelemetryPreview>(`/telemetry/preview?mode=${encodeURIComponent(mode)}`),
@@ -2435,6 +2635,10 @@ export const api = {
         storage_limit_gb?: number;
       };
       scan_history?: {
+        days?: number;
+        storage_limit_gb?: number;
+      };
+      transcode_history?: {
         days?: number;
         storage_limit_gb?: number;
       };
