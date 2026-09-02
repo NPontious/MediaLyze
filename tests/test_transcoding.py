@@ -398,6 +398,122 @@ def test_capabilities_detect_and_smoke_test_dynamic_hardware_encoders(monkeypatc
     assert capabilities.dolby_vision_passthrough is True
 
 
+def test_intel_vaapi_probe_uses_drm_render_node_and_upload(monkeypatch, tmp_path) -> None:
+    render_node = tmp_path / "renderD128"
+    render_node.touch()
+    calls = []
+
+    def fake_run(arguments, **_kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(transcoding, "_is_linux", lambda: True)
+    monkeypatch.setattr(transcoding.subprocess, "run", fake_run)
+
+    available, error = transcoding._test_hardware_encoder("ffmpeg-test", "h264_vaapi", str(render_node))
+
+    assert available is True
+    assert error is None
+    assert calls == [
+        [
+            "ffmpeg-test",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-init_hw_device",
+            f"vaapi=va:{render_node}",
+            "-filter_hw_device",
+            "va",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=0.1",
+            "-vf",
+            "format=nv12,hwupload",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "h264_vaapi",
+            "-f",
+            "null",
+            "-",
+        ]
+    ]
+
+
+def test_intel_qsv_probe_derives_from_vaapi_render_node(monkeypatch, tmp_path) -> None:
+    render_node = tmp_path / "renderD128"
+    render_node.touch()
+    calls = []
+
+    def fake_run(arguments, **_kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(transcoding, "_is_linux", lambda: True)
+    monkeypatch.setattr(transcoding.subprocess, "run", fake_run)
+
+    available, error = transcoding._test_hardware_encoder("ffmpeg-test", "av1_qsv", str(render_node))
+
+    assert available is True
+    assert error is None
+    assert "qsv=qs@va" in calls[0]
+    assert "-filter_hw_device" in calls[0]
+    assert "format=nv12,hwupload=derive_device=qsv" in calls[0]
+
+
+def test_intel_hardware_plan_initializes_device_and_uploads_frames(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    render_node = tmp_path / "renderD128"
+    render_node.touch()
+    capabilities = _capabilities()
+    capabilities.encoders.append(
+        TranscodeEncoderCapability(
+            name="h264_vaapi",
+            codec="h264",
+            hardware=True,
+            tested=True,
+            available=True,
+        )
+    )
+    capabilities.encoders.append(
+        TranscodeEncoderCapability(
+            name="h264_qsv",
+            codec="h264",
+            hardware=True,
+            tested=True,
+            available=True,
+        )
+    )
+    monkeypatch.setattr(transcoding, "_is_linux", lambda: True)
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: capabilities)
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.video_streams[0].encoder = "h264_vaapi"
+        settings = _settings(tmp_path)
+        settings.hardware_render_node = str(render_node)
+        validation = transcoding.validate_transcode_plan(db, settings, media_file, plan)
+        plan.video_streams[0].encoder = "h264_qsv"
+        validation_qsv = transcoding.validate_transcode_plan(db, settings, media_file, plan)
+
+    assert validation.valid is True
+    assert "-init_hw_device" in validation.ffmpeg_arguments
+    assert f"vaapi=va:{render_node}" in validation.ffmpeg_arguments
+    assert "-filter_hw_device" in validation.ffmpeg_arguments
+    filter_index = validation.ffmpeg_arguments.index("-filter:v:0")
+    assert validation.ffmpeg_arguments[filter_index + 1].endswith("format=nv12,hwupload")
+    assert "-pix_fmt:v:0" not in validation.ffmpeg_arguments
+    assert "-qp:v:0" in validation.ffmpeg_arguments
+    assert "-crf:v:0" not in validation.ffmpeg_arguments
+    assert "-preset:v:0" not in validation.ffmpeg_arguments
+    assert "qsv=qs@va" in validation_qsv.ffmpeg_arguments
+    assert "-global_quality:v:0" in validation_qsv.ffmpeg_arguments
+    assert "-crf:v:0" not in validation_qsv.ffmpeg_arguments
+    qsv_filter_index = validation_qsv.ffmpeg_arguments.index("-filter:v:0")
+    assert validation_qsv.ffmpeg_arguments[qsv_filter_index + 1].endswith("format=nv12,hwupload=derive_device=qsv")
+
+
 def test_dolby_vision_generation_is_not_pretended(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())

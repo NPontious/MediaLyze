@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug fixes
 
 - keep custom select chevrons single and correctly positioned when applying light or dark theme background colors, and render compatibility capability sections with theme-aware nested surfaces instead of light gray dark-mode fallbacks [#180](https://github.com/frederikemmer/MediaLyze/pull/180) by [@MadsThy](https://github.com/MadsThy)
+- initialize Intel VAAPI/QSV hardware devices from a Linux DRM render node during capability checks and transcoding, and include the required Intel runtime drivers in AMD64 Docker images
 
 ### New Contributors
 

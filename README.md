@@ -225,6 +225,7 @@ Relevant environment variables:
 - `MEDIALYZE_TELEMETRY_ENDPOINT`: optional; overrides the telemetry ingest endpoint, default `https://www.medialyze.app/api/telemetry/ingest`
 - `FFPROBE_PATH`: optional override for the `ffprobe` binary path
 - `FFMPEG_PATH`: optional override for the `ffmpeg` binary used for preview generation and transcoding
+- `MEDIALYZE_HW_RENDER_NODE`: optional Linux DRM render node for Intel VAAPI/QSV, for example `/dev/dri/renderD128`; otherwise MediaLyze selects the first available render node
 - `JELLYFIN_API_KEY_FILE`: optional path to a Jellyfin API-key secret file; see [Jellyfin integration](docs/jellyfin.md)
 - `PUID` / `PGID`: optional runtime user/group ids for shared-folder permission setups; set both or leave both unset to keep the default root runtime user
 

@@ -19,6 +19,7 @@ RUN pip wheel --no-cache-dir --no-deps --wheel-dir /wheels .
 
 FROM python:3.12-alpine AS runtime
 ARG APP_VERSION=0.18.0
+ARG TARGETARCH
 
 LABEL name="MediaLyze"
 LABEL org.opencontainers.image.source="https://github.com/frederikemmer/MediaLyze"
@@ -31,7 +32,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apk add --no-cache ffmpeg su-exec tzdata
+RUN apk add --no-cache ffmpeg su-exec tzdata \
+    && if [ "${TARGETARCH}" = "amd64" ] || \
+       { [ -z "${TARGETARCH}" ] && [ "$(apk --print-arch)" = "x86_64" ]; }; then \
+        apk add --no-cache intel-media-driver onevpl-intel-gpu; \
+    fi
 
 COPY pyproject.toml ./
 RUN python -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))' \

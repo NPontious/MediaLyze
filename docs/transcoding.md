@@ -48,3 +48,32 @@ Analyzed variants link to their ordinary file detail and metadata comparison pag
 ## Runtime paths
 
 Docker installs FFmpeg in the runtime image and uses `FFMPEG_PATH=ffmpeg` by default. Desktop sidecars receive the packaged FFmpeg path from Electron. `MEDIALYZE_FFMPEG_DIR` selects a packaging input; `FFMPEG_PATH` is the runtime override. Release packaging verifies the binary and performs a one-frame encode on Windows, macOS, and Linux.
+
+## Intel GPU on Linux containers
+
+The AMD64 runtime image includes Intel's `intel-media-driver` (VAAPI) and
+`onevpl-intel-gpu` (QSV) packages. ARM64 images skip these x86-only packages.
+MediaLyze discovers the first `/dev/dri/renderD*` node on Linux by default; set
+`MEDIALYZE_HW_RENDER_NODE` when a host exposes more than one GPU. The selected
+node is used for both the capability smoke test and actual jobs, so an encoder
+is shown in the UI only when the driver and device really work.
+
+The container must expose the DRM devices and the host's `video` and `render`
+groups. A minimal Compose service looks like this (use the numeric `render` GID
+reported by the host):
+
+```yaml
+devices:
+  - /dev/dri:/dev/dri
+group_add:
+  - "44"   # video (example)
+  - "105"  # render (example)
+environment:
+  LIBVA_DRIVER_NAME: iHD
+  MEDIALYZE_HW_RENDER_NODE: /dev/dri/renderD128
+```
+
+VAAPI jobs initialize the render node and upload frames with `format=nv12` (or
+`p010le` for 10-bit input). QSV jobs derive their oneVPL device from the same
+VAAPI node. No host driver installation or media-file modification is performed
+by MediaLyze.

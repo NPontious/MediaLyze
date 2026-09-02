@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     database_filename: str = "medialyze.db"
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"
+    hardware_render_node: str | None = Field(
+        default=None,
+        validation_alias="MEDIALYZE_HW_RENDER_NODE",
+    )
     jellyfin_api_key_file: Path | None = Field(default=None, validation_alias="JELLYFIN_API_KEY_FILE")
     scan_discovery_batch_size: int = 500
     scan_commit_batch_size: int = 5

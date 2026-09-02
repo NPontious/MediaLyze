@@ -4,6 +4,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -180,16 +181,101 @@ def _hardware_encoder_codec(name: str) -> str | None:
     return None
 
 
-def _test_hardware_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str | None]:
+def _hardware_backend(name: str | None) -> str | None:
+    normalized = (name or "").lower()
+    if normalized.endswith("_vaapi"):
+        return "vaapi"
+    if normalized.endswith("_qsv"):
+        return "qsv"
+    return None
+
+
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def _resolve_hardware_render_node(configured: str | Path | None) -> str | None:
+    """Resolve the DRM render node used for Intel VAAPI/QSV operations.
+
+    Linux containers normally expose one or more ``/dev/dri/renderD*`` nodes.
+    An explicit setting is preferred so multi-GPU hosts can select the right
+    adapter; otherwise the first available render node is used.  Other
+    platforms keep their native FFmpeg device selection behavior.
+    """
+
+    if not _is_linux():
+        return None
+    if configured:
+        candidate = Path(configured).expanduser()
+        return str(candidate) if candidate.exists() else None
+    dri_directory = Path("/dev/dri")
+    if not dri_directory.is_dir():
+        return None
+    return next(
+        (str(candidate) for candidate in sorted(dri_directory.glob("renderD*")) if candidate.exists()),
+        None,
+    )
+
+
+def _hardware_device_arguments(backends: set[str], render_node: str) -> list[str]:
+    """Build FFmpeg's named hardware-device initialization arguments."""
+
+    arguments: list[str] = []
+    if "vaapi" in backends or "qsv" in backends:
+        arguments.extend(["-init_hw_device", f"vaapi=va:{render_node}"])
+    if "qsv" in backends:
+        # Deriving QSV from the VAAPI device keeps Intel's DRM render node
+        # selection explicit and works with oneVPL-backed FFmpeg builds.
+        arguments.extend(["-init_hw_device", "qsv=qs@va"])
+    return arguments
+
+
+def _hardware_upload_format(source: VideoStream | None, effective_pixel_format: str | None) -> str:
+    pixel_format = (effective_pixel_format or (source.pix_fmt if source else None) or "").lower()
+    bit_depth = (source.bit_depth if source else None) or 0
+    if bit_depth >= 10 or "10" in pixel_format or pixel_format.startswith("p010"):
+        return "p010le"
+    return "nv12"
+
+
+def _hardware_upload_filter(
+    backend: str,
+    source: VideoStream | None,
+    effective_pixel_format: str | None,
+) -> str:
+    upload = "hwupload" if backend == "vaapi" else "hwupload=derive_device=qsv"
+    return f"format={_hardware_upload_format(source, effective_pixel_format)},{upload}"
+
+
+def _test_hardware_encoder(
+    ffmpeg_path: str,
+    encoder: str,
+    render_node: str | None = None,
+) -> tuple[bool, str | None]:
+    backend = _hardware_backend(encoder)
+    if backend and _is_linux() and not render_node:
+        return False, f"No DRM render node is available for {backend} hardware encoding"
     command = [
         ffmpeg_path,
         "-hide_banner",
         "-loglevel",
         "error",
+    ]
+    if backend and render_node:
+        command.extend(_hardware_device_arguments({backend}, render_node))
+        command.extend(["-filter_hw_device", "va"])
+    command.extend([
         "-f",
         "lavfi",
         "-i",
         "color=c=black:s=64x64:d=0.1",
+    ])
+    if backend and render_node:
+        command.extend([
+            "-vf",
+            _hardware_upload_filter(backend, None, None),
+        ])
+    command.extend([
         "-frames:v",
         "1",
         "-c:v",
@@ -197,7 +283,7 @@ def _test_hardware_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str | 
         "-f",
         "null",
         "-",
-    ]
+    ])
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -228,7 +314,10 @@ def _encoder_options(ffmpeg_path: str, encoder: str) -> list[str]:
 
 
 @lru_cache(maxsize=8)
-def _detect_capabilities_cached(ffmpeg_path: str) -> TranscodeCapabilitiesRead:
+def _detect_capabilities_cached(
+    ffmpeg_path: str,
+    render_node: str | None = None,
+) -> TranscodeCapabilitiesRead:
     try:
         version_result = subprocess.run(
             [ffmpeg_path, "-hide_banner", "-version"],
@@ -296,7 +385,7 @@ def _detect_capabilities_cached(ffmpeg_path: str) -> TranscodeCapabilitiesRead:
         test_error = None
         if hardware:
             tested = True
-            available, test_error = _test_hardware_encoder(ffmpeg_path, name)
+            available, test_error = _test_hardware_encoder(ffmpeg_path, name, render_node)
         capabilities.append(
             TranscodeEncoderCapability(
                 name=name,
@@ -323,7 +412,8 @@ def get_transcode_capabilities(settings: Settings, *, refresh: bool = False) -> 
     with CAPABILITIES_LOCK:
         if refresh:
             _detect_capabilities_cached.cache_clear()
-        return _detect_capabilities_cached(settings.ffmpeg_path).model_copy(deep=True)
+        render_node = _resolve_hardware_render_node(getattr(settings, "hardware_render_node", None))
+        return _detect_capabilities_cached(settings.ffmpeg_path, render_node).model_copy(deep=True)
 
 
 def _available_encoder(capabilities: TranscodeCapabilitiesRead, *preferred: str) -> str | None:
@@ -546,34 +636,40 @@ def _append_stream_options(
     decision: TranscodeStreamPlan,
     source: VideoStream | AudioStream | SubtitleStream,
     dynamic_range: str,
+    *,
+    hardware_device_name: str | None = None,
 ) -> None:
     specifier = f"{kind_letter}:{output_index}"
     if decision.action in {TranscodeStreamAction.keep, TranscodeStreamAction.copy}:
         arguments.extend([f"-c:{specifier}", "copy"])
     else:
         encoder = decision.encoder or decision.codec
+        hardware_backend = _hardware_backend(encoder) if kind_letter == "v" else None
+        filters: list[str] = []
         if encoder:
             arguments.extend([f"-c:{specifier}", encoder])
         if decision.bitrate:
             arguments.extend([f"-b:{specifier}", str(decision.bitrate)])
-        if decision.cq is not None:
-            arguments.extend([f"-cq:{specifier}", f"{decision.cq:g}"])
-        elif decision.crf is not None:
-            arguments.extend([f"-crf:{specifier}", f"{decision.crf:g}"])
+        quality = decision.cq if decision.cq is not None else decision.crf
+        if quality is not None:
+            if hardware_backend == "vaapi":
+                quality_option = "qp"
+            elif hardware_backend == "qsv":
+                quality_option = "global_quality"
+            elif decision.cq is not None:
+                quality_option = "cq"
+            else:
+                quality_option = "crf"
+            arguments.extend([f"-{quality_option}:{specifier}", f"{quality:g}"])
         if decision.width or decision.height:
             width = decision.width or -2
             height = decision.height or -2
-            arguments.extend([f"-filter:{specifier}", f"scale={width}:{height}:force_original_aspect_ratio=decrease"])
+            filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
         effective_pixel_format = decision.pixel_format
         if kind_letter == "v":
             dynamic_filter = _dynamic_range_filter(dynamic_range)
             if dynamic_filter:
-                filter_key = f"-filter:{specifier}"
-                if filter_key in arguments:
-                    position = arguments.index(filter_key)
-                    arguments[position + 1] = f"{arguments[position + 1]},{dynamic_filter}"
-                else:
-                    arguments.extend([filter_key, dynamic_filter])
+                filters.append(dynamic_filter)
             if dynamic_range == "hdr10":
                 arguments.extend([f"-color_primaries:{specifier}", "bt2020", f"-color_trc:{specifier}", "smpte2084", f"-colorspace:{specifier}", "bt2020nc"])
             elif dynamic_range == "hlg":
@@ -588,15 +684,22 @@ def _append_stream_options(
                 source_hdr = (source.hdr_type or "").lower()
                 if not effective_pixel_format and source_hdr not in {"", "sdr"} and (source.bit_depth or 0) >= 10:
                     effective_pixel_format = source.pix_fmt or "yuv420p10le"
+            if hardware_backend and hardware_device_name:
+                filters.append(_hardware_upload_filter(hardware_backend, source, effective_pixel_format))
+        if filters:
+            arguments.extend([f"-filter:{specifier}", ",".join(filters)])
         if decision.frame_rate:
             arguments.extend([f"-r:{specifier}", f"{decision.frame_rate:g}"])
-        if effective_pixel_format:
+        # Hardware encoders consume the uploaded VAAPI/QSV surface format;
+        # passing a software ``-pix_fmt`` would force FFmpeg to negotiate
+        # away from that surface and commonly fails with an opaque format error.
+        if effective_pixel_format and not (hardware_backend and hardware_device_name):
             arguments.extend([f"-pix_fmt:{specifier}", effective_pixel_format])
         if decision.profile:
             arguments.extend([f"-profile:{specifier}", decision.profile])
         if decision.level:
             arguments.extend([f"-level:{specifier}", decision.level])
-        if decision.preset:
+        if decision.preset and hardware_backend != "vaapi":
             arguments.extend([f"-preset:{specifier}", decision.preset])
         if decision.gop_size:
             arguments.extend([f"-g:{specifier}", str(decision.gop_size)])
@@ -670,7 +773,30 @@ def validate_transcode_plan(
         "subtitle": plan.subtitle_streams,
     }
     available_encoders = {item.name: item for item in capabilities.encoders}
-    arguments = [settings.ffmpeg_path, "-hide_banner", "-nostdin", "-loglevel", "error", "-n", "-i", str(paths.source)]
+    selected_video_backends = {
+        backend
+        for decision in plan.video_streams
+        if decision.action == TranscodeStreamAction.encode
+        for backend in [_hardware_backend(decision.encoder or decision.codec)]
+        if backend is not None
+    }
+    accelerated_backends = selected_video_backends & {"vaapi", "qsv"}
+    render_node = _resolve_hardware_render_node(getattr(settings, "hardware_render_node", None))
+    hardware_device_name: str | None = None
+    arguments = [settings.ffmpeg_path, "-hide_banner", "-nostdin", "-loglevel", "error", "-n"]
+    if accelerated_backends:
+        if _is_linux() and not render_node:
+            errors.append(
+                "Intel VAAPI/QSV encoding requires an available DRM render node "
+                "(for example /dev/dri/renderD128)"
+            )
+        elif render_node:
+            arguments.extend(_hardware_device_arguments(accelerated_backends, render_node))
+            # VAAPI is the base DRM device; QSV filters derive their device
+            # from it via ``hwupload=derive_device=qsv``.
+            arguments.extend(["-filter_hw_device", "va"])
+            hardware_device_name = "va"
+    arguments.extend(["-i", str(paths.source)])
     external_rows = {item.id: item for item in media_file.external_subtitles}
     selected_external: list[tuple[ExternalSubtitlePlan, ExternalSubtitle, Path]] = []
     for external in plan.external_subtitles:
@@ -745,6 +871,7 @@ def validate_transcode_plan(
                 decision,
                 source,
                 plan.dynamic_range,
+                hardware_device_name=hardware_device_name,
             )
             output_counts[kind] += 1
         for stream_index in set(source_by_kind[kind]) - seen:
