@@ -2334,19 +2334,19 @@ export function UiElementsPage() {
                   </section>
                 </div>
               </VariantCard>
-              <VariantCard title="Transcoding plan and Wipe comparison" source="TranscodingPanel / VideoWipeCompare" classes={["transcoding-panel", "transcode-stream-row", "transcode-validation", "video-wipe-compare"]} wide>
+              <VariantCard title="Transcoding plan and Wipe comparison" source="TranscodingPanel / VideoWipeCompare" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-validation", "video-wipe-compare"]} wide>
                 <div className="transcoding-panel">
                   <div className="transcode-configuration-grid">
-                    <label><span>Profile</span><select defaultValue="compatibility"><option value="compatibility">Compatibility</option></select></label>
-                    <label><span>Target container</span><select defaultValue="mp4"><option value="mp4">MP4</option></select></label>
-                    <label><span>Encoder</span><select defaultValue="libx264"><option value="libx264">libx264 · CPU</option></select></label>
+                    <label><span>Profile</span><select className="settings-choice-input transcode-control" defaultValue="compatibility"><option value="compatibility">Compatibility</option></select></label>
+                    <label><span>Target container</span><select className="settings-choice-input transcode-control" defaultValue="mp4"><option value="mp4">MP4</option></select></label>
+                    <label><span>Encoder</span><select className="settings-choice-input transcode-control" defaultValue="libx264"><option value="libx264">libx264 · CPU</option></select></label>
                   </div>
                   <div className="transcode-stream-group">
                     <h3>Video streams</h3>
                     <article className="transcode-stream-row">
                       <div><strong>#0</strong><span>HEVC</span></div>
-                      <select defaultValue="encode"><option value="encode">Encode</option></select>
-                      <div className="transcode-stream-encode-fields"><input defaultValue="libx264" /><input defaultValue="20" /></div>
+                      <select className="settings-choice-input transcode-control" defaultValue="encode"><option value="encode">Encode</option></select>
+                      <div className="transcode-stream-encode-fields"><input className="settings-choice-input transcode-control" defaultValue="libx264" /><input className="settings-choice-input transcode-control" defaultValue="20" /></div>
                     </article>
                   </div>
                   <section className="transcode-validation is-valid"><h3><Check aria-hidden="true" />Change preview</h3><strong>Arrival [1920x1080, SDR, H264] [en].mp4</strong><code>ffmpeg -i Arrival.mkv -map 0:0 -c:v:0 libx264 …</code></section>

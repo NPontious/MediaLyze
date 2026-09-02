@@ -161,6 +161,9 @@ describe("TranscodingPanel", () => {
 
     expect((await screen.findAllByText("Movie.mkv")).length).toBeGreaterThan(0);
     expect(screen.getByRole("combobox", { name: "Action for stream 0" })).toHaveValue("encode");
+    expect(screen.getByRole("combobox", { name: "Action for stream 0" })).toHaveClass("settings-choice-input", "transcode-control");
+    expect(screen.getByRole("spinbutton", { name: "video 0 width" })).toHaveClass("settings-choice-input", "transcode-control");
+    expect(screen.queryByText(/Locally reported encoder options/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("spinbutton", { name: "video 0 width" }), { target: { value: "1280" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Action for stream 2" }), { target: { value: "drop" } });
     fireEvent.click(screen.getByText("Movie.en.srt · en · srt"));

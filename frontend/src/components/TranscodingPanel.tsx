@@ -210,6 +210,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
 
   const selectedVariant = data.variants.find((variant) => variant.id === selectedVariantId && variant.output_file_id);
   const activeJob = jobIsActive(job) ? job : null;
+  const transcodeControlClass = "settings-choice-input transcode-control";
   const setGlobalVideoEncoder = (encoderName: string) => {
     const capability = capabilities.encoders.find((entry) => entry.name === encoderName);
     setPlan((current) => current ? {
@@ -253,7 +254,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
       <div className="transcode-configuration-grid">
         <label>
           <span>{t("transcoding.profile")}</span>
-          <select value={PROFILE_KEYS.includes(plan.profile as typeof PROFILE_KEYS[number]) ? plan.profile : "expert"} onChange={(event) => {
+          <select className={transcodeControlClass} value={PROFILE_KEYS.includes(plan.profile as typeof PROFILE_KEYS[number]) ? plan.profile : "expert"} onChange={(event) => {
             const profile = event.target.value;
             if (profile !== "expert") selectProfile(profile as typeof PROFILE_KEYS[number]);
           }}>
@@ -263,7 +264,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
         </label>
         <label>
           <span>{t("transcoding.container")}</span>
-          <select value={plan.container} onChange={(event) => {
+          <select className={transcodeControlClass} value={plan.container} onChange={(event) => {
             setPlan({ ...plan, profile: "expert", container: event.target.value as TranscodePlan["container"] });
             setValidation(null);
           }}>
@@ -272,16 +273,15 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
         </label>
         <label>
           <span>{t("transcoding.encoder")}</span>
-          <select value={plan.video_streams.find((stream) => stream.action === "encode")?.encoder ?? ""} onChange={(event) => setGlobalVideoEncoder(event.target.value)}>
+          <select className={transcodeControlClass} value={plan.video_streams.find((stream) => stream.action === "encode")?.encoder ?? ""} onChange={(event) => setGlobalVideoEncoder(event.target.value)}>
             {availableVideoEncoders.map((encoder) => (
               <option key={encoder.name} value={encoder.name}>{encoder.name} · {encoder.hardware ? t("transcoding.hardware") : t("transcoding.cpu")}</option>
             ))}
           </select>
-          <small>{t("transcoding.encoderOptions")}: {capabilities.encoders.find((entry) => entry.name === plan.video_streams.find((stream) => stream.action === "encode")?.encoder)?.options.join(", ") || "—"}</small>
         </label>
         <label>
           <span>{t("transcoding.dynamicRange")}</span>
-          <select value={plan.dynamic_range} onChange={(event) => {
+          <select className={transcodeControlClass} value={plan.dynamic_range} onChange={(event) => {
             setPlan({ ...plan, profile: "expert", dynamic_range: event.target.value as TranscodePlan["dynamic_range"] });
             setValidation(null);
           }}>
@@ -317,7 +317,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
               return (
                 <article key={stream.stream_index} className="transcode-stream-row">
                   <div><strong>#{stream.stream_index}</strong><span>{formatCodecLabel(source?.codec, codecKind)}</span>{language ? <span>{language}</span> : null}</div>
-                  <select aria-label={t("transcoding.streamAction", { index: stream.stream_index })} value={stream.action} onChange={(event) => {
+                  <select className={transcodeControlClass} aria-label={t("transcoding.streamAction", { index: stream.stream_index })} value={stream.action} onChange={(event) => {
                     setPlan(updateStreamPlan(plan, kind, stream.stream_index, { action: event.target.value as TranscodeStreamAction }));
                     setValidation(null);
                   }}>
@@ -325,23 +325,23 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
                   </select>
                   {stream.action === "encode" ? (
                     <div className="transcode-stream-encode-fields">
-                      <input aria-label={`${kind} ${stream.stream_index} codec`} value={stream.codec ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { codec: event.target.value || null }))} placeholder="Codec" />
-                      <input aria-label={`${kind} ${stream.stream_index} encoder`} value={stream.encoder ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { encoder: event.target.value || null }))} placeholder={t("transcoding.encoder")} />
-                      <input aria-label={`${kind} ${stream.stream_index} bitrate`} type="number" value={stream.bitrate ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { bitrate: event.target.value ? Number(event.target.value) : null }))} placeholder={t("transcoding.bitrate")} />
-                      <input aria-label={`${kind} ${stream.stream_index} CRF`} type="number" value={stream.crf ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { crf: event.target.value ? Number(event.target.value) : null }))} placeholder="CRF" />
-                      <input aria-label={`${kind} ${stream.stream_index} CQ`} type="number" value={stream.cq ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { cq: event.target.value ? Number(event.target.value) : null }))} placeholder="CQ" />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} codec`} value={stream.codec ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { codec: event.target.value || null }))} placeholder="Codec" />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} encoder`} value={stream.encoder ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { encoder: event.target.value || null }))} placeholder={t("transcoding.encoder")} />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} bitrate`} type="number" value={stream.bitrate ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { bitrate: event.target.value ? Number(event.target.value) : null }))} placeholder={t("transcoding.bitrate")} />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} CRF`} type="number" value={stream.crf ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { crf: event.target.value ? Number(event.target.value) : null }))} placeholder="CRF" />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} CQ`} type="number" value={stream.cq ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { cq: event.target.value ? Number(event.target.value) : null }))} placeholder="CQ" />
                       {kind === "video_streams" ? <>
-                        <input aria-label={`video ${stream.stream_index} width`} type="number" value={stream.width ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { width: event.target.value ? Number(event.target.value) : null }))} placeholder="Width" />
-                        <input aria-label={`video ${stream.stream_index} height`} type="number" value={stream.height ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { height: event.target.value ? Number(event.target.value) : null }))} placeholder="Height" />
-                        <input aria-label={`video ${stream.stream_index} frame rate`} type="number" step="0.001" value={stream.frame_rate ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { frame_rate: event.target.value ? Number(event.target.value) : null }))} placeholder="Frame rate" />
-                        <input aria-label={`video ${stream.stream_index} pixel format`} value={stream.pixel_format ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { pixel_format: event.target.value || null }))} placeholder="Pixel format" />
-                        <input aria-label={`video ${stream.stream_index} profile`} value={stream.profile ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { profile: event.target.value || null }))} placeholder="Profile" />
-                        <input aria-label={`video ${stream.stream_index} level`} value={stream.level ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { level: event.target.value || null }))} placeholder="Level" />
-                        <input aria-label={`video ${stream.stream_index} preset`} value={stream.preset ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { preset: event.target.value || null }))} placeholder="Preset" />
-                        <input aria-label={`video ${stream.stream_index} GOP`} type="number" value={stream.gop_size ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { gop_size: event.target.value ? Number(event.target.value) : null }))} placeholder="GOP" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} width`} type="number" value={stream.width ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { width: event.target.value ? Number(event.target.value) : null }))} placeholder="Width" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} height`} type="number" value={stream.height ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { height: event.target.value ? Number(event.target.value) : null }))} placeholder="Height" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} frame rate`} type="number" step="0.001" value={stream.frame_rate ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { frame_rate: event.target.value ? Number(event.target.value) : null }))} placeholder="Frame rate" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} pixel format`} value={stream.pixel_format ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { pixel_format: event.target.value || null }))} placeholder="Pixel format" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} profile`} value={stream.profile ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { profile: event.target.value || null }))} placeholder="Profile" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} level`} value={stream.level ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { level: event.target.value || null }))} placeholder="Level" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} preset`} value={stream.preset ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { preset: event.target.value || null }))} placeholder="Preset" />
+                        <input className={transcodeControlClass} aria-label={`video ${stream.stream_index} GOP`} type="number" value={stream.gop_size ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { gop_size: event.target.value ? Number(event.target.value) : null }))} placeholder="GOP" />
                       </> : null}
-                      <input aria-label={`${kind} ${stream.stream_index} language`} value={stream.language ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { language: event.target.value || null }))} placeholder="Language" />
-                      <input aria-label={`${kind} ${stream.stream_index} title`} value={stream.title ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { title: event.target.value || null }))} placeholder="Title" />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} language`} value={stream.language ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { language: event.target.value || null }))} placeholder="Language" />
+                      <input className={transcodeControlClass} aria-label={`${kind} ${stream.stream_index} title`} value={stream.title ?? ""} onChange={(event) => setPlan(updateStreamPlan(plan, kind, stream.stream_index, { title: event.target.value || null }))} placeholder="Title" />
                     </div>
                   ) : null}
                 </article>
@@ -398,7 +398,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
 
       <label className="transcode-filename-template">
         <span>{t("transcoding.filenameTemplate")}</span>
-        <input value={plan.filename_template} onChange={(event) => {
+        <input className={transcodeControlClass} value={plan.filename_template} onChange={(event) => {
           setPlan({ ...plan, profile: "expert", filename_template: event.target.value });
           setValidation(null);
         }} />
