@@ -1904,7 +1904,7 @@
     "quality": "Quality ({{mode}})",
     "qualityHelpAria": "Explain quality control",
     "qualityHelp": "Lower values mean higher quality and usually larger files. This encoder uses {{mode}} from {{min}} to {{max}}; the default is {{default}}. Typical guidance: {{guidance}}",
-    "qualityGuidance": { "libx264": "18–22 high quality, 23–28 balanced, 29+ smaller files", "libx265": "20–24 high quality, 25–30 balanced, 31+ smaller files", "av1": "24–30 high quality, 31–38 balanced, 39+ smaller files", "hardware": "18–24 high quality, 25–32 balanced, 33+ smaller files", "default": "start near the default and compare the result" },
+    "qualityGuidance": { "libx264": "18–22 high quality, 23–28 balanced, 29+ smaller files", "libx265": "20–24 high quality, 25–30 balanced, 31+ smaller files", "av1": "24–30 high quality, 31–38 balanced, 39+ smaller files", "hardware": "18–24 high quality, 25–32 balanced, 33+ smaller files", "globalQuality": "For QSV ICQ, 18–28 is a useful starting range; VAAPI codec-native indexes vary, so start near the default and compare", "default": "start near the default and compare the result" },
     "resolution": "Output resolution",
     "resolutionHelpAria": "Explain output resolution",
     "resolutionHelp": "Only equal or lower heights are offered. The width is calculated with even pixels so the source aspect ratio is preserved; upscaling is rejected.",

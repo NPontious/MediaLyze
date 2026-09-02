@@ -37,6 +37,26 @@ const QUALITY_SPECS: Record<string, QualitySpec> = {
   "libvpx-vp9": { mode: "crf", min: 0, max: 63, default: 31, step: 1 },
 };
 
+// Keep a local fallback for older API responses. The backend sends these
+// values from its FFmpeg capability probe, but a browser can briefly retain a
+// response from before a server upgrade. AV1/VP8/VP9 VAAPI use FFmpeg's
+// global_quality (not the H.264/HEVC-only qp option).
+const HARDWARE_QUALITY_SPECS: Record<string, QualitySpec> = {
+  h264_vaapi: { mode: "qp", min: 0, max: 51, default: 23, step: 1 },
+  hevc_vaapi: { mode: "qp", min: 0, max: 51, default: 23, step: 1 },
+  av1_vaapi: { mode: "global_quality", min: 1, max: 255, default: 80, step: 1 },
+  vp8_vaapi: { mode: "global_quality", min: 1, max: 127, default: 60, step: 1 },
+  vp9_vaapi: { mode: "global_quality", min: 1, max: 255, default: 120, step: 1 },
+  mpeg2_vaapi: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
+  mjpeg_vaapi: { mode: "global_quality", min: 1, max: 100, default: 80, step: 1 },
+  h264_qsv: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
+  hevc_qsv: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
+  av1_qsv: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
+  vp9_qsv: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
+  mpeg2_qsv: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
+  mjpeg_qsv: { mode: "global_quality", min: 1, max: 100, default: 80, step: 1 },
+};
+
 const AUDIO_BITRATES: Record<string, number[]> = {
   aac: [64_000, 96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
   libfdk_aac: [64_000, 96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
@@ -52,7 +72,7 @@ const AUDIO_BITRATES: Record<string, number[]> = {
 const DEFAULT_AUDIO_BITRATES = AUDIO_BITRATES.aac;
 
 function encoderQualitySpec(encoder: TranscodeEncoderCapability | undefined): QualitySpec {
-  const fallback = encoder ? QUALITY_SPECS[encoder.name] : undefined;
+  const fallback = encoder ? QUALITY_SPECS[encoder.name] ?? HARDWARE_QUALITY_SPECS[encoder.name] : undefined;
   const inferredMode: QualityMode | undefined = encoder?.name.endsWith("_vaapi")
     ? "qp"
     : encoder?.name.endsWith("_qsv")
@@ -157,7 +177,7 @@ function pickEncoder(
 ): TranscodeEncoderCapability | undefined {
   const candidates = encoders.filter((encoder) => {
     if (!encoder.available) return false;
-    if (kind === "video_streams") return ["h264", "hevc", "av1", "vp8", "vp9"].includes(encoder.codec);
+    if (kind === "video_streams") return ["h264", "hevc", "av1", "vp8", "vp9", "mjpeg", "mpeg2video"].includes(encoder.codec);
     if (kind === "audio_streams") return ["aac", "opus", "vorbis", "ac3", "eac3", "flac", "mp3"].includes(encoder.codec);
     const allowed = container === "mp4" ? ["mov_text"] : container === "webm" ? ["webvtt"] : ["subrip", "ass", "webvtt", "mov_text"];
     return allowed.includes(encoder.codec);
@@ -190,7 +210,9 @@ function qualityGuidance(
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
   const name = encoder?.name ?? "";
-  const key = name === "libx264" ? "libx264" : name === "libx265" ? "libx265" : /av1/i.test(name) ? "av1" : spec.mode === "crf" ? "default" : "hardware";
+  const key = spec.mode === "global_quality"
+    ? "globalQuality"
+    : name === "libx264" ? "libx264" : name === "libx265" ? "libx265" : /av1/i.test(name) ? "av1" : spec.mode === "crf" ? "default" : "hardware";
   return t(`transcoding.qualityGuidance.${key}`);
 }
 
@@ -581,7 +603,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
 
   const availableVideoEncoders = useMemo(
     () => capabilities?.encoders.filter((encoder) => (
-      encoder.available && (encoder.hardware || ["h264", "hevc", "av1", "vp8", "vp9"].includes(encoder.codec))
+      encoder.available && (encoder.hardware || ["h264", "hevc", "av1", "vp8", "vp9", "mjpeg", "mpeg2video"].includes(encoder.codec))
     )) ?? [],
     [capabilities],
   );

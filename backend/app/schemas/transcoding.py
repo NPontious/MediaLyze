@@ -22,8 +22,8 @@ class TranscodeStreamPlan(BaseModel):
     codec: str | None = Field(default=None, max_length=64)
     encoder: str | None = Field(default=None, max_length=128)
     bitrate: int | None = Field(default=None, ge=1)
-    crf: float | None = Field(default=None, ge=0, le=63)
-    cq: float | None = Field(default=None, ge=0, le=63)
+    crf: float | None = Field(default=None, ge=0, le=255)
+    cq: float | None = Field(default=None, ge=0, le=255)
     width: int | None = Field(default=None, ge=16, le=16384)
     height: int | None = Field(default=None, ge=16, le=16384)
     frame_rate: float | None = Field(default=None, gt=0, le=480)
@@ -77,9 +77,9 @@ class TranscodeEncoderCapability(BaseModel):
     test_error: str | None = None
     options: list[str] = Field(default_factory=list)
     quality_mode: Literal["crf", "cq", "qp", "global_quality"] | None = None
-    quality_min: float | None = Field(default=None, ge=0, le=63)
-    quality_max: float | None = Field(default=None, ge=0, le=63)
-    quality_default: float | None = Field(default=None, ge=0, le=63)
+    quality_min: float | None = Field(default=None, ge=0, le=255)
+    quality_max: float | None = Field(default=None, ge=0, le=255)
+    quality_default: float | None = Field(default=None, ge=0, le=255)
     quality_step: float | None = Field(default=None, gt=0, le=10)
 
 

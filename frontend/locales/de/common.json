@@ -1904,7 +1904,7 @@
     "quality": "Qualität ({{mode}})",
     "qualityHelpAria": "Qualitätssteuerung erklären",
     "qualityHelp": "Niedrigere Werte bedeuten höhere Qualität und meist größere Dateien. Dieser Encoder nutzt {{mode}} von {{min}} bis {{max}}; Standard ist {{default}}. Orientierung: {{guidance}}",
-    "qualityGuidance": { "libx264": "18–22 hohe Qualität, 23–28 ausgewogen, ab 29 kleinere Dateien", "libx265": "20–24 hohe Qualität, 25–30 ausgewogen, ab 31 kleinere Dateien", "av1": "24–30 hohe Qualität, 31–38 ausgewogen, ab 39 kleinere Dateien", "hardware": "18–24 hohe Qualität, 25–32 ausgewogen, ab 33 kleinere Dateien", "default": "mit dem Standardwert beginnen und Ergebnis vergleichen" },
+    "qualityGuidance": { "libx264": "18–22 hohe Qualität, 23–28 ausgewogen, ab 29 kleinere Dateien", "libx265": "20–24 hohe Qualität, 25–30 ausgewogen, ab 31 kleinere Dateien", "av1": "24–30 hohe Qualität, 31–38 ausgewogen, ab 39 kleinere Dateien", "hardware": "18–24 hohe Qualität, 25–32 ausgewogen, ab 33 kleinere Dateien", "globalQuality": "Für QSV-ICQ sind 18–28 ein sinnvoller Startbereich; VAAPI verwendet codecabhängige Qualitätsindizes, daher nahe am Standardwert beginnen und vergleichen", "default": "mit dem Standardwert beginnen und Ergebnis vergleichen" },
     "resolution": "Ausgabeauflösung",
     "resolutionHelpAria": "Ausgabeauflösung erklären",
     "resolutionHelp": "Es werden nur gleiche oder kleinere Höhen angeboten. Die Breite wird mit geraden Pixelwerten berechnet, damit das Seitenverhältnis erhalten bleibt; Hochskalieren wird abgelehnt.",

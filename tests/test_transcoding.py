@@ -450,6 +450,58 @@ def test_capabilities_detect_and_smoke_test_dynamic_hardware_encoders(monkeypatc
     assert capabilities.dolby_vision_passthrough is True
 
 
+def test_capabilities_expose_intel_hevc_and_av1_encoders(monkeypatch, tmp_path) -> None:
+    render_node = tmp_path / "renderD128"
+    render_node.touch()
+    encoder_names = [
+        "h264_qsv",
+        "hevc_qsv",
+        "av1_qsv",
+        "h264_vaapi",
+        "hevc_vaapi",
+        "av1_vaapi",
+        "vp9_vaapi",
+        "mjpeg_qsv",
+        "mpeg2_qsv",
+    ]
+
+    def fake_run(arguments, **_kwargs):
+        if "-version" in arguments:
+            return SimpleNamespace(returncode=0, stdout="ffmpeg version test\n", stderr="")
+        if "-encoders" in arguments:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=" V..... libx264 H.264\n"
+                + "\n".join(f" V..... {name} Intel hardware encoder" for name in encoder_names),
+                stderr="",
+            )
+        if "-muxers" in arguments:
+            return SimpleNamespace(returncode=0, stdout=" E  matroska Matroska\n E  mp4 MP4\n", stderr="")
+        if "-h" in arguments:
+            return SimpleNamespace(returncode=0, stdout="  -preset <string> encoder preset\n", stderr="")
+        if "-c:v" in arguments:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(transcoding, "_is_linux", lambda: True)
+    monkeypatch.setattr(transcoding.subprocess, "run", fake_run)
+    settings = _settings(tmp_path)
+    settings.hardware_render_node = str(render_node)
+    capabilities = transcoding.get_transcode_capabilities(settings, refresh=True)
+    by_name = {encoder.name: encoder for encoder in capabilities.encoders}
+
+    for name in encoder_names:
+        assert by_name[name].hardware is True
+        assert by_name[name].tested is True
+        assert by_name[name].available is True
+    assert by_name["hevc_qsv"].codec == "hevc"
+    assert by_name["hevc_qsv"].quality_mode == "global_quality"
+    assert by_name["av1_qsv"].codec == "av1"
+    assert by_name["av1_vaapi"].quality_mode == "global_quality"
+    assert by_name["av1_vaapi"].quality_max == 255
+    assert by_name["mjpeg_qsv"].quality_default == 80
+
+
 def test_intel_vaapi_probe_uses_drm_render_node_and_upload(monkeypatch, tmp_path) -> None:
     render_node = tmp_path / "renderD128"
     render_node.touch()
@@ -479,13 +531,15 @@ def test_intel_vaapi_probe_uses_drm_render_node_and_upload(monkeypatch, tmp_path
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=64x64:d=0.1",
+            "color=c=black:s=128x128:d=0.1",
             "-vf",
             "format=nv12,hwupload",
             "-frames:v",
             "1",
             "-c:v",
             "h264_vaapi",
+            "-qp",
+            "23",
             "-f",
             "null",
             "-",
@@ -493,7 +547,7 @@ def test_intel_vaapi_probe_uses_drm_render_node_and_upload(monkeypatch, tmp_path
     ]
 
 
-def test_intel_qsv_probe_derives_from_vaapi_render_node(monkeypatch, tmp_path) -> None:
+def test_intel_qsv_probe_uses_explicit_drm_render_node(monkeypatch, tmp_path) -> None:
     render_node = tmp_path / "renderD128"
     render_node.touch()
     calls = []
@@ -509,9 +563,11 @@ def test_intel_qsv_probe_derives_from_vaapi_render_node(monkeypatch, tmp_path) -
 
     assert available is True
     assert error is None
-    assert "qsv=qs@va" in calls[0]
+    assert "qsv=qs:hw,child_device=" + str(render_node) in calls[0]
     assert "-filter_hw_device" in calls[0]
-    assert "format=nv12,hwupload=derive_device=qsv" in calls[0]
+    assert calls[0][calls[0].index("-filter_hw_device") + 1] == "qs"
+    assert "format=nv12,hwupload=extra_hw_frames=16" in calls[0]
+    assert "-global_quality" in calls[0]
 
 
 def test_intel_hardware_plan_initializes_device_and_uploads_frames(monkeypatch, tmp_path) -> None:
@@ -559,11 +615,48 @@ def test_intel_hardware_plan_initializes_device_and_uploads_frames(monkeypatch, 
     assert "-qp:v:0" in validation.ffmpeg_arguments
     assert "-crf:v:0" not in validation.ffmpeg_arguments
     assert "-preset:v:0" not in validation.ffmpeg_arguments
-    assert "qsv=qs@va" in validation_qsv.ffmpeg_arguments
+    assert f"qsv=qs:hw,child_device={render_node}" in validation_qsv.ffmpeg_arguments
     assert "-global_quality:v:0" in validation_qsv.ffmpeg_arguments
     assert "-crf:v:0" not in validation_qsv.ffmpeg_arguments
     qsv_filter_index = validation_qsv.ffmpeg_arguments.index("-filter:v:0")
-    assert validation_qsv.ffmpeg_arguments[qsv_filter_index + 1].endswith("format=nv12,hwupload=derive_device=qsv")
+    assert validation_qsv.ffmpeg_arguments[qsv_filter_index + 1].endswith("format=nv12,hwupload=extra_hw_frames=16")
+
+
+def test_vaapi_codec_native_quality_option_is_used(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    render_node = tmp_path / "renderD128"
+    render_node.touch()
+    capabilities = _capabilities()
+    capabilities.encoders.append(
+        TranscodeEncoderCapability(
+            name="av1_vaapi",
+            codec="av1",
+            hardware=True,
+            tested=True,
+            available=True,
+            quality_mode="global_quality",
+            quality_min=1,
+            quality_max=255,
+            quality_default=80,
+            quality_step=1,
+        )
+    )
+    monkeypatch.setattr(transcoding, "_is_linux", lambda: True)
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: capabilities)
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.video_streams[0].codec = "av1"
+        plan.video_streams[0].encoder = "av1_vaapi"
+        plan.video_streams[0].crf = None
+        plan.video_streams[0].cq = 80
+        settings = _settings(tmp_path)
+        settings.hardware_render_node = str(render_node)
+        validation = transcoding.validate_transcode_plan(db, settings, media_file, plan)
+
+    assert validation.valid is True
+    assert "-global_quality:v:0" in validation.ffmpeg_arguments
+    assert "-qp:v:0" not in validation.ffmpeg_arguments
 
 
 def test_dolby_vision_generation_is_not_pretended(monkeypatch, tmp_path) -> None:

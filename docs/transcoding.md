@@ -16,7 +16,7 @@ Filename tokens are `{resolution}`, `{dynRange}`, `{codec}`, `{audioLanguages}`,
 
 ## Validation and capabilities
 
-`GET /api/transcoding/capabilities` reads the local FFmpeg version, muxers, encoders, and each video encoder's locally reported option names. Hardware encoders are only marked available after a real one-frame test succeeds. Selecting an unavailable encoder is a validation error; MediaLyze does not silently fall back to CPU.
+`GET /api/transcoding/capabilities` reads the local FFmpeg version, muxers, encoders, and each video encoder's locally reported option names. Intel QSV and VAAPI probes initialize the selected DRM render node, upload a 128×128 test frame, and pass the encoder's native quality option (ICQ/global quality for QSV, QP for H.264/HEVC VAAPI, and global quality for AV1/VP8/VP9/MPEG-2/MJPEG VAAPI). Hardware encoders are only marked available after a real one-frame test succeeds. Selecting an unavailable encoder is a validation error; MediaLyze does not silently fall back to CPU.
 
 Validation resolves all files below their library root and returns the target, stream diff, warnings, normalized plan, detected capabilities, and complete readable command. It blocks existing targets, duplicate active targets, incompatible container/codec pairs, bitmap-to-text subtitle conversions, missing sidecars, invalid BCP 47 language tags, video upscaling or aspect-ratio changes, and unsupported dynamic-range choices. Dolby Vision is never synthesized: V1 only permits verified source passthrough in a supported container with video stream copy.
 
@@ -76,6 +76,7 @@ environment:
 ```
 
 VAAPI jobs initialize the render node and upload frames with `format=nv12` (or
-`p010le` for 10-bit input). QSV jobs derive their oneVPL device from the same
-VAAPI node. No host driver installation or media-file modification is performed
-by MediaLyze.
+`p010le` for 10-bit input). QSV-only jobs initialize a named QSV device with
+the selected DRM node as its `child_device`; plans that mix QSV and VAAPI derive
+the QSV device from the same named VAAPI device. No host driver installation or
+media-file modification is performed by MediaLyze.

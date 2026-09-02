@@ -68,6 +68,10 @@ VIDEO_ENCODER_CODECS = {
     "h264_amf": "h264",
     "h264_videotoolbox": "h264",
     "h264_vaapi": "h264",
+    "mjpeg_qsv": "mjpeg",
+    "mjpeg_vaapi": "mjpeg",
+    "mpeg2_qsv": "mpeg2video",
+    "mpeg2_vaapi": "mpeg2video",
     "libx265": "hevc",
     "hevc_nvenc": "hevc",
     "hevc_qsv": "hevc",
@@ -80,6 +84,7 @@ VIDEO_ENCODER_CODECS = {
     "av1_qsv": "av1",
     "av1_amf": "av1",
     "av1_vaapi": "av1",
+    "vp8_vaapi": "vp8",
     "libvpx-vp9": "vp9",
     "vp9_qsv": "vp9",
     "vp9_vaapi": "vp9",
@@ -112,6 +117,27 @@ ENCODER_QUALITY_SPECS = {
     "libaom-av1": ("crf", 0, 63, 30, 1),
     "libvpx-vp9": ("crf", 0, 63, 31, 1),
 }
+# VAAPI exposes the common ``global_quality`` option for codecs which do not
+# have a codec-specific QP option.  Keep these ranges close to the native
+# FFmpeg/VAAPI ranges so that the UI does not send an option the encoder cannot
+# understand (notably ``av1_vaapi`` does not accept ``-qp`` on current builds).
+VAAPI_QUALITY_SPECS = {
+    "h264": ("qp", 0, 51, 23, 1),
+    "hevc": ("qp", 0, 51, 23, 1),
+    "av1": ("global_quality", 1, 255, 80, 1),
+    "vp8": ("global_quality", 1, 127, 60, 1),
+    "vp9": ("global_quality", 1, 255, 120, 1),
+    "mpeg2video": ("global_quality", 1, 51, 23, 1),
+    "mjpeg": ("global_quality", 1, 100, 80, 1),
+}
+QSV_QUALITY_SPECS = {
+    "mjpeg": ("global_quality", 1, 100, 80, 1),
+    "h264": ("global_quality", 1, 51, 23, 1),
+    "hevc": ("global_quality", 1, 51, 23, 1),
+    "av1": ("global_quality", 1, 51, 23, 1),
+    "vp9": ("global_quality", 1, 51, 23, 1),
+    "mpeg2video": ("global_quality", 1, 51, 23, 1),
+}
 CONTAINER_FORMATS = {"mkv": "matroska", "mp4": "mp4", "webm": "webm"}
 CONTAINER_COMPATIBILITY = {
     "mp4": {
@@ -143,12 +169,23 @@ def _encoder_quality_spec(name: str) -> tuple[str, int, int, int, int] | None:
     if normalized in ENCODER_QUALITY_SPECS:
         return ENCODER_QUALITY_SPECS[normalized]
     if normalized.endswith("_vaapi"):
-        return ("qp", 0, 51, 23, 1)
+        codec = _hardware_encoder_codec(normalized)
+        return VAAPI_QUALITY_SPECS.get(codec) if codec else None
     if normalized.endswith("_qsv"):
-        return ("global_quality", 1, 51, 23, 1)
+        codec = _hardware_encoder_codec(normalized)
+        return QSV_QUALITY_SPECS.get(codec) if codec else None
     if any(normalized.endswith(suffix) for suffix in ("_nvenc", "_amf", "_videotoolbox")):
         return ("cq", 0, 51, 23, 1)
     return None
+
+
+def _quality_option(mode: str) -> str:
+    return {
+        "crf": "crf",
+        "cq": "cq",
+        "qp": "qp",
+        "global_quality": "global_quality",
+    }.get(mode, mode)
 
 
 class TranscodeValidationError(ValueError):
@@ -241,10 +278,30 @@ def _resolve_hardware_render_node(configured: str | Path | None) -> str | None:
     )
 
 
-def _hardware_device_arguments(backends: set[str], render_node: str) -> list[str]:
-    """Build FFmpeg's named hardware-device initialization arguments."""
+def _hardware_device_arguments(
+    backends: set[str],
+    render_node: str,
+    *,
+    qsv_direct: bool = False,
+) -> list[str]:
+    """Build FFmpeg's named hardware-device initialization arguments.
+
+    A QSV-only graph uses FFmpeg's explicit Linux ``child_device`` syntax. It
+    avoids relying on the driver's default adapter, which is especially
+    important when an Arc GPU is present next to an integrated adapter. When
+    VAAPI and QSV are used in the same graph, QSV is derived from the named
+    VAAPI device so both encoders share the same DRM context.
+    """
 
     arguments: list[str] = []
+    if qsv_direct and backends == {"qsv"}:
+        arguments.extend(
+            [
+                "-init_hw_device",
+                f"qsv=qs:hw,child_device={render_node}",
+            ]
+        )
+        return arguments
     if "vaapi" in backends or "qsv" in backends:
         arguments.extend(["-init_hw_device", f"vaapi=va:{render_node}"])
     if "qsv" in backends:
@@ -266,8 +323,18 @@ def _hardware_upload_filter(
     backend: str,
     source: VideoStream | None,
     effective_pixel_format: str | None,
+    *,
+    qsv_direct: bool = False,
 ) -> str:
-    upload = "hwupload" if backend == "vaapi" else "hwupload=derive_device=qsv"
+    if backend == "vaapi":
+        upload = "hwupload"
+    elif qsv_direct:
+        # With a direct QSV device, filter_hw_device already points at the
+        # target surface pool. Extra frames prevent short sources from
+        # exhausting the QSV upload queue during startup.
+        upload = "hwupload=extra_hw_frames=16"
+    else:
+        upload = "hwupload=derive_device=qsv"
     return f"format={_hardware_upload_format(source, effective_pixel_format)},{upload}"
 
 
@@ -285,29 +352,32 @@ def _test_hardware_encoder(
         "-loglevel",
         "error",
     ]
+    qsv_direct = False
     if backend and render_node:
-        command.extend(_hardware_device_arguments({backend}, render_node))
-        command.extend(["-filter_hw_device", "va"])
+        qsv_direct = backend == "qsv" and _is_linux()
+        command.extend(_hardware_device_arguments({backend}, render_node, qsv_direct=qsv_direct))
+        command.extend(["-filter_hw_device", "qs" if qsv_direct else "va"])
     command.extend([
         "-f",
         "lavfi",
         "-i",
-        "color=c=black:s=64x64:d=0.1",
+        "color=c=black:s=128x128:d=0.1",
     ])
     if backend and render_node:
         command.extend([
             "-vf",
-            _hardware_upload_filter(backend, None, None),
+            _hardware_upload_filter(backend, None, None, qsv_direct=qsv_direct),
         ])
     command.extend([
         "-frames:v",
         "1",
         "-c:v",
         encoder,
-        "-f",
-        "null",
-        "-",
     ])
+    quality_spec = _encoder_quality_spec(encoder)
+    if quality_spec:
+        command.extend([f"-{_quality_option(quality_spec[0])}", f"{quality_spec[3]:g}"])
+    command.extend(["-f", "null", "-"])
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -741,7 +811,12 @@ def _append_stream_options(
             arguments.extend([f"-b:{specifier}", str(decision.bitrate)])
         quality = decision.cq if decision.cq is not None else decision.crf
         if quality is not None:
-            if hardware_backend == "vaapi":
+            quality_spec = _encoder_quality_spec(encoder or "")
+            if quality_spec:
+                quality_option = _quality_option(quality_spec[0])
+            elif hardware_backend == "vaapi":
+                # Keep a conservative fallback for an unknown VAAPI encoder
+                # reported by a future FFmpeg build.
                 quality_option = "qp"
             elif hardware_backend == "qsv":
                 quality_option = "global_quality"
@@ -774,7 +849,14 @@ def _append_stream_options(
                 if not effective_pixel_format and source_hdr not in {"", "sdr"} and (source.bit_depth or 0) >= 10:
                     effective_pixel_format = source.pix_fmt or "yuv420p10le"
             if hardware_backend and hardware_device_name:
-                filters.append(_hardware_upload_filter(hardware_backend, source, effective_pixel_format))
+                filters.append(
+                    _hardware_upload_filter(
+                        hardware_backend,
+                        source,
+                        effective_pixel_format,
+                        qsv_direct=hardware_device_name == "qs",
+                    )
+                )
         if filters:
             arguments.extend([f"-filter:{specifier}", ",".join(filters)])
         if decision.frame_rate:
@@ -882,11 +964,19 @@ def validate_transcode_plan(
                 "(for example /dev/dri/renderD128)"
             )
         elif render_node:
-            arguments.extend(_hardware_device_arguments(accelerated_backends, render_node))
-            # VAAPI is the base DRM device; QSV filters derive their device
-            # from it via ``hwupload=derive_device=qsv``.
-            arguments.extend(["-filter_hw_device", "va"])
-            hardware_device_name = "va"
+            qsv_direct = accelerated_backends == {"qsv"} and _is_linux()
+            arguments.extend(
+                _hardware_device_arguments(
+                    accelerated_backends,
+                    render_node,
+                    qsv_direct=qsv_direct,
+                )
+            )
+            # VAAPI is the base DRM device when both backends are selected;
+            # QSV-only plans use the explicitly selected QSV child device.
+            filter_device = "va" if not qsv_direct else "qs"
+            arguments.extend(["-filter_hw_device", filter_device])
+            hardware_device_name = filter_device
     arguments.extend(["-i", str(paths.source)])
     external_rows = {item.id: item for item in media_file.external_subtitles}
     selected_external: list[tuple[ExternalSubtitlePlan, ExternalSubtitle, Path]] = []
