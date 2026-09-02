@@ -6,11 +6,11 @@ MediaLyze can create a new video variant with FFmpeg from the `Transcoding` pane
 
 The initial profiles are editable starting points:
 
-- **Compatibility:** MP4/H.264, up to 1080p, CRF or CQ 20, preserved frame rate, AAC at 192 kbit/s for stereo or 384 kbit/s for multichannel audio.
+- **Original / copy:** uses the source container when it can carry the existing streams and copies every internal stream unchanged. This is the default and keeps the source codec, quality, language, HDR signaling, and stream metadata intact.
 - **Save storage:** MKV/HEVC, CRF or CQ 22, preserved resolution, frame rate, and dynamic range, with non-video streams copied where compatible.
 - **Modern:** MKV/AV1, CRF or CQ 30, with non-video streams copied where compatible.
 
-The normalized versioned plan stores the container; `keep`, `drop`, `copy`, or `encode` for every stream; encoder and quality fields; resolution, frame rate, pixel format, profile, level, preset and GOP controls; dynamic-range handling; chapter, metadata, cover, and attachment behavior; selected sidecar subtitles; and the filename template. The API accepts no raw command or arbitrary FFmpeg argument field.
+The normalized versioned plan stores the container; `copy`, `drop`, or `encode` for every stream (the legacy `keep` value remains accepted for old plans); encoder and quality fields; resolution, frame rate, pixel format, profile, level, preset and GOP controls; dynamic-range handling; chapter, metadata, cover, and attachment behavior; selected sidecar subtitles; and the filename template. The normal UI exposes only the three safe stream actions. The API accepts no raw command or arbitrary FFmpeg argument field.
 
 Filename tokens are `{resolution}`, `{dynRange}`, `{codec}`, `{audioLanguages}`, `{container}`, and `{videoBitrate}`. Empty values and punctuation are collapsed, names are made safe for the active operating system, and the extension always follows the selected container.
 
@@ -18,7 +18,9 @@ Filename tokens are `{resolution}`, `{dynRange}`, `{codec}`, `{audioLanguages}`,
 
 `GET /api/transcoding/capabilities` reads the local FFmpeg version, muxers, encoders, and each video encoder's locally reported option names. Hardware encoders are only marked available after a real one-frame test succeeds. Selecting an unavailable encoder is a validation error; MediaLyze does not silently fall back to CPU.
 
-Validation resolves all files below their library root and returns the target, stream diff, warnings, normalized plan, detected capabilities, and complete readable command. It blocks existing targets, duplicate active targets, incompatible container/codec pairs, bitmap-to-text subtitle conversions, missing sidecars, and unsupported dynamic-range choices. Dolby Vision is never synthesized: V1 only permits verified source passthrough in a supported container with video stream copy.
+Validation resolves all files below their library root and returns the target, stream diff, warnings, normalized plan, detected capabilities, and complete readable command. It blocks existing targets, duplicate active targets, incompatible container/codec pairs, bitmap-to-text subtitle conversions, missing sidecars, invalid BCP 47 language tags, video upscaling or aspect-ratio changes, and unsupported dynamic-range choices. Dolby Vision is never synthesized: V1 only permits verified source passthrough in a supported container with video stream copy.
+
+Video encode controls use encoder-specific constant-quality ranges (CRF, CQ, QP, or ICQ as required by the selected backend) and offer only even-pixel 360p–2160p presets that are no larger than the source. Audio encode controls use fixed, codec-appropriate bitrate presets. Stream languages are normalized to BCP 47 while retaining regional subtags and the original code in the localized label; `und` and unknown codes remain explicit.
 
 ## Execution safety
 

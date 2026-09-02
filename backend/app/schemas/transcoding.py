@@ -18,7 +18,7 @@ class TranscodeStreamPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     stream_index: int = Field(ge=0)
-    action: TranscodeStreamAction = TranscodeStreamAction.keep
+    action: TranscodeStreamAction = TranscodeStreamAction.copy
     codec: str | None = Field(default=None, max_length=64)
     encoder: str | None = Field(default=None, max_length=128)
     bitrate: int | None = Field(default=None, ge=1)
@@ -76,6 +76,11 @@ class TranscodeEncoderCapability(BaseModel):
     tested: bool = False
     test_error: str | None = None
     options: list[str] = Field(default_factory=list)
+    quality_mode: Literal["crf", "cq", "qp", "global_quality"] | None = None
+    quality_min: float | None = Field(default=None, ge=0, le=63)
+    quality_max: float | None = Field(default=None, ge=0, le=63)
+    quality_default: float | None = Field(default=None, ge=0, le=63)
+    quality_step: float | None = Field(default=None, gt=0, le=10)
 
 
 class TranscodeCapabilitiesRead(BaseModel):

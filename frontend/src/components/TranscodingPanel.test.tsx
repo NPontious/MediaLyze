@@ -162,11 +162,13 @@ describe("TranscodingPanel", () => {
     expect((await screen.findAllByText("Movie.mkv")).length).toBeGreaterThan(0);
     expect(screen.getByRole("combobox", { name: "Action for stream 0" })).toHaveValue("encode");
     expect(screen.getByRole("combobox", { name: "Action for stream 0" })).toHaveClass("settings-choice-input", "transcode-control");
-    expect(screen.getByRole("spinbutton", { name: "video 0 width" })).toHaveClass("settings-choice-input", "transcode-control");
+    expect(screen.getByRole("slider", { name: "video 0 quality" })).toHaveClass("settings-choice-input", "transcode-control");
+    expect(screen.getByRole("combobox", { name: "video 0 resolution" })).toHaveClass("settings-choice-input", "transcode-control");
+    expect(screen.queryByRole("textbox", { name: "video 0 codec" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Locally reported encoder options/)).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("spinbutton", { name: "video 0 width" }), { target: { value: "1280" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "video 0 resolution" }), { target: { value: "1280x720" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Action for stream 2" }), { target: { value: "drop" } });
-    fireEvent.click(screen.getByText("Movie.en.srt · en · srt"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Movie\.en\.srt/ }));
     fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
 
     expect(await screen.findByText(validation.output_filename)).toBeInTheDocument();

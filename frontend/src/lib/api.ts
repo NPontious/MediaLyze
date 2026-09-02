@@ -1367,6 +1367,11 @@ export type TranscodeEncoderCapability = {
   tested: boolean;
   test_error: string | null;
   options: string[];
+  quality_mode?: "crf" | "cq" | "qp" | "global_quality" | null;
+  quality_min?: number | null;
+  quality_max?: number | null;
+  quality_default?: number | null;
+  quality_step?: number | null;
 };
 
 export type TranscodeCapabilities = {

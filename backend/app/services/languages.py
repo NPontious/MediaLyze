@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
 
@@ -144,6 +145,8 @@ LANGUAGE_ALIASES = {
     "chinese": "zh",
 }
 
+_LANGUAGE_TAG_RE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
+
 
 def _known_language_alias(value: str) -> str | None:
     candidate = value.strip().lower()
@@ -173,6 +176,50 @@ def normalize_language_code(value: str | None) -> str | None:
         return None
 
     return _known_language_alias(candidate) or candidate
+
+
+def normalize_language_tag(value: str | None) -> str | None:
+    """Normalize a user-facing language tag while retaining BCP 47 extensions.
+
+    ffprobe commonly reports ISO 639-2/B or legacy aliases (``deu``, ``ger``),
+    while a transcode plan may intentionally select a regional BCP 47 tag such
+    as ``de-DE``.  The existing ``normalize_language_code`` function remains
+    deliberately lossy for aggregate statistics; this helper is for stream
+    metadata where retaining the region is important.
+    """
+    if value is None:
+        return None
+
+    candidate = value.strip().replace("_", "-")
+    if not candidate or not _LANGUAGE_TAG_RE.fullmatch(candidate):
+        return None
+
+    parts = candidate.split("-")
+    if not parts or any(not part for part in parts):
+        return None
+
+    primary = parts[0].lower()
+    primary = LANGUAGE_ALIASES.get(primary, primary)
+    if primary not in {"i", "x"} and (not primary.isalpha() or len(primary) not in {2, 3}):
+        return None
+    normalized = [primary]
+    extension_mode = False
+    region_seen = False
+    for part in parts[1:]:
+        if extension_mode:
+            normalized.append(part.lower())
+            continue
+        if len(part) == 1 and part.isalnum():
+            normalized.append(part.lower())
+            extension_mode = True
+        elif len(part) == 4 and part.isalpha():
+            normalized.append(part[0].upper() + part[1:].lower())
+        elif not region_seen and ((len(part) == 2 and part.isalpha()) or (len(part) == 3 and part.isdigit())):
+            normalized.append(part.upper())
+            region_seen = True
+        else:
+            normalized.append(part.lower())
+    return "-".join(normalized)
 
 
 def normalize_language_hint(value: str | None) -> str | None:

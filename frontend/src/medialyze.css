@@ -12715,7 +12715,7 @@ html[data-theme="dark"] .transcoding-panel select.transcode-control {
 
 .transcode-stream-row {
   display: grid;
-  grid-template-columns: minmax(145px, 0.7fr) minmax(108px, 0.4fr) minmax(260px, 1.9fr);
+  grid-template-columns: minmax(175px, 0.72fr) minmax(108px, 0.38fr) minmax(320px, 1.9fr);
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem;
@@ -12731,9 +12731,19 @@ html[data-theme="dark"] .transcoding-panel select.transcode-control {
   flex-wrap: wrap;
 }
 
+.transcode-stream-meta {
+  align-self: start;
+  padding-top: 0.45rem;
+}
+
+.transcode-language-badge {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .transcode-stream-encode-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
   min-width: 0;
   gap: 0.4rem;
   align-items: center;
@@ -12741,6 +12751,67 @@ html[data-theme="dark"] .transcoding-panel select.transcode-control {
 
 .transcode-stream-encode-fields .transcode-control {
   min-width: 0;
+}
+
+.transcode-control-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.24rem;
+}
+
+.transcode-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.transcode-field-label .tooltip-trigger {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.transcode-range-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.45rem;
+}
+
+.transcode-range-row input[type="range"] {
+  min-width: 0;
+  height: 1.35rem;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.transcode-range-row output {
+  min-width: 4.8rem;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.transcode-copy-note {
+  grid-column: 3;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transcode-stream-row:has(.transcode-copy-note) {
+  align-items: start;
 }
 
 .transcode-external-subtitle,
@@ -12913,6 +12984,14 @@ html[data-theme="dark"] .transcoding-panel select.transcode-control {
 @media (max-width: 760px) {
   .transcode-stream-row {
     grid-template-columns: 1fr;
+  }
+
+  .transcode-stream-encode-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .transcode-copy-note {
+    grid-column: 1;
   }
 
   .video-wipe-controls {

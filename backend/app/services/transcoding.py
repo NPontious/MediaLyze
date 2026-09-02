@@ -45,6 +45,7 @@ from backend.app.schemas.transcoding import (
     TranscodeValidationRead,
     TranscodeVariantRead,
 )
+from backend.app.services.languages import normalize_language_tag
 from backend.app.utils.time import utc_now
 
 
@@ -102,6 +103,15 @@ SUBTITLE_ENCODER_CODECS = {
     "ass": "ass",
     "webvtt": "webvtt",
 }
+ENCODER_QUALITY_SPECS = {
+    # mode, minimum, maximum, default, step.  The values mirror FFmpeg's
+    # constant-quality controls for the encoder families MediaLyze exposes.
+    "libx264": ("crf", 0, 51, 23, 1),
+    "libx265": ("crf", 0, 51, 28, 1),
+    "libsvtav1": ("crf", 0, 63, 30, 1),
+    "libaom-av1": ("crf", 0, 63, 30, 1),
+    "libvpx-vp9": ("crf", 0, 63, 31, 1),
+}
 CONTAINER_FORMATS = {"mkv": "matroska", "mp4": "mp4", "webm": "webm"}
 CONTAINER_COMPATIBILITY = {
     "mp4": {
@@ -125,6 +135,20 @@ FILENAME_TOKENS = {
 }
 BITMAP_SUBTITLE_CODECS = {"dvb_subtitle", "dvd_subtitle", "hdmv_pgs_subtitle", "pgs", "xsub"}
 CAPABILITIES_LOCK = Lock()
+
+
+def _encoder_quality_spec(name: str) -> tuple[str, int, int, int, int] | None:
+    """Return the quality control used by an encoder, if it is known."""
+    normalized = name.lower()
+    if normalized in ENCODER_QUALITY_SPECS:
+        return ENCODER_QUALITY_SPECS[normalized]
+    if normalized.endswith("_vaapi"):
+        return ("qp", 0, 51, 23, 1)
+    if normalized.endswith("_qsv"):
+        return ("global_quality", 1, 51, 23, 1)
+    if any(normalized.endswith(suffix) for suffix in ("_nvenc", "_amf", "_videotoolbox")):
+        return ("cq", 0, 51, 23, 1)
+    return None
 
 
 class TranscodeValidationError(ValueError):
@@ -386,6 +410,7 @@ def _detect_capabilities_cached(
         if hardware:
             tested = True
             available, test_error = _test_hardware_encoder(ffmpeg_path, name, render_node)
+        quality_spec = _encoder_quality_spec(name)
         capabilities.append(
             TranscodeEncoderCapability(
                 name=name,
@@ -397,6 +422,11 @@ def _detect_capabilities_cached(
                 options=_encoder_options(ffmpeg_path, name)
                 if name in VIDEO_ENCODER_CODECS or hardware
                 else [],
+                quality_mode=quality_spec[0] if quality_spec else None,
+                quality_min=quality_spec[1] if quality_spec else None,
+                quality_max=quality_spec[2] if quality_spec else None,
+                quality_default=quality_spec[3] if quality_spec else None,
+                quality_step=quality_spec[4] if quality_spec else None,
             )
         )
     return TranscodeCapabilitiesRead(
@@ -429,45 +459,43 @@ def _default_subtitle_encoder(container: str) -> str:
     return "srt"
 
 
+def _source_container(media_file: MediaFile) -> str:
+    """Return the closest supported muxer for the source file.
+
+    The default profile is intentionally lossless at stream level.  Keeping a
+    supported source container where possible avoids an unnecessary remux
+    conversion and means the default plan really is a copy operation.
+    """
+    extension = (media_file.extension or Path(media_file.filename).suffix.lstrip(".")).lower()
+    if extension not in CONTAINER_FORMATS:
+        return "mkv"
+    compatibility = CONTAINER_COMPATIBILITY.get(extension)
+    if compatibility:
+        source_streams = {
+            "video": media_file.video_streams,
+            "audio": media_file.audio_streams,
+            "subtitle": media_file.subtitle_streams,
+        }
+        for kind, streams in source_streams.items():
+            if any((stream.codec or "").lower() not in compatibility[kind] for stream in streams):
+                return "mkv"
+    return extension
+
+
 def _profile_plan(media_file: MediaFile, profile: str, capabilities: TranscodeCapabilitiesRead) -> TranscodePlan:
     dynamic_range = "preserve"
     if profile == "compatibility":
-        container = "mp4"
-        if any((stream.hdr_type or "").lower() not in {"", "sdr"} for stream in media_file.video_streams):
-            dynamic_range = "sdr"
-        video_encoder = _available_encoder(capabilities, "libx264") or "libx264"
+        container = _source_container(media_file)
         video_plans = [
-            TranscodeStreamPlan(
-                stream_index=stream.stream_index,
-                action="encode",
-                codec="h264",
-                encoder=video_encoder,
-                crf=20,
-                width=min(stream.width or 1920, 1920),
-                height=min(stream.height or 1080, 1080),
-                preset="medium",
-            )
+            TranscodeStreamPlan(stream_index=stream.stream_index, action="copy")
             for stream in media_file.video_streams
         ]
         audio_plans = [
-            TranscodeStreamPlan(
-                stream_index=stream.stream_index,
-                action="encode",
-                codec="aac",
-                encoder="aac",
-                bitrate=192_000 if (stream.channels or 2) <= 2 else 384_000,
-                language=stream.language,
-            )
+            TranscodeStreamPlan(stream_index=stream.stream_index, action="copy")
             for stream in media_file.audio_streams
         ]
         subtitle_plans = [
-            TranscodeStreamPlan(
-                stream_index=stream.stream_index,
-                action="encode",
-                codec="mov_text",
-                encoder="mov_text",
-                language=stream.language,
-            )
+            TranscodeStreamPlan(stream_index=stream.stream_index, action="copy")
             for stream in media_file.subtitle_streams
         ]
     elif profile == "storage":
@@ -625,6 +653,67 @@ def _output_codec(kind: str, decision: TranscodeStreamPlan, source_codec: str) -
     return (decision.codec or _encoder_codec(decision.encoder) or "").lower()
 
 
+def _normalize_plan_languages(plan: TranscodePlan) -> tuple[TranscodePlan, list[str]]:
+    """Canonicalize stream language metadata and report malformed tags."""
+    normalized_plan = plan.model_copy(deep=True)
+    errors: list[str] = []
+    decisions = [
+        *normalized_plan.video_streams,
+        *normalized_plan.audio_streams,
+        *normalized_plan.subtitle_streams,
+    ]
+    for decision in decisions:
+        if decision.action == TranscodeStreamAction.keep:
+            decision.action = TranscodeStreamAction.copy
+        raw = decision.language
+        if not raw:
+            continue
+        normalized = normalize_language_tag(raw)
+        if normalized is None:
+            errors.append(f"Invalid BCP 47 language tag for stream {decision.stream_index}: {raw}")
+        else:
+            decision.language = normalized
+    for decision in normalized_plan.external_subtitles:
+        raw = decision.language
+        if not raw:
+            continue
+        normalized = normalize_language_tag(raw)
+        if normalized is None:
+            errors.append(f"Invalid BCP 47 language tag for external subtitle {decision.subtitle_id}: {raw}")
+        else:
+            decision.language = normalized
+    return normalized_plan, errors
+
+
+def _validate_video_scale(source: VideoStream, decision: TranscodeStreamPlan) -> str | None:
+    """Reject upscaling and aspect-ratio changes in a user-supplied plan."""
+    if decision.width is None and decision.height is None:
+        return None
+    if source.width is None or source.height is None or source.width <= 0 or source.height <= 0:
+        return "Video scaling requires known source dimensions"
+    target_width = decision.width
+    target_height = decision.height
+    if target_width is None:
+        target_width = max(2, round(source.width * target_height / source.height / 2) * 2)
+    if target_height is None:
+        target_height = max(2, round(source.height * target_width / source.width / 2) * 2)
+    if target_width > source.width or target_height > source.height:
+        return (
+            f"Video stream {decision.stream_index} may only be downscaled "
+            f"(source {source.width}x{source.height}, requested {target_width}x{target_height})"
+        )
+    if (decision.width is not None and decision.width % 2) or (decision.height is not None and decision.height % 2):
+        return f"Video stream {decision.stream_index} scaling dimensions must be even"
+    source_ratio = source.width / source.height
+    target_ratio = target_width / target_height
+    if abs(source_ratio - target_ratio) > max(0.01, source_ratio * 0.01):
+        return (
+            f"Video stream {decision.stream_index} scaling must preserve the source aspect ratio "
+            f"({source.width}x{source.height} → {target_width}x{target_height})"
+        )
+    return None
+
+
 def _quote_command(arguments: list[str]) -> str:
     return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
 
@@ -726,7 +815,9 @@ def validate_transcode_plan(
 ) -> TranscodeValidationRead:
     paths = _source_paths(media_file)
     capabilities = get_transcode_capabilities(settings)
+    plan, language_errors = _normalize_plan_languages(plan)
     errors: list[str] = []
+    errors.extend(language_errors)
     warnings: list[str] = []
     kept: list[str] = []
     changed: list[str] = []
@@ -847,6 +938,10 @@ def validate_transcode_plan(
                     errors.append(f"Requested hardware encoder failed its capability test: {encoder}")
                 if decision.codec and _encoder_codec(encoder) not in {None, decision.codec}:
                     errors.append(f"Encoder {encoder} does not produce requested codec {decision.codec}")
+                if kind == "video":
+                    scale_error = _validate_video_scale(source, decision)
+                    if scale_error:
+                        errors.append(scale_error)
                 if kind == "subtitle" and source_codec in BITMAP_SUBTITLE_CODECS and output_codec in {
                     "ass",
                     "mov_text",

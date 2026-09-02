@@ -193,6 +193,10 @@ def _compatibility_plan() -> TranscodePlan:
     )
 
 
+def test_stream_plan_defaults_to_copy() -> None:
+    assert TranscodeStreamPlan(stream_index=0).action.value == "copy"
+
+
 def test_plan_rejects_raw_or_unknown_ffmpeg_arguments() -> None:
     payload = _compatibility_plan().model_dump(mode="json")
     payload["raw_arguments"] = ["-y", "-f", "null"]
@@ -244,7 +248,52 @@ def test_validation_keeps_crf_and_hardware_cq_distinct(monkeypatch, tmp_path) ->
     assert "-crf:v:0" not in validation.ffmpeg_arguments
 
 
-def test_hdr_profiles_tonemap_for_compatibility_and_preserve_static_signaling(monkeypatch, tmp_path) -> None:
+def test_validation_normalizes_bcp47_language_tags(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.audio_streams[0].language = "eng_US"
+        plan.subtitle_streams[0].language = "de-DE"
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+        assert validation.valid is True
+        assert validation.normalized_plan.audio_streams[0].language == "en-US"
+        assert validation.normalized_plan.subtitle_streams[0].language == "de-DE"
+
+        plan = _compatibility_plan()
+        plan.audio_streams[0].language = "en--US"
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+    assert validation.valid is False
+    assert any("Invalid BCP 47" in error for error in validation.errors)
+
+
+def test_validation_rejects_video_upscale_and_aspect_ratio_change(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.video_streams[0].width = 4000
+        plan.video_streams[0].height = 2250
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+        assert validation.valid is False
+        assert any("only be downscaled" in error for error in validation.errors)
+
+        plan.video_streams[0].width = 1280
+        plan.video_streams[0].height = 720
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+        assert validation.valid is True
+
+        plan.video_streams[0].width = 1280
+        plan.video_streams[0].height = 800
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+
+    assert validation.valid is False
+    assert any("aspect ratio" in error for error in validation.errors)
+
+
+def test_copy_profile_preserves_hdr_and_storage_profile_keeps_static_signaling(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     capabilities = _capabilities()
     monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: capabilities)
@@ -260,7 +309,10 @@ def test_hdr_profiles_tonemap_for_compatibility_and_preserve_static_signaling(mo
         storage = transcoding.initial_transcode_profiles(media_file, capabilities)["storage"]
         validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, storage)
 
-    assert compatibility.dynamic_range == "sdr"
+    assert compatibility.dynamic_range == "preserve"
+    assert [stream.action for stream in compatibility.video_streams] == ["copy"]
+    assert [stream.action for stream in compatibility.audio_streams] == ["copy"]
+    assert [stream.action for stream in compatibility.subtitle_streams] == ["copy"]
     assert "-color_primaries:v:0" in validation.ffmpeg_arguments
     assert "bt2020" in validation.ffmpeg_arguments
     assert "-color_trc:v:0" in validation.ffmpeg_arguments

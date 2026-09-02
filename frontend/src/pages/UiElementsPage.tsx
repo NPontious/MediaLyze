@@ -2334,19 +2334,22 @@ export function UiElementsPage() {
                   </section>
                 </div>
               </VariantCard>
-              <VariantCard title="Transcoding plan and Wipe comparison" source="TranscodingPanel / VideoWipeCompare" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-validation", "video-wipe-compare"]} wide>
+              <VariantCard title="Transcoding plan and Wipe comparison" source="TranscodingPanel / VideoWipeCompare" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-stream-encode-fields", "transcode-control-field", "transcode-range-row", "transcode-copy-note", "transcode-validation", "video-wipe-compare"]} wide>
                 <div className="transcoding-panel">
                   <div className="transcode-configuration-grid">
-                    <label><span>Profile</span><select className="settings-choice-input transcode-control" defaultValue="compatibility"><option value="compatibility">Compatibility</option></select></label>
+                    <label><span>Profile</span><select className="settings-choice-input transcode-control" defaultValue="compatibility"><option value="compatibility">Original / copy</option></select></label>
                     <label><span>Target container</span><select className="settings-choice-input transcode-control" defaultValue="mp4"><option value="mp4">MP4</option></select></label>
-                    <label><span>Encoder</span><select className="settings-choice-input transcode-control" defaultValue="libx264"><option value="libx264">libx264 · CPU</option></select></label>
                   </div>
                   <div className="transcode-stream-group">
                     <h3>Video streams</h3>
                     <article className="transcode-stream-row">
                       <div><strong>#0</strong><span>HEVC</span></div>
-                      <select className="settings-choice-input transcode-control" defaultValue="encode"><option value="encode">Encode</option></select>
-                      <div className="transcode-stream-encode-fields"><input className="settings-choice-input transcode-control" defaultValue="libx264" /><input className="settings-choice-input transcode-control" defaultValue="20" /></div>
+                      <select className="settings-choice-input transcode-control" defaultValue="encode"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select>
+                      <div className="transcode-stream-encode-fields">
+                        <label className="transcode-control-field"><span className="transcode-field-label"><span>Encoder</span><TooltipTrigger ariaLabel="Encoder information" content="libx264 produces H.264 / AVC with software encoding." /></span><select className="settings-choice-input transcode-control" defaultValue="libx264"><option value="libx264">libx264 · H.264 / AVC · CPU</option></select></label>
+                        <label className="transcode-control-field"><span className="transcode-field-label"><span>Quality (CRF)</span><TooltipTrigger ariaLabel="Explain quality control" content="Lower values mean higher quality." /></span><span className="transcode-range-row"><input className="settings-choice-input transcode-control" type="range" min="0" max="51" defaultValue="23" /><output>23</output></span></label>
+                        <label className="transcode-control-field"><span className="transcode-field-label"><span>Output resolution</span><TooltipTrigger ariaLabel="Explain output resolution" content="Only equal or lower heights are offered." /></span><select className="settings-choice-input transcode-control" defaultValue="1920x1080"><option value="1920x1080">1080p (1920×1080)</option></select></label>
+                      </div>
                     </article>
                   </div>
                   <section className="transcode-validation is-valid"><h3><Check aria-hidden="true" />Change preview</h3><strong>Arrival [1920x1080, SDR, H264] [en].mp4</strong><code>ffmpeg -i Arrival.mkv -map 0:0 -c:v:0 libx264 …</code></section>

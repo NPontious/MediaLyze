@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### ✨ Enhancements
 
 - compact and modernize Transcode form controls, align select chevrons consistently, and remove the verbose encoder-option hint from the stream plan
+- constrain stream editing to safe Copy / Encode / Remove controls with encoder-aware quality and bitrate sliders, aspect-ratio-preserving downscale presets, localized BCP 47 language selection, and copy-by-default profiles
 
 ### 🐛 Bug fixes
 
