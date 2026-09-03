@@ -11,25 +11,15 @@ import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import { FolderInputIcon } from "./FolderInputIcon";
 import { FolderOutputIcon } from "./FolderOutputIcon";
 import { GithubIcon } from "./GithubIcon";
-<<<<<<< HEAD
-import { api, type ScanJob, type UpdateStatus } from "../lib/api";
-=======
-import { HandCoinsIcon } from "./HandCoinsIcon";
-import { TelemetryModeToggle } from "./TelemetryModeToggle";
-import { api, type ConnectorConnection, type ConnectorSyncJob, type ScanJob, type TelemetryMode, type UpdateStatus } from "../lib/api";
->>>>>>> upstream/main
+import { api, type ConnectorConnection, type ConnectorSyncJob, type ScanJob, type UpdateStatus } from "../lib/api";
 import { APP_VERSION } from "../lib/app-version";
 import { useAppData } from "../lib/app-data";
 import {
   getAllReleaseNotes,
   getCurrentReleaseNotes,
   isDevelopmentVersion,
-<<<<<<< HEAD
-=======
-  isFirstOpenAfterUpdate,
   isUpdateReminderDue,
   markBrowserUpdateReminder,
->>>>>>> upstream/main
   markReleaseNotesSeen,
   mergeReleaseNotes,
   normalizeReleaseVersion,
