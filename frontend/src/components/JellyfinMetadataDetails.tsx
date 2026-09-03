@@ -1,7 +1,13 @@
 import { ImageIcon, Server } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 
-import { api, type JellyfinFileOverlay, type JellyfinItem, type JellyfinItemDetail } from "../lib/api";
+import {
+  api,
+  type ConnectorPlaybackSource,
+  type JellyfinFileOverlay,
+  type JellyfinItem,
+  type JellyfinItemDetail,
+} from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import {
   PlaybackHistoryPanel,
@@ -196,6 +202,101 @@ export function JellyfinStreamingDetails({
         individualEventsAvailable={individualEventsAvailable}
         individualPlaybackHistoryStartAt={individualPlaybackHistoryStartAt}
         showAllWhenUnstacked={showAllPlaybacksWhenUnstacked}
+      />
+    </div>
+  );
+}
+
+export function ConnectorStreamingDetails({
+  sources,
+  durationSeconds,
+  showAllPlaybacksWhenUnstacked = false,
+}: {
+  sources: ConnectorPlaybackSource[];
+  durationSeconds?: number | null;
+  showAllPlaybacksWhenUnstacked?: boolean;
+}): ReactNode {
+  const multipleSources = sources.length > 1;
+  const { entries, undatedEntries, historyStartAt, individualEventsAvailable } = useMemo(() => {
+    const timestamped: PlaybackHistoryEntry[] = [];
+    const undated: PlaybackUndatedEntry[] = [];
+    const historyStarts: number[] = [];
+    let hasEvents = false;
+
+    sources.forEach((source) => {
+      const provider = multipleSources ? source.connection_name : "Jellyfin";
+      const timestampsByUser = new Map<string, number[]>();
+      source.playback_events.forEach((event) => {
+        hasEvents = true;
+        const timestamps = timestampsByUser.get(event.remote_user_id) ?? [];
+        const timestamp = Date.parse(event.played_at);
+        if (Number.isFinite(timestamp)) timestamps.push(timestamp);
+        timestampsByUser.set(event.remote_user_id, timestamps);
+        timestamped.push({
+          id: `connector-activity:${source.connection_id}:${event.remote_event_id}`,
+          provider,
+          userId: `${source.connection_id}:${event.remote_user_id}`,
+          userName: event.user_name,
+          playCount: 1,
+          lastPlayedAt: event.played_at,
+        });
+      });
+      const historyStart = Date.parse(source.individual_playback_history_start_at ?? "");
+      if (Number.isFinite(historyStart)) historyStarts.push(historyStart);
+
+      source.user_data.forEach((user) => {
+        if (user.play_count <= 0) return;
+        const importedTimestamps = timestampsByUser.get(user.remote_user_id) ?? [];
+        let timestampedCount = importedTimestamps.length;
+        const latestTimestamp = Date.parse(user.last_played_date ?? "");
+        const latestAlreadyImported = Number.isFinite(latestTimestamp)
+          && importedTimestamps.some((timestamp) => Math.abs(timestamp - latestTimestamp) < 1000);
+        if (timestampedCount < user.play_count && Number.isFinite(latestTimestamp) && !latestAlreadyImported) {
+          timestamped.push({
+            id: `connector-latest:${source.connection_id}:${user.remote_user_id}`,
+            provider,
+            userId: `${source.connection_id}:${user.remote_user_id}`,
+            userName: user.user_name,
+            playCount: 1,
+            ...(!source.playback_events.length ? {
+              completed: user.played,
+              resumePositionSeconds: user.playback_position_ticks / 10_000_000,
+            } : {}),
+            lastPlayedAt: user.last_played_date as string,
+          });
+          timestampedCount += 1;
+        }
+        const unknownTimestampCount = Math.max(0, user.play_count - timestampedCount);
+        if (unknownTimestampCount > 0) {
+          undated.push({
+            id: `connector-undated:${source.connection_id}:${user.remote_user_id}`,
+            provider,
+            userId: `${source.connection_id}:${user.remote_user_id}`,
+            userName: user.user_name,
+            playCount: unknownTimestampCount,
+          });
+        }
+      });
+    });
+
+    return {
+      entries: timestamped,
+      undatedEntries: undated,
+      historyStartAt: historyStarts.length ? new Date(Math.min(...historyStarts)).toISOString() : null,
+      individualEventsAvailable: hasEvents,
+    };
+  }, [multipleSources, sources]);
+
+  return (
+    <div className="jellyfin-file-panel jellyfin-streaming-panel connector-streaming-panel">
+      <PlaybackHistoryPanel
+        entries={entries}
+        undatedEntries={undatedEntries}
+        durationSeconds={durationSeconds}
+        individualEventsAvailable={individualEventsAvailable}
+        individualPlaybackHistoryStartAt={historyStartAt}
+        showAllWhenUnstacked={showAllPlaybacksWhenUnstacked}
+        showProvider={multipleSources}
       />
     </div>
   );

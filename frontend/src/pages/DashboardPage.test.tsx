@@ -2,7 +2,7 @@ import "../i18n";
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { useEffect } from "react";
 
 import { AppDataProvider, useAppData } from "../lib/app-data";

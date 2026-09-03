@@ -175,12 +175,29 @@ export type UpdateReleaseNotes = {
   }>;
 };
 
+export type UpdateDesktopAsset = {
+  platform: "darwin" | "win32" | "linux";
+  arch: "arm64" | "x64";
+  filename: string;
+  download_url: string;
+  size_bytes: number;
+  sha256: string | null;
+};
+
 export type UpdateStatus = {
   current_version: string;
   latest_version: string | null;
+  latest_release_url?: string | null;
   update_available: boolean;
+  automatic_reminder_eligible?: boolean;
   checked_at: string | null;
   release_notes: UpdateReleaseNotes[];
+  desktop_assets?: UpdateDesktopAsset[];
+};
+
+export type DesktopUpdateReminder = {
+  version: string | null;
+  reminded_at: string | null;
 };
 
 export type QualityCategoryConfig = {
@@ -246,7 +263,203 @@ export type QualityBreakdown = {
 
 export type DuplicateDetectionMode = "off" | "filename" | "filehash" | "both";
 export type LibraryType = "movies" | "series" | "music" | "audiobooks" | "mixed" | "other";
-export type HistoryAddedDateSource = "medialyze" | "jellyfin";
+export type HistoryAddedDateSource = "medialyze" | "jellyfin" | "connector";
+
+export type ConnectorConnection = {
+  id: number;
+  provider: string;
+  name: string;
+  base_url: string;
+  config: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
+  enabled: boolean;
+  sync_interval_minutes: number;
+  path_mapping_mode: "automatic" | "manual";
+  library_mapping_mode: "automatic" | "manual";
+  server_name: string | null;
+  server_version: string | null;
+  last_status: string;
+  last_error: string | null;
+  last_sync_started_at: string | null;
+  last_sync_finished_at: string | null;
+  last_successful_sync_at: string | null;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConnectorLocation = {
+  id: number;
+  connector_library_id: number;
+  remote_path: string;
+  normalized_path: string;
+};
+
+export type ConnectorLibrary = {
+  id: number;
+  connection_id: number;
+  remote_id: string;
+  name: string;
+  media_type: string | null;
+  provider_payload: Record<string, unknown>;
+  last_synced_at: string | null;
+  locations: ConnectorLocation[];
+  linked_library_ids: number[];
+};
+
+export type ConnectorBinding = {
+  id: number;
+  location_id: number;
+  library_root_id: number;
+  source_prefix: string;
+  normalized_source_prefix: string;
+  target_subpath: string;
+  case_mode: "sensitive" | "insensitive";
+  priority: number;
+  active: boolean;
+  origin: "automatic" | "manual" | string;
+  confidence: number;
+  evidence_count: number;
+  verification_status: "verified" | "stale" | "imported" | string;
+  last_verified_at: string | null;
+};
+
+export type ConnectorBindingWrite = Omit<ConnectorBinding, "id" | "normalized_source_prefix" | "origin" | "confidence" | "evidence_count" | "verification_status" | "last_verified_at"> & {
+  id?: number;
+};
+
+export type ConnectorMappingOverview = {
+  connection_id: number;
+  path_mapping_mode: "automatic" | "manual";
+  library_mapping_mode: "automatic" | "manual";
+  coverage: {
+    total_items: number;
+    matched_items: number;
+    attention_items: number;
+    matched_percent: number;
+  };
+  libraries: Array<{
+    id: number;
+    remote_id: string;
+    name: string;
+    media_type: string | null;
+    linked_library_ids: number[];
+    required_library_ids: number[];
+    locations: Array<{
+      id: number;
+      remote_path: string;
+      bindings: ConnectorBinding[];
+    }>;
+    recommendation: null | {
+      kind: "create_library";
+      suggested_name: string;
+      suggested_type: string;
+      reason: string;
+      accessible_paths: string[];
+    };
+  }>;
+};
+
+export type ConnectorItem = {
+  id: number;
+  connection_id: number;
+  connector_library_id: number | null;
+  remote_id: string;
+  item_type: string;
+  remote_path: string | null;
+  title: string;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  match_status: string;
+  mismatch_reason: string | null;
+  last_synced_at: string | null;
+};
+
+export type ConnectorItemPage = {
+  total: number;
+  offset: number;
+  limit: number;
+  items: ConnectorItem[];
+};
+
+export type ConnectorSyncJob = {
+  id: number;
+  connection_id: number;
+  job_type: string;
+  sync_run_id: string | null;
+  status: string;
+  trigger_source: string;
+  cancellation_requested: boolean;
+  progress_phase: string | null;
+  progress_detail: string | null;
+  progress_current: number;
+  progress_total: number | null;
+  error: string | null;
+  sync_summary: Record<string, unknown>;
+};
+
+export type ConnectorProviderDescriptor = {
+  provider: string;
+  configuration_fields: Array<{
+    key: string;
+    input_type: string;
+    required: boolean;
+    secret: boolean;
+  }>;
+  optional_capabilities: string[];
+};
+
+export type ConnectorUser = {
+  remote_id: string;
+  name: string;
+  enabled_for_sync: boolean;
+  last_synced_at: string | null;
+};
+
+export type ConnectorPlaybackSource = {
+  connection_id: number;
+  connection_name: string;
+  provider: string;
+  connector_item_id: number;
+  user_data: Array<{
+    remote_user_id: string;
+    user_name: string;
+    play_count: number;
+    played: boolean;
+    playback_position_ticks: number;
+    last_played_date: string | null;
+    is_favorite: boolean;
+  }>;
+  playback_events: Array<{
+    remote_event_id: string;
+    remote_user_id: string;
+    user_name: string;
+    played_at: string;
+  }>;
+  individual_playback_history_start_at: string | null;
+};
+
+export type FileConnectorSource = {
+  connection_id: number;
+  connection_name: string;
+  provider: string;
+  connector_item_id: number;
+  remote_id: string;
+  title: string;
+  item_type: string;
+  remote_path: string | null;
+  match_method: string;
+  preferred: boolean;
+  original_title: string | null;
+  series_name: string | null;
+  season_name: string | null;
+  date_created: string | null;
+  premiere_date: string | null;
+  production_year: number | null;
+  overview: string | null;
+  provider_ids: Record<string, unknown>;
+  provider_payload: Record<string, unknown>;
+};
 
 export type JellyfinConnection = {
   base_url: string;
@@ -702,6 +915,15 @@ export type LibrarySummary = {
   quality_profile_id?: number | null;
   show_on_dashboard: boolean;
   history_added_date_source?: HistoryAddedDateSource;
+  preferred_connector_connection_id?: number | null;
+  connector_links?: Array<{
+    connection_id: number;
+    connection_name: string;
+    provider: string;
+    connector_library_id: number;
+    connector_library_name: string;
+    link_method: string;
+  }>;
   file_count: number;
   total_size_bytes: number;
   total_duration_seconds: number;
@@ -744,6 +966,57 @@ export type LibraryStatistics = {
   subtitle_source_distribution: DistributionItem[];
   user_play_count_distribution: DistributionItem[];
   numeric_distributions: Partial<Record<NumericDistributionMetricId, NumericDistribution>>;
+};
+
+export type StorageMapBreadcrumb = {
+  name: string;
+  path: string;
+};
+
+export type StorageMapColorShare = {
+  value: string | number | null;
+  size_bytes: number;
+};
+
+export type StorageMapNode = {
+  kind: "folder" | "file";
+  name: string;
+  path: string;
+  size_bytes: number;
+  file_count: number;
+  file_id: number | null;
+  extension: string | null;
+  jellyfin_title: string | null;
+  video_codec: string | null;
+  resolution: string | null;
+  resolution_category_id: string | null;
+  resolution_category_label: string | null;
+  hdr_type: string | null;
+  quality_score: number | null;
+  quality_score_raw: number | null;
+  container: string | null;
+  duration_seconds: number | null;
+  bitrate: number | null;
+  audio_bitrate: number | null;
+  audio_codec: string | null;
+  audio_channels: number | null;
+  frame_rate: number | null;
+  bit_depth: number | null;
+  audio_language: string | null;
+  subtitle_status: string | null;
+  subtitle_language: string | null;
+  analysis_status: string | null;
+  color_distributions: Record<string, StorageMapColorShare[]>;
+};
+
+export type LibraryStorageMap = {
+  library_id: number;
+  library_name: string;
+  path: string;
+  total_size_bytes: number;
+  file_count: number;
+  breadcrumbs: StorageMapBreadcrumb[];
+  items: StorageMapNode[];
 };
 
 export type MediaFileRow = {
@@ -1041,6 +1314,11 @@ export type MediaFileDetail = MediaFileRow &
   raw_ffprobe_json: Record<string, unknown> | null;
 };
 
+export type MediaFileRawProbe = {
+  id: number;
+  raw_ffprobe_json: Record<string, unknown> | null;
+};
+
 export type MediaFileQualityScoreDetail = {
   id: number;
   score: number;
@@ -1052,6 +1330,9 @@ export type MediaFileHistoryEntry = {
   id: number;
   media_file_id: number | null;
   library_id: number;
+  library_root_id?: number | null;
+  root_alias?: string | null;
+  display_path?: string;
   relative_path: string;
   filename: string;
   captured_at: string;
@@ -1063,6 +1344,9 @@ export type MediaFileHistoryEntry = {
 export type MediaFileHistory = {
   file_id: number;
   library_id: number;
+  library_root_id?: number | null;
+  root_alias?: string | null;
+  display_path?: string;
   relative_path: string;
   total: number;
   items: MediaFileHistoryEntry[];
@@ -1205,6 +1489,8 @@ export type AppSettings = {
     color_theme: "system" | "light" | "dark";
   };
   feature_flags: {
+    hide_automatic_update_reminders?: boolean;
+    show_automatic_update_reminders?: boolean;
     show_analyzed_files_csv_export: boolean;
     show_full_width_app_shell: boolean;
     hide_quality_score_meter: boolean;
@@ -1677,14 +1963,25 @@ export const api = {
       `/files/${id}/software-compatibility${buildRepeatedQuery("profile_ids", profileIds)}`,
     ),
   updateStatus: () => request<UpdateStatus>("/update-status"),
+  desktopUpdateReminder: () => request<DesktopUpdateReminder>("/desktop/update-reminder"),
+  markDesktopUpdateReminder: (version: string) =>
+    request<DesktopUpdateReminder>("/desktop/update-reminder/mark", {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
   dashboard: (panels?: readonly string[] | null) => request<DashboardResponse>(`/dashboard${buildPanelQuery(panels)}`),
   dashboardHistory: (signal?: AbortSignal) =>
     request<DashboardHistoryResponse>("/dashboard/history", { signal }),
   dashboardComparison: (
-    params: { xField: ComparisonFieldId; yField: ComparisonFieldId; signal?: AbortSignal },
+    params: {
+      xField: ComparisonFieldId;
+      yField: ComparisonFieldId;
+      renderer?: ComparisonRendererId;
+      signal?: AbortSignal;
+    },
   ) =>
     request<ComparisonResponse>(
-      `/dashboard/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}`,
+      `/dashboard/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}${params.renderer ? `&renderer=${encodeURIComponent(params.renderer)}` : ""}`,
       { signal: params.signal },
     ),
   activeScanJobs: () => request<ScanJob[]>("/scan-jobs/active"),
@@ -1722,6 +2019,20 @@ export const api = {
     request<LibrarySummary>(`/libraries/${id}/summary`, { signal }),
   libraryStatistics: (id: string | number, signal?: AbortSignal, panels?: readonly string[] | null) =>
     request<LibraryStatistics>(`/libraries/${id}/statistics${buildPanelQuery(panels)}`, { signal }),
+  libraryStorageMap: (
+    id: string | number,
+    params?: { path?: string; signal?: AbortSignal },
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (params?.path) {
+      searchParams.set("path", params.path);
+    }
+    const query = searchParams.toString();
+    return request<LibraryStorageMap>(
+      `/libraries/${id}/storage-map${query ? `?${query}` : ""}`,
+      { signal: params?.signal },
+    );
+  },
   libraryHistory: (id: string | number, signal?: AbortSignal) =>
     request<LibraryHistoryResponse>(`/libraries/${id}/history`, { signal }),
   librarySeries: (id: string | number, signal?: AbortSignal) =>
@@ -1739,10 +2050,15 @@ export const api = {
     ),
   libraryComparison: (
     id: string | number,
-    params: { xField: ComparisonFieldId; yField: ComparisonFieldId; signal?: AbortSignal },
+    params: {
+      xField: ComparisonFieldId;
+      yField: ComparisonFieldId;
+      renderer?: ComparisonRendererId;
+      signal?: AbortSignal;
+    },
   ) =>
     request<ComparisonResponse>(
-      `/libraries/${id}/statistics/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}`,
+      `/libraries/${id}/statistics/comparison?x_field=${encodeURIComponent(params.xField)}&y_field=${encodeURIComponent(params.yField)}${params.renderer ? `&renderer=${encodeURIComponent(params.renderer)}` : ""}`,
       { signal: params.signal },
     ),
   libraryDuplicates: (
@@ -1850,8 +2166,18 @@ export const api = {
   },
   fileMediaUrl: (id: string | number, options: { download?: boolean } = {}) => `${API_PREFIX}${buildFileMediaPath(id, options)}`,
   libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
-  file: (id: string | number) => request<MediaFileDetail>(`/files/${id}`),
+  file: (
+    id: string | number,
+    options: { includeRawFfprobe?: boolean } = {},
+  ) =>
+    request<MediaFileDetail>(
+      `/files/${id}${options.includeRawFfprobe === false ? "?include_raw_ffprobe=false" : ""}`,
+    ),
+  fileRawFfprobe: (id: string | number, signal?: AbortSignal) =>
+    request<MediaFileRawProbe>(`/files/${id}/raw-ffprobe`, { signal }),
   fileJellyfin: (id: string | number) => request<JellyfinFileOverlay>(`/files/${id}/jellyfin`),
+  fileConnectors: (id: string | number) =>
+    request<FileConnectorSource[]>(`/files/${id}/connectors`),
   jellyfinImageUrl: (itemId: string | number, imageType: "Primary" | "Backdrop" | "Thumb" = "Primary") =>
     `${API_PREFIX}/jellyfin/images/${itemId}/${imageType}`,
   fileStreams: (id: string | number) => request<MediaFileStreamDetails>(`/files/${id}/streams`),
@@ -1864,6 +2190,95 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
+  connectorProviders: () => request<string[]>("/connectors/providers"),
+  connectorProviderDescriptors: () =>
+    request<ConnectorProviderDescriptor[]>("/connectors/provider-descriptors"),
+  connectors: () => request<ConnectorConnection[]>("/connectors"),
+  createConnector: (payload: {
+    provider: string;
+    name: string;
+    base_url: string;
+    secret?: string;
+    enabled?: boolean;
+    sync_interval_minutes?: number;
+    config?: Record<string, unknown>;
+    path_mapping_mode?: "automatic" | "manual";
+    library_mapping_mode?: "automatic" | "manual";
+  }) => request<ConnectorConnection>("/connectors", { method: "POST", body: JSON.stringify(payload) }),
+  updateConnector: (id: number, payload: Partial<{
+    name: string;
+    base_url: string;
+    secret: string;
+    enabled: boolean;
+    sync_interval_minutes: number;
+    config: Record<string, unknown>;
+    path_mapping_mode: "automatic" | "manual";
+    library_mapping_mode: "automatic" | "manual";
+  }>) => request<ConnectorConnection>(`/connectors/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteConnector: (id: number) => request<void>(`/connectors/${id}`, { method: "DELETE" }),
+  testConnector: (id: number, payload: { base_url?: string; secret?: string } = {}) =>
+    request<{ success: boolean; server_name: string | null; server_version: string | null; error: string | null }>(
+      `/connectors/${id}/test`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  syncConnector: (id: number) =>
+    request<{ job_id: number; status: string; trigger_source: string; accepted: boolean }>(
+      `/connectors/${id}/sync`,
+      { method: "POST" },
+    ),
+  cancelConnectorSync: (id: number, jobId?: number | null) =>
+    request<{ job_id: number | null; status: string | null; cancellation_requested: boolean }>(
+      `/connectors/${id}/sync/cancel${jobId ? `?job_id=${jobId}` : ""}`,
+      { method: "POST" },
+    ),
+  connectorSyncStatus: (id: number) =>
+    request<ConnectorSyncJob | null>(`/connectors/${id}/sync/status`),
+  connectorUsers: (id: number) => request<ConnectorUser[]>(`/connectors/${id}/users`),
+  updateConnectorUsers: (id: number, enabledUserIds: string[]) =>
+    request<ConnectorUser[]>(`/connectors/${id}/users`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled_user_ids: enabledUserIds }),
+    }),
+  connectorLibraries: (id: number) => request<ConnectorLibrary[]>(`/connectors/${id}/libraries`),
+  connectorMappingOverview: (id: number) =>
+    request<ConnectorMappingOverview>(`/connectors/${id}/mapping-overview`),
+  updateConnectorLibraryLinks: (
+    id: number,
+    links: Array<{ connector_library_id: number; library_ids: number[] }>,
+  ) => request<ConnectorLibrary[]>(`/connectors/${id}/library-links`, {
+    method: "PUT",
+    body: JSON.stringify({ links }),
+  }),
+  connectorBindings: (id: number) => request<ConnectorBinding[]>(`/connectors/${id}/bindings`),
+  updateConnectorBindings: (id: number, bindings: ConnectorBindingWrite[]) =>
+    request<ConnectorBinding[]>(`/connectors/${id}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({ bindings }),
+    }),
+  connectorItems: (
+    id: number,
+    status?: string,
+    offset = 0,
+    limit = 100,
+    attentionOnly = false,
+  ) => {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (status) params.set("status", status);
+    if (attentionOnly) params.set("attention_only", "true");
+    return request<ConnectorItemPage>(`/connectors/${id}/items?${params.toString()}`);
+  },
+  connectorItemStatusSummary: (id: number) =>
+    request<Record<string, number>>(`/connectors/${id}/item-status-summary`),
+  createLibraryForConnector: (
+    connectionId: number,
+    connectorLibraryId: number,
+    payload: { name: string; path: string; paths?: string[]; type: LibraryType; scan_mode?: string },
+  ) => request<LibrarySummary>(
+    `/connectors/${connectionId}/libraries/${connectorLibraryId}/create-medialyze-library`,
+    { method: "POST", body: JSON.stringify(payload) },
+  ),
+  fileConnectorPlayback: (fileId: string | number) =>
+    request<ConnectorPlaybackSource[]>(`/files/${fileId}/connector-playback`),
   jellyfinConnection: () => request<JellyfinConnection>("/jellyfin/connection"),
   updateJellyfinConnection: (payload: {
     base_url?: string;
@@ -2008,6 +2423,7 @@ export const api = {
       color_theme?: "system" | "light" | "dark";
     };
     feature_flags?: {
+      hide_automatic_update_reminders?: boolean;
       show_analyzed_files_csv_export?: boolean;
       show_full_width_app_shell?: boolean;
       hide_quality_score_meter?: boolean;
@@ -2025,6 +2441,7 @@ export const api = {
     name: string;
     path: string;
     paths?: string[];
+    roots?: Array<{ id?: number; path: string; display_name?: string }>;
     type: LibraryType;
     scan_mode: string;
     duplicate_detection_mode?: DuplicateDetectionMode;
@@ -2044,6 +2461,7 @@ export const api = {
       name?: string;
       path?: string;
       paths?: string[];
+      roots?: Array<{ id?: number; path: string; display_name?: string }>;
       type?: LibraryType;
       scan_mode?: string;
       duplicate_detection_mode?: DuplicateDetectionMode;
@@ -2052,6 +2470,7 @@ export const api = {
       quality_profile_id?: number | null;
       show_on_dashboard?: boolean;
       history_added_date_source?: HistoryAddedDateSource;
+      preferred_connector_connection_id?: number | null;
     },
   ) =>
     request<LibrarySummary>(`/libraries/${libraryId}`, {

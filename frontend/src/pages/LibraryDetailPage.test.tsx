@@ -4,7 +4,7 @@ import { StrictMode } from "react";
 import i18next from "i18next";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useLocation, useParams } from "react-router-dom";
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useLocation, useParams } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
 import { LIBRARY_FILE_COLUMN_WIDTHS_STORAGE_KEY } from "../lib/library-file-column-widths";
@@ -2458,6 +2458,36 @@ describe("LibraryDetailPage", () => {
         }),
       ),
     );
+  });
+
+  it("debounces rapid file-search input before requesting a new page", async () => {
+    const libraryId = 1404;
+    mockAppSettings({ feature_flags: { show_analyzed_files_csv_export: true } });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    const searchInput = screen.getByPlaceholderText("Search file and path");
+    fireEvent.change(searchInput, { target: { value: "n" } });
+    fireEvent.change(searchInput, { target: { value: "ne" } });
+    fireEvent.change(searchInput, { target: { value: "needle" } });
+
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({ file: "needle" }),
+        }),
+      ),
+    );
+    const intermediateRequests = libraryFilesSpy.mock.calls.filter(([, options]) => {
+      const value = options?.filters?.file;
+      return value === "n" || value === "ne";
+    });
+    expect(intermediateRequests).toHaveLength(0);
   });
 
   it("adds a new music metadata search field and sends the filter", async () => {

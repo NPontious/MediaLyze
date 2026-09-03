@@ -133,6 +133,7 @@ def test_get_app_settings_seeds_built_in_default_ignore_patterns_for_new_install
     assert loaded.scan_performance.comparison_scatter_point_limit == 5000
     assert loaded.ui_preferences.interface_language == "en"
     assert loaded.ui_preferences.color_theme == "system"
+    assert loaded.feature_flags.hide_automatic_update_reminders is False
     assert loaded.history_retention.file_history.days == 30
     assert loaded.history_retention.file_history.storage_limit_gb == 0
     assert loaded.history_retention.library_history.days == 365
@@ -287,6 +288,23 @@ def test_get_app_settings_defaults_full_width_shell_for_desktop_new_installation
     assert loaded.feature_flags.in_depth_dolby_vision_profiles is False
 
 
+def test_get_app_settings_migrates_legacy_show_update_reminder_flag(tmp_path) -> None:
+    session_factory = build_session_factory()
+    settings = build_settings(tmp_path)
+
+    with session_factory() as db:
+        db.add(
+            AppSetting(
+                key="global",
+                value={"feature_flags": {"show_automatic_update_reminders": False}},
+            )
+        )
+        db.commit()
+        loaded = get_app_settings(db, settings)
+
+    assert loaded.feature_flags.hide_automatic_update_reminders is True
+
+
 def test_update_app_settings_can_disable_desktop_full_width_default(tmp_path) -> None:
     session_factory = build_session_factory()
     settings = build_settings(tmp_path, runtime_mode="desktop")
@@ -405,6 +423,7 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
                     "scan_history": {"days": 45, "storage_limit_gb": 0.25},
                 },
                 feature_flags={
+                    "hide_automatic_update_reminders": True,
                     "show_analyzed_files_csv_export": True,
                     "show_full_width_app_shell": True,
                     "hide_quality_score_meter": True,
@@ -429,6 +448,7 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
     assert updated.history_retention.library_history.days == 730
     assert updated.history_retention.scan_history.days == 45
     assert updated.history_retention.scan_history.storage_limit_gb == 0.25
+    assert updated.feature_flags.hide_automatic_update_reminders is True
     assert updated.feature_flags.show_analyzed_files_csv_export is True
     assert updated.feature_flags.show_full_width_app_shell is True
     assert updated.feature_flags.hide_quality_score_meter is True
@@ -455,14 +475,8 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
             "interface_language": "en",
             "color_theme": "system",
         },
-        "telemetry": {
-            "mode": "none",
-            "installation_id": None,
-            "last_sent_at": None,
-            "last_sent_app_version": None,
-            "last_user_visible_payload": None,
-        },
         "feature_flags": {
+            "hide_automatic_update_reminders": True,
             "show_analyzed_files_csv_export": True,
             "show_full_width_app_shell": True,
             "hide_quality_score_meter": True,

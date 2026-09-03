@@ -5,6 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
+from starlette.middleware.gzip import GZipResponder
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backend.app.api.routes import router
 from backend.app.core.config import get_settings
@@ -13,6 +16,48 @@ from backend.app.services.runtime import ScanRuntimeManager
 
 HTML_CACHE_CONTROL = "no-cache"
 ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+class JsonGZipResponder(GZipResponder):
+    async def send_with_compression(self, message: Message) -> None:
+        await super().send_with_compression(message)
+        if message["type"] != "http.response.start":
+            return
+        content_type = Headers(raw=message["headers"]).get("content-type", "")
+        if not content_type.startswith("application/json"):
+            self.content_type_is_excluded = True
+
+
+class JsonGZipMiddleware:
+    def __init__(
+        self,
+        app: ASGIApp,
+        minimum_size: int = 1024,
+        compresslevel: int = 5,
+    ) -> None:
+        self.app = app
+        self.minimum_size = minimum_size
+        self.compresslevel = compresslevel
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        if "gzip" not in headers.get("Accept-Encoding", ""):
+            await self.app(scope, receive, send)
+            return
+        responder = JsonGZipResponder(
+            self.app,
+            self.minimum_size,
+            compresslevel=self.compresslevel,
+        )
+        await responder(scope, receive, send)
 
 
 class ImmutableAssetStaticFiles(StaticFiles):
@@ -44,6 +89,7 @@ def create_app(settings=None) -> FastAPI:
         version=active_settings.app_version,
         lifespan=lifespan,
     )
+    app.add_middleware(JsonGZipMiddleware, minimum_size=1024, compresslevel=5)
     if not active_settings.is_desktop:
         app.add_middleware(
             CORSMiddleware,

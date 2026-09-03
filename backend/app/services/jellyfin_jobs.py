@@ -92,6 +92,16 @@ def update_jellyfin_sync_job_progress(
     job.progress_detail = detail
     job.progress_current = max(0, int(current))
     job.progress_total = max(0, int(total)) if total is not None else None
+    if phase:
+        summary = dict(job.sync_summary or {})
+        progress_metrics = dict(summary.get("progress_metrics") or {})
+        progress_metrics[phase] = {
+            "current": job.progress_current,
+            "total": job.progress_total,
+            "detail": detail,
+        }
+        summary["progress_metrics"] = progress_metrics
+        job.sync_summary = summary
     db.commit()
     return True
 

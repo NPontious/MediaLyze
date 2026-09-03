@@ -5,6 +5,7 @@ from threading import Lock, Thread
 from time import sleep
 
 from backend.app.schemas.library_history import DashboardHistoryResponse
+import backend.app.services.stats_cache as stats_cache_module
 from backend.app.services.stats_cache import StatsCache
 
 
@@ -83,3 +84,16 @@ def test_invalidate_removes_all_dashboard_and_target_library_panel_variants() ->
     assert cache.get_library_statistics("engine", 1, ("container",)) is None
     assert cache.get_library_statistics("engine", 1, ("video_codec",)) is None
     assert cache.get_library_statistics("engine", 2, ("container",)) is other_library
+
+
+def test_cache_entries_expire_without_explicit_invalidation(monkeypatch) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(stats_cache_module, "monotonic", lambda: clock[0])
+    cache = StatsCache()
+    payload = object()
+
+    cache.set_dashboard("engine", payload, ("container",))
+    assert cache.get_dashboard("engine", ("container",)) is payload
+
+    clock[0] += cache._DASHBOARD_TTL_SECONDS + 1
+    assert cache.get_dashboard("engine", ("container",)) is None

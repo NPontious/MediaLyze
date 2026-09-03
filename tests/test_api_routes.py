@@ -15,6 +15,8 @@ from backend.app.models.entities import (
     AudioStream,
     DuplicateDetectionMode,
     ExternalSubtitle,
+    JellyfinItem,
+    JellyfinMediaMatch,
     JobStatus,
     Library,
     LibraryHistory,
@@ -130,6 +132,83 @@ def test_update_status_returns_persisted_latest_release() -> None:
     assert payload["latest_version"] == "9.9.9"
     assert payload["update_available"] is True
     assert payload["release_notes"][0]["version"] == "9.9.9"
+
+
+def test_connector_connection_api_keeps_secrets_write_only() -> None:
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    with factory() as db:
+        client = _build_test_app(db)
+        providers = client.get("/api/connectors/providers")
+        created = client.post(
+            "/api/connectors",
+            json={
+                "provider": "jellyfin",
+                "name": "Living Room",
+                "base_url": "http://jellyfin.local",
+                "secret": "never-return-this",
+            },
+        )
+        listed = client.get("/api/connectors")
+
+    assert providers.status_code == 200
+    assert "jellyfin" in providers.json()
+    assert created.status_code == 201
+    assert created.json()["has_secret"] is True
+    assert "secret" not in created.json()
+    assert "never-return-this" not in created.text
+    assert listed.status_code == 200
+    assert "never-return-this" not in listed.text
+
+
+def test_desktop_update_reminder_routes_are_desktop_only_and_persist_marks() -> None:
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    with session_factory() as db:
+        db.add(
+            AppSetting(
+                key=UPDATE_STATUS_KEY,
+                value={
+                    "latest_version": "9.9.9",
+                    "checked_at": datetime.now(UTC).isoformat(),
+                    "release_notes": [],
+                },
+            )
+        )
+        db.commit()
+        client = _build_test_app(db)
+
+        assert client.get("/api/desktop/update-reminder").status_code == 404
+
+        desktop_settings = Settings()
+        desktop_settings.runtime_mode = "desktop"
+        desktop_settings.app_version = "0.17.0"
+        client.app.dependency_overrides[get_app_settings] = lambda: desktop_settings
+
+        empty_response = client.get("/api/desktop/update-reminder")
+        mark_response = client.post(
+            "/api/desktop/update-reminder/mark",
+            json={"version": "9.9.9"},
+        )
+        loaded_response = client.get("/api/desktop/update-reminder")
+
+    assert empty_response.status_code == 200
+    assert empty_response.json() == {"version": None, "reminded_at": None}
+    assert mark_response.status_code == 200
+    assert mark_response.json()["version"] == "9.9.9"
+    assert loaded_response.json() == mark_response.json()
 
 
 def test_quality_profiles_route_seeds_defaults_and_protects_default_delete() -> None:
@@ -1152,6 +1231,9 @@ def test_dashboard_comparison_route_returns_comparison_payload() -> None:
 
         client = _build_test_app(db)
         response = client.get("/api/dashboard/comparison?x_field=duration&y_field=size")
+        heatmap_response = client.get(
+            "/api/dashboard/comparison?x_field=duration&y_field=size&renderer=heatmap"
+        )
 
     assert response.status_code == 200
     payload = response.json()
@@ -1160,6 +1242,11 @@ def test_dashboard_comparison_route_returns_comparison_payload() -> None:
     assert payload["scatter_points"][0]["media_file_id"] == media_file_id
     assert payload["scatter_points"][0]["asset_name"] == "movie.mkv"
     assert payload["scatter_points"][0]["x_value"] == 5400.0
+    assert heatmap_response.status_code == 200
+    heatmap_payload = heatmap_response.json()
+    assert heatmap_payload["heatmap_cells"]
+    assert heatmap_payload["scatter_points"] is None
+    assert heatmap_payload["bar_entries"] is None
 
 
 def test_dashboard_history_route_returns_visible_library_aggregation() -> None:
@@ -1499,6 +1586,164 @@ def test_libraries_route_serializes_timestamps_as_utc_z_strings() -> None:
     assert payload["last_scan_at"] == "2026-03-24T04:08:00Z"
 
 
+def test_library_storage_map_groups_folders_and_drills_into_files() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path="/tmp/movies",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        dune = MediaFile(
+            library_id=library.id,
+            relative_path="Feature/Dune.mkv",
+            filename="Dune.mkv",
+            extension="mkv",
+            size_bytes=100,
+            mtime=1.0,
+            quality_score=10,
+            quality_score_raw=96,
+            primary_video_codec="hevc",
+            primary_video_width=3840,
+            primary_video_height=2160,
+            primary_video_hdr_type="dolby_vision",
+        )
+        small = MediaFile(
+            library_id=library.id,
+            relative_path="Feature/Small.mkv",
+            filename="Small.mkv",
+            extension="mkv",
+            size_bytes=20,
+            mtime=1.0,
+            quality_score=8,
+            quality_score_raw=84,
+            primary_video_codec="av1",
+            primary_video_width=1920,
+            primary_video_height=1080,
+            primary_video_hdr_type=None,
+            duration_seconds=5400,
+            bitrate=8_000_000,
+            audio_bitrate=640_000,
+            min_audio_codec="eac3",
+            audio_channels=6,
+            min_audio_language="deu",
+            has_external_subtitles=True,
+            min_subtitle_language="deu",
+            scan_status=ScanStatus.ready,
+        )
+        db.add_all(
+            [
+                dune,
+                small,
+                MediaFile(
+                    library_id=library.id,
+                    relative_path="Root.mkv",
+                    filename="Root.mkv",
+                    extension="mkv",
+                    size_bytes=10,
+                    mtime=1.0,
+                    quality_score=7,
+                    quality_score_raw=70,
+                ),
+            ]
+        )
+        db.flush()
+        db.add(
+            VideoStream(
+                media_file_id=small.id,
+                stream_index=0,
+                codec="av1",
+                width=1920,
+                height=1080,
+                frame_rate=23.976,
+                bit_depth=10,
+            )
+        )
+        jellyfin_item = JellyfinItem(
+            jellyfin_item_id="jf-dune",
+            item_type="Movie",
+            title="Dune: Part Two",
+        )
+        db.add(jellyfin_item)
+        db.flush()
+        db.add(
+            JellyfinMediaMatch(
+                media_file_id=dune.id,
+                jellyfin_item_id=jellyfin_item.id,
+                match_method="path",
+                status="matched",
+            )
+        )
+        db.commit()
+
+        client = _build_test_app(db)
+        root_response = client.get(f"/api/libraries/{library.id}/storage-map")
+        folder_response = client.get(f"/api/libraries/{library.id}/storage-map", params={"path": "Feature"})
+        missing_response = client.get(
+            f"/api/libraries/{library.id}/storage-map",
+            params={"path": "Missing"},
+        )
+
+    assert root_response.status_code == 200
+    root_payload = root_response.json()
+    assert root_payload["file_count"] == 3
+    assert root_payload["total_size_bytes"] == 130
+    assert [(item["kind"], item["name"], item["size_bytes"]) for item in root_payload["items"]] == [
+        ("folder", "Feature", 120),
+        ("file", "Root.mkv", 10),
+    ]
+    assert root_payload["items"][0]["file_count"] == 2
+    assert root_payload["items"][0]["video_codec"] == "hevc"
+    assert root_payload["items"][0]["quality_score"] == 10
+    assert root_payload["items"][0]["quality_score_raw"] == 94
+    assert root_payload["items"][0]["color_distributions"]["codec"] == [
+        {"value": "hevc", "size_bytes": 100},
+        {"value": "av1", "size_bytes": 20},
+    ]
+    assert root_payload["items"][0]["color_distributions"]["quality"] == [
+        {"value": 96.0, "size_bytes": 100},
+        {"value": 84.0, "size_bytes": 20},
+    ]
+    assert root_payload["items"][0]["color_distributions"]["hdr"] == [
+        {"value": "dolby_vision", "size_bytes": 100},
+        {"value": "SDR", "size_bytes": 20},
+    ]
+    assert root_payload["items"][1]["hdr_type"] is None
+
+    assert folder_response.status_code == 200
+    folder_payload = folder_response.json()
+    assert folder_payload["path"] == "Feature"
+    assert [crumb["name"] for crumb in folder_payload["breadcrumbs"]] == ["Movies", "Feature"]
+    assert [item["name"] for item in folder_payload["items"]] == ["Dune.mkv", "Small.mkv"]
+    assert folder_payload["items"][0]["file_id"] is not None
+    assert folder_payload["items"][0]["resolution_category_id"] == "4k"
+    assert folder_payload["items"][0]["quality_score"] == 10
+    assert folder_payload["items"][0]["quality_score_raw"] == 96
+    assert folder_payload["items"][0]["jellyfin_title"] == "Dune: Part Two"
+    assert folder_payload["items"][1]["jellyfin_title"] is None
+    assert folder_payload["items"][1]["hdr_type"] == "SDR"
+    assert folder_payload["items"][1]["container"] == "mkv"
+    assert folder_payload["items"][1]["duration_seconds"] == 5400
+    assert folder_payload["items"][1]["bitrate"] == 8_000_000
+    assert folder_payload["items"][1]["audio_bitrate"] == 640_000
+    assert folder_payload["items"][1]["audio_codec"] == "eac3"
+    assert folder_payload["items"][1]["audio_channels"] == 6
+    assert folder_payload["items"][1]["frame_rate"] == 23.976
+    assert folder_payload["items"][1]["bit_depth"] == 10
+    assert folder_payload["items"][1]["audio_language"] == "deu"
+    assert folder_payload["items"][1]["subtitle_status"] == "external"
+    assert folder_payload["items"][1]["subtitle_language"] == "deu"
+    assert folder_payload["items"][1]["analysis_status"] == "ready"
+    assert missing_response.status_code == 404
+
+
 def test_active_scan_jobs_route_serializes_timestamps_as_utc_z_strings() -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -1742,6 +1987,45 @@ def test_file_stream_details_route_returns_lightweight_stream_payload() -> None:
     assert payload["subtitle_streams"][0]["subtitle_type"] == "text"
     assert payload["external_subtitles"][0]["path"] == "movie.en.srt"
     assert "raw_ffprobe_json" not in payload
+
+
+def test_file_detail_can_defer_raw_ffprobe_payload_until_requested() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with session_factory() as db:
+        library = Library(
+            name="Deferred raw payload",
+            path="/tmp/deferred-raw-payload",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        media_file = MediaFile(
+            library_id=library.id,
+            relative_path="movie.mkv",
+            filename="movie.mkv",
+            extension="mkv",
+            size_bytes=1024,
+            mtime=1.0,
+            scan_status=ScanStatus.ready,
+            quality_score=8,
+            raw_ffprobe_json={"format": {"tags": {"large": "x" * 10_000}}},
+        )
+        db.add(media_file)
+        db.commit()
+
+        client = _build_test_app(db)
+        detail_response = client.get(f"/api/files/{media_file.id}?include_raw_ffprobe=false")
+        raw_response = client.get(f"/api/files/{media_file.id}/raw-ffprobe")
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["raw_ffprobe_json"] is None
+    assert raw_response.status_code == 200
+    assert raw_response.json()["raw_ffprobe_json"]["format"]["tags"]["large"] == "x" * 10_000
 
 
 def test_file_history_route_returns_snapshots_for_current_file_path() -> None:

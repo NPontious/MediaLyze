@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from backend.app.core.config import get_settings
 from backend.app.models.entities import (
     JellyfinConnection,
     JellyfinLibrary,
@@ -23,19 +24,13 @@ from backend.app.models.entities import (
     JellyfinUser,
     Library,
 )
-from backend.app.core.config import get_settings
 from backend.app.services.jellyfin_client import JellyfinClient, JellyfinError, JellyfinItemPage
 from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
+from backend.app.services.jellyfin_jobs import update_jellyfin_sync_job_progress
 from backend.app.services.jellyfin_matching import (
     map_library_locations,
     normalize_jellyfin_path,
     recompute_jellyfin_matches,
-)
-from backend.app.services.jellyfin_jobs import update_jellyfin_sync_job_progress
-from backend.app.services.jellyfin_staging import (
-    cleanup_staging,
-    commit_stage_page,
-    promote_staging,
 )
 from backend.app.services.jellyfin_progress import (
     begin_jellyfin_progress,
@@ -47,9 +42,13 @@ from backend.app.services.jellyfin_progress import (
     update_jellyfin_progress,
     update_jellyfin_progress_track,
 )
+from backend.app.services.jellyfin_staging import (
+    cleanup_staging,
+    commit_stage_page,
+    promote_staging,
+)
 from backend.app.services.stats_cache import stats_cache
 from backend.app.utils.time import utc_now
-
 
 JELLYFIN_USER_SYNC_WORKERS = 4
 
@@ -151,6 +150,7 @@ def _sync_playback_events(
     imported = 0
     try:
         for page in iterator(min_date=min_date):
+            _raise_if_sync_cancelled()
             rows: list[dict] = []
             for payload in page.items:
                 activity_id = payload.get("Id")
@@ -180,6 +180,19 @@ def _sync_playback_events(
                 JellyfinSyncStagePlaybackEvent,
                 rows,
                 conflict_columns=("sync_run_id", "jellyfin_activity_id"),
+            )
+            update_jellyfin_progress(
+                "playback_events",
+                current=min(
+                    page.start_index
+                    + (
+                        page.processed_count
+                        if page.processed_count is not None
+                        else len(page.items)
+                    ),
+                    page.total_record_count,
+                ),
+                total=page.total_record_count,
             )
     except JellyfinError:
         # Playback history is an optional elevated Jellyfin endpoint. Keep the
@@ -366,6 +379,8 @@ def _sync_enabled_user_data(
     now: datetime,
 ) -> None:
     """Fetch user-scoped pages concurrently while keeping SQLite writes serialized."""
+    completed_users = 0
+    total_users = len(enabled_users)
     for batch_start in range(0, len(enabled_users), JELLYFIN_USER_SYNC_WORKERS):
         batch = enabled_users[batch_start : batch_start + JELLYFIN_USER_SYNC_WORKERS]
         set_jellyfin_progress_tracks(
@@ -434,6 +449,13 @@ def _sync_enabled_user_data(
                             )
                             db.commit()
                             complete_jellyfin_progress_track(user_id)
+                            completed_users += 1
+                            update_jellyfin_progress(
+                                "user_states",
+                                detail=str(user_row["name"]),
+                                current=completed_users,
+                                total=total_users,
+                            )
                             continue
 
                         rows = []
@@ -524,7 +546,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
             connection.server_version = system_info.get("Version")
             db.commit()
 
-            update_jellyfin_progress("users")
+            update_jellyfin_progress("users", current=0, total=None)
             remote_users = client.get_users()
             stored_users = {
                 user.jellyfin_user_id: user for user in db.scalars(select(JellyfinUser))
@@ -541,7 +563,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                         "sync_run_id": sync_run_id,
                         "jellyfin_user_id": user_id,
                         "name": str(payload.get("Name") or (stored.name if stored else "Unknown user")),
-                        "enabled_for_sync": bool(stored.enabled_for_sync) if stored else False,
+                        "enabled_for_sync": bool(stored.enabled_for_sync) if stored else True,
                         "last_synced_at": stored.last_synced_at if stored else None,
                     }
                 )
@@ -552,6 +574,7 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                 conflict_columns=("sync_run_id", "jellyfin_user_id"),
             )
             user_count = len(user_rows)
+            update_jellyfin_progress("users", current=user_count, total=user_count)
 
             update_jellyfin_progress("libraries")
             folders = client.get_virtual_folders()
@@ -592,15 +615,21 @@ def run_jellyfin_sync(db: Session, *, job_id: int | None = None) -> dict[str, in
                     total=page.total_record_count,
                 )
 
-            update_jellyfin_progress("items", current=0, total=None)
+            enabled_user_rows = [row for row in user_rows if row["enabled_for_sync"]]
+            update_jellyfin_progress(
+                "user_states",
+                current=0,
+                total=len(enabled_user_rows),
+            )
             _sync_enabled_user_data(
                 db,
                 sync_run_id=sync_run_id,
-                enabled_users=[row for row in user_rows if row["enabled_for_sync"]],
+                enabled_users=enabled_user_rows,
                 base_url=connection.base_url,
                 api_key=api_key,
                 now=now,
             )
+            update_jellyfin_progress("playback_events", current=0, total=None)
             playback_event_count, playback_history_status = _sync_playback_events(
                 db,
                 client=client,

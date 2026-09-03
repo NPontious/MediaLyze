@@ -153,6 +153,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
         "filename_signature",
         "content_hash",
         "content_hash_algorithm",
+        "max_audio_bit_depth",
     }.issubset(
         media_file_columns
     )
@@ -186,6 +187,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
         "jellyfin_sync_stage_users",
         "jellyfin_sync_stage_items",
         "jellyfin_sync_stage_user_data",
+        "media_file_search_fts",
     }.issubset(inspector.get_table_names())
 
 

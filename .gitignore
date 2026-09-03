@@ -19,3 +19,4 @@ media/
 .local-config
 .codex
 node_modules
+prototypes

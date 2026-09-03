@@ -2,7 +2,7 @@ import "../i18n";
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
 import { api, type AppSettings } from "../lib/api";
@@ -40,6 +40,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       ...overrideScanPerformance,
     },
     feature_flags: {
+      hide_automatic_update_reminders: false,
       show_analyzed_files_csv_export: false,
       show_full_width_app_shell: false,
       hide_quality_score_meter: false,
@@ -61,6 +62,7 @@ function renderShell(initialEntries = ["/"]) {
             <Route element={<AppShell />}>
               <Route path="/" element={<div>Dashboard</div>} />
               <Route path="/settings" element={<div>Settings page</div>} />
+              <Route path="/storage-map" element={<div>Storage map page</div>} />
               <Route path="/ui-elements" element={<div>UI elements page</div>} />
             </Route>
           </Routes>
@@ -76,6 +78,8 @@ beforeEach(() => {
   vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
   vi.spyOn(api, "libraries").mockResolvedValue([]);
   vi.spyOn(api, "activeScanJobs").mockResolvedValue([]);
+  vi.spyOn(api, "connectors").mockResolvedValue([]);
+  vi.spyOn(api, "connectorSyncStatus").mockResolvedValue(null);
   vi.spyOn(api, "updateStatus").mockResolvedValue({
     current_version: "0.8.3",
     latest_version: "0.8.3",
@@ -92,6 +96,25 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("shows the storage map as the fourth primary navigation item", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+
+    renderShell();
+
+    const primaryNavigation = await screen.findByRole("navigation", { name: "Primary" });
+    const primaryLinks = Array.from(primaryNavigation.querySelectorAll<HTMLAnchorElement>(".media-nav-icons > a"));
+    expect(primaryLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "/",
+      "/files/compare",
+      "/settings",
+      "/storage-map",
+    ]);
+
+    fireEvent.click(screen.getByRole("link", { name: "Storage map" }));
+
+    expect(await screen.findByText("Storage map page")).toBeInTheDocument();
+  });
+
   it("links the MediaLyze brand back to the dashboard", async () => {
     window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
 
@@ -304,6 +327,66 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "Toggle scan metrics" })).toBeInTheDocument();
   });
 
+  it("shows active connector synchronization in the global scan banner", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.mocked(api.connectors).mockResolvedValue([{
+      id: 7,
+      provider: "jellyfin",
+      name: "Living Room",
+      base_url: "http://jellyfin.local",
+      config: {},
+      capabilities: { users: true },
+      enabled: true,
+      sync_interval_minutes: 60,
+      path_mapping_mode: "automatic",
+      library_mapping_mode: "automatic",
+      server_name: "Jellyfin",
+      server_version: "10.11",
+      last_status: "running",
+      last_error: null,
+      last_sync_started_at: null,
+      last_sync_finished_at: null,
+      last_successful_sync_at: null,
+      has_secret: true,
+      created_at: "2026-08-04T00:00:00Z",
+      updated_at: "2026-08-04T00:00:00Z",
+    }]);
+    vi.mocked(api.connectorSyncStatus).mockResolvedValue({
+      id: 12,
+      connection_id: 7,
+      job_type: "sync",
+      sync_run_id: "run-12",
+      status: "running",
+      trigger_source: "manual",
+      cancellation_requested: false,
+      progress_phase: "mirroring_user_states",
+      progress_detail: null,
+      progress_current: 52_200,
+      progress_total: 104_265,
+      error: null,
+      sync_summary: {
+        progress_metrics: {
+          items: { current: 100, total: 100, detail: null },
+          user_states: { current: 2, total: 4, detail: "Alice" },
+        },
+      },
+    });
+    const cancel = vi.spyOn(api, "cancelConnectorSync").mockResolvedValue({ job_id: 12, status: "running", cancellation_requested: true });
+
+    renderShell();
+
+    expect(await screen.findByText("Living Room")).toBeInTheDocument();
+    expect(document.querySelector(".scan-banner .connector-sync-job-card.is-determinate")).toBeInTheDocument();
+    expect(await screen.findByText("Mirroring user states")).toBeInTheDocument();
+    expect(screen.getByText("100 / 100")).toBeInTheDocument();
+    expect(screen.getByText("2 / 4")).toBeInTheDocument();
+    expect(screen.getByTitle("100 of 100 assets synchronized")).toBeInTheDocument();
+    expect(screen.getByTitle("User states processed for 2 of 4 users")).toBeInTheDocument();
+    expect(screen.queryByText("Sync now")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop this synchronization" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(7, 12));
+  });
+
   it("keeps active scans visible and shows an error when cancel fails", async () => {
     window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
     vi.mocked(api.activeScanJobs).mockResolvedValue([
@@ -366,15 +449,29 @@ describe("AppShell", () => {
     const downloadLatestInstaller = vi.fn().mockResolvedValue({ ok: true });
     window.medialyzeDesktop = {
       isDesktop: () => true,
+      getRuntimeInfo: () => ({ platform: "darwin", arch: "arm64" }),
       selectLibraryPaths: vi.fn(),
       downloadLatestInstaller,
+      cancelInstallerDownload: vi.fn(),
     };
     vi.mocked(api.updateStatus).mockResolvedValue({
       current_version: "0.8.3",
       latest_version: "0.9.0",
+      latest_release_url: "https://github.com/frederikemmer/MediaLyze/releases/tag/v0.9.0",
       update_available: true,
+      automatic_reminder_eligible: true,
       checked_at: "2026-05-15T00:00:00Z",
       release_notes: [],
+      desktop_assets: [
+        {
+          platform: "darwin",
+          arch: "arm64",
+          filename: "MediaLyze-arm64.dmg",
+          download_url: "https://github.com/frederikemmer/MediaLyze/releases/download/v0.9.0/MediaLyze-arm64.dmg",
+          size_bytes: 123,
+          sha256: null,
+        },
+      ],
     });
 
     renderShell();
@@ -387,6 +484,113 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "Downloaded" })).toBeInTheDocument();
   });
 
+  it("automatically opens a newer stable release and stores the browser reminder", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      latest_release_url: "https://github.com/NPontious/MediaLyze/releases/tag/v0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: "2026-07-28T00:00:00Z",
+      release_notes: [
+        {
+          version: "0.9.0",
+          date: "2026-07-28",
+          sections: [{ title: "New", items: ["automatic update"] }],
+        },
+      ],
+      desktop_assets: [],
+    });
+
+    renderShell();
+
+    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    expect(await screen.findByText("automatic update")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.localStorage.getItem("medialyze-update-reminder-v1")).toContain('"version":"0.9.0"'),
+    );
+  });
+
+  it("does not automatically reopen within 72 hours or when the feature flag is disabled", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    window.localStorage.setItem(
+      "medialyze-update-reminder-v1",
+      JSON.stringify({ version: "0.8.4", remindedAt: new Date().toISOString() }),
+    );
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: new Date().toISOString(),
+      release_notes: [],
+      desktop_assets: [],
+    });
+
+    const firstRender = renderShell();
+    await waitFor(() => expect(api.updateStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Release history" })).not.toBeInTheDocument();
+    firstRender.unmount();
+
+    window.localStorage.removeItem("medialyze-update-reminder-v1");
+    vi.mocked(api.appSettings).mockResolvedValue(
+      createAppSettings({ feature_flags: { hide_automatic_update_reminders: true } }),
+    );
+    renderShell();
+    await waitFor(() => expect(api.updateStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Release history" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the passive update indicator when browser reminder storage is unavailable", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("storage blocked");
+    });
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: new Date().toISOString(),
+      release_notes: [],
+      desktop_assets: [],
+    });
+
+    renderShell();
+
+    expect(await screen.findByText("Update available: v0.9.0")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Release history" })).not.toBeInTheDocument();
+  });
+
+  it("uses the installation-wide desktop reminder APIs instead of browser storage", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    window.medialyzeDesktop = {
+      isDesktop: () => true,
+      getRuntimeInfo: () => ({ platform: "linux", arch: "x64" }),
+      selectLibraryPaths: vi.fn(),
+    };
+    vi.spyOn(api, "desktopUpdateReminder").mockResolvedValue({ version: null, reminded_at: null });
+    const markReminder = vi.spyOn(api, "markDesktopUpdateReminder").mockResolvedValue({
+      version: "0.9.0",
+      reminded_at: new Date().toISOString(),
+    });
+    vi.mocked(api.updateStatus).mockResolvedValue({
+      current_version: "0.8.3",
+      latest_version: "0.9.0",
+      update_available: true,
+      automatic_reminder_eligible: true,
+      checked_at: new Date().toISOString(),
+      release_notes: [],
+      desktop_assets: [],
+    });
+
+    renderShell();
+
+    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    await waitFor(() => expect(markReminder).toHaveBeenCalledWith("0.9.0"));
+    expect(window.localStorage.getItem("medialyze-update-reminder-v1")).toBeNull();
+  });
   it("applies the full-width shell class when the feature flag is enabled", async () => {
     vi.spyOn(api, "appSettings").mockResolvedValue(
       createAppSettings({

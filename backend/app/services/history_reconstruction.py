@@ -10,6 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models.entities import (
+    ConnectorItem,
+    ConnectorMediaMatch,
     HistoryAddedDateSource,
     JellyfinItem,
     JellyfinMediaMatch,
@@ -495,6 +497,7 @@ def reconstruct_history_from_media_files(
                 selectinload(MediaFile.audio_streams),
                 selectinload(MediaFile.subtitle_streams),
                 selectinload(MediaFile.external_subtitles),
+                selectinload(MediaFile.library_root),
             )
         ).all()
         if not media_files:
@@ -520,12 +523,40 @@ def reconstruct_history_from_media_files(
             jellyfin_added_dates = {
                 media_file_id: date_created
                 for media_file_id, date_created in db.execute(
-                    select(JellyfinMediaMatch.media_file_id, JellyfinItem.date_created)
+                    select(
+                        JellyfinMediaMatch.media_file_id,
+                        func.min(JellyfinItem.date_created),
+                    )
                     .join(JellyfinItem, JellyfinItem.id == JellyfinMediaMatch.jellyfin_item_id)
                     .where(
                         JellyfinMediaMatch.status == "matched",
                         JellyfinItem.date_created.is_not(None),
                     )
+                    .group_by(JellyfinMediaMatch.media_file_id)
+                ).all()
+                if date_created is not None
+            }
+        elif (
+            library.history_added_date_source == HistoryAddedDateSource.connector
+            and library.preferred_connector_connection_id is not None
+        ):
+            jellyfin_added_dates = {
+                media_file_id: date_created
+                for media_file_id, date_created in db.execute(
+                    select(
+                        ConnectorMediaMatch.media_file_id,
+                        func.min(ConnectorItem.date_created),
+                    )
+                    .join(
+                        ConnectorItem,
+                        ConnectorItem.id == ConnectorMediaMatch.connector_item_id,
+                    )
+                    .where(
+                        ConnectorItem.connection_id == library.preferred_connector_connection_id,
+                        ConnectorMediaMatch.status == "matched",
+                        ConnectorItem.date_created.is_not(None),
+                    )
+                    .group_by(ConnectorMediaMatch.media_file_id)
                 ).all()
                 if date_created is not None
             }
@@ -541,7 +572,10 @@ def reconstruct_history_from_media_files(
                     added_at_override=added_at_override,
                 )
             )
-            if library.history_added_date_source == HistoryAddedDateSource.jellyfin:
+            if library.history_added_date_source in {
+                HistoryAddedDateSource.jellyfin,
+                HistoryAddedDateSource.connector,
+            }:
                 if added_at_override is None:
                     jellyfin_added_date_fallbacks += 1
                 else:
@@ -566,19 +600,22 @@ def reconstruct_history_from_media_files(
                     updated_library_history_entries=updated_library_history_entries,
                 )
 
-        earliest_file_history_by_path = dict(
-            db.execute(
+        earliest_file_history_by_path = {
+            (root_id, relative_path): captured_at
+            for root_id, relative_path, captured_at in db.execute(
                 select(
+                    MediaFileHistory.library_root_id,
                     MediaFileHistory.relative_path,
                     func.min(MediaFileHistory.captured_at),
                 )
                 .where(MediaFileHistory.library_id == library.id)
-                .group_by(MediaFileHistory.relative_path)
+                .group_by(MediaFileHistory.library_root_id, MediaFileHistory.relative_path)
             ).all()
-        )
+        }
         file_history_emit_step = _progress_update_step(len(prepared_files))
         for prepared_index, prepared in enumerate(prepared_files, start=1):
-            earliest_existing_capture = earliest_file_history_by_path.get(prepared.media_file.relative_path)
+            history_key = (prepared.media_file.library_root_id, prepared.media_file.relative_path)
+            earliest_existing_capture = earliest_file_history_by_path.get(history_key)
             if earliest_existing_capture is not None and earliest_existing_capture <= prepared.inferred_added_at:
                 pass
             elif file_history_cutoff is not None and prepared.inferred_added_at < file_history_cutoff:
@@ -588,6 +625,12 @@ def reconstruct_history_from_media_files(
                 db.add(
                     MediaFileHistory(
                         library_id=library.id,
+                        library_root_id=prepared.media_file.library_root_id,
+                        root_alias=(
+                            prepared.media_file.library_root.display_name
+                            if prepared.media_file.library_root
+                            else None
+                        ),
                         media_file_id=prepared.media_file.id,
                         relative_path=prepared.media_file.relative_path,
                         filename=prepared.media_file.filename,
@@ -597,7 +640,7 @@ def reconstruct_history_from_media_files(
                         snapshot=snapshot,
                     )
                 )
-                earliest_file_history_by_path[prepared.media_file.relative_path] = prepared.inferred_added_at
+                earliest_file_history_by_path[history_key] = prepared.inferred_added_at
                 created_file_history_entries += 1
 
             if prepared_index % file_history_emit_step == 0 or prepared_index == len(prepared_files):

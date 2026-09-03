@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.18.0
+
+>2026-08-24
+
+New Storage map to view your entire library at once!
+
+### ✨ New
+
+- add a Storage Map which can be sorted/colored in different ways
+- add a provider-neutral, multi-connection connector layer (for later implementation of Plex, ...)
+- add conservative corpus-based automatic connector path inference (manual path mapping shouldn't be necessary now)
+
+### ⚡ Performance
+
+- accelerate library file browsing with debounced requests, smaller pages, cached background counts, compact denormalized table rows, SQLite FTS5 trigram search, index-friendly path sorting and compressed API responses
+- bound statistics, history, comparison, file-list, and Storage Map caches with automatic TTL/LRU cleanup
+- reduce comparison queries and responses to the selected axes and renderer
+- lazy-load raw ffprobe payloads only when their detail panel is opened
+
+### 🔒 Security
+
+- keep connector credentials out of provider config, persisted provider payloads, normal API DTOs, job errors, and logs through dedicated validation and recursive redaction
+- update the Electron runtime to its patched internal archive extractor and refresh the packaging toolchain, React Router, Vite, Undici, PostCSS, Nano ID, and transitive YAML and URL tooling to resolve current Dependabot advisories
+- harden desktop installer downloads with immutable release URLs, strict asset and redirect validation, explicit save destinations, temporary files, size and SHA-256 verification, and cancel-safe cleanup
+
+### 🐛 Bug fixes
+
+- fix the standard Jellyfin connector's post-sync mapping crash, bulk-mirror user states and playback events, expose compatibility-mirror progress, and avoid redundant legacy rematching when projected paths are unchanged
+- keep long Jellyfin user-state, playback-history, and compatibility-mirror phases visibly progressing and responsive to cancellation
+- show active connector synchronizations in the global scan banner with consistent progress details and cancellation controls instead of inline connection messages
+- move connector automatic/manual mapping controls into their accordion headers, reuse the Library Detail period selector's segmented-control design, and align their chevrons with the Analyzed users accordion
+- reorganize connector library assignments into compact source-to-target mapping rows with clearer coverage and required-link states
+- align expanded connector settings with the boxed Library settings accordion layout and section spacing
+- replace the remaining oversized custom single-choice menus in Settings with native platform dropdowns
+- include the second-generation suffix in the "Fire TV Stick 4K Max (2. Gen)" hardware profile ID
+
 ## v0.17.2
 
 >2026-08-03

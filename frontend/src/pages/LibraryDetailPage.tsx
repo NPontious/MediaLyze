@@ -27,7 +27,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { AnimatedSearchIcon, type AnimatedSearchIconHandle } from "../components/AnimatedSearchIcon";
@@ -71,6 +71,7 @@ import {
 import { formatBitrate, formatBytes, formatCodecLabel, formatContainerLabel, formatDate, formatDuration } from "../lib/format";
 import { isLibraryHistoryMetricId, type LibraryHistoryMetricId } from "../lib/history-metrics";
 import { LruCache } from "../lib/lru-cache";
+import { readSessionCache, writeSessionCache, type SessionCacheOptions } from "../lib/session-cache";
 import { collapseHdrDistribution, formatHdrType } from "../lib/hdr";
 import {
   LIBRARY_METADATA_SEARCH_FIELDS,
@@ -258,7 +259,8 @@ type VisibleLibraryLayoutPanel = {
   definition: LibraryLayoutPanelDefinition;
 };
 
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 100;
+const FILE_SEARCH_DEBOUNCE_MS = 300;
 const LOAD_MORE_THRESHOLD_ROWS = 40;
 const ROW_ESTIMATE_PX = 54;
 const OVERSCAN_ROWS = 12;
@@ -320,14 +322,14 @@ const MEDIA_FILE_SORT_KEYS = new Set<FileColumnKey>([
   "quality_score",
 ]);
 const SORT_INDICATOR_WIDTH_PX = 18;
-const librarySummaryCache = new LruCache<string, LibrarySummary>(32);
-const libraryStatisticsCache = new LruCache<string, LibraryStatistics>(16);
-const libraryHistoryCache = new LruCache<string, LibraryHistoryResponse>(16);
-const libraryComparisonCache = new LruCache<string, ComparisonResponse>(48);
-const libraryDuplicateGroupsCache = new LruCache<string, DuplicateGroupPage>(16);
-const libraryFileListCache = new LruCache<string, CachedFileList>(12);
-const libraryGroupedFileListCache = new LruCache<string, CachedGroupedFileList>(12);
-const librarySeriesGroupedDetailCache = new LruCache<string, MediaSeriesGroupedDetail>(64);
+const librarySummaryCache = new LruCache<string, LibrarySummary>(32, { ttlMs: 2 * 60 * 1000 });
+const libraryStatisticsCache = new LruCache<string, LibraryStatistics>(16, { ttlMs: 5 * 60 * 1000 });
+const libraryHistoryCache = new LruCache<string, LibraryHistoryResponse>(16, { ttlMs: 5 * 60 * 1000 });
+const libraryComparisonCache = new LruCache<string, ComparisonResponse>(48, { ttlMs: 5 * 60 * 1000 });
+const libraryDuplicateGroupsCache = new LruCache<string, DuplicateGroupPage>(16, { ttlMs: 2 * 60 * 1000 });
+const libraryFileListCache = new LruCache<string, CachedFileList>(12, { ttlMs: 2 * 60 * 1000 });
+const libraryGroupedFileListCache = new LruCache<string, CachedGroupedFileList>(12, { ttlMs: 2 * 60 * 1000 });
+const librarySeriesGroupedDetailCache = new LruCache<string, MediaSeriesGroupedDetail>(32, { ttlMs: 2 * 60 * 1000 });
 const libraryLayoutPanelDefinitionMap = new Map<StatisticPanelLayoutId, LibraryLayoutPanelDefinition>([
   ...LIBRARY_STATISTIC_DEFINITIONS.map(
     (definition) =>
@@ -350,21 +352,23 @@ function librarySessionStorageKey(kind: "summary" | "history" | "statistics", ke
   return `medialyze-library-${kind}-cache:${key}`;
 }
 
+function librarySessionCacheOptions(kind: "summary" | "history" | "statistics"): SessionCacheOptions {
+  const prefix = `medialyze-library-${kind}-cache:`;
+  return {
+    prefix,
+    ttlMs: kind === "summary" ? 2 * 60 * 1000 : 5 * 60 * 1000,
+    maxEntries: kind === "summary" ? 24 : 16,
+    maxTotalBytes: kind === "summary" ? 2 * 1024 * 1024 : 6 * 1024 * 1024,
+    maxEntryBytes: kind === "summary" ? 256 * 1024 : 2 * 1024 * 1024,
+  };
+}
+
 function readLibrarySessionCache<T>(kind: "summary" | "history" | "statistics", key: string): T | null {
-  try {
-    const value = window.sessionStorage.getItem(librarySessionStorageKey(kind, key));
-    return value ? (JSON.parse(value) as T) : null;
-  } catch {
-    return null;
-  }
+  return readSessionCache<T>(librarySessionStorageKey(kind, key), librarySessionCacheOptions(kind));
 }
 
 function writeLibrarySessionCache(kind: "summary" | "history" | "statistics", key: string, value: unknown): void {
-  try {
-    window.sessionStorage.setItem(librarySessionStorageKey(kind, key), JSON.stringify(value));
-  } catch {
-    // Ignore quota and disabled-storage failures.
-  }
+  writeSessionCache(librarySessionStorageKey(kind, key), value, librarySessionCacheOptions(kind));
 }
 
 function deleteLibrarySessionCache(kind: "summary" | "history" | "statistics", key: string): void {
@@ -1558,7 +1562,7 @@ function buildCsvFallbackFilename(libraryName: string): string {
 }
 
 function buildLibraryComparisonQueryKey(libraryId: string, selection: ComparisonSelection): string {
-  return `${libraryId}:${selection.xField}:${selection.yField}`;
+  return `${libraryId}:${selection.xField}:${selection.yField}:${selection.renderer}`;
 }
 
 function buildLibrarySeriesGroupedDetailCacheKey(
@@ -1899,7 +1903,7 @@ export function LibraryDetailPage() {
             showMusicQualityScore,
             hasPlaybackData,
           });
-          return `${item.instanceId}:${normalizedSelection.xField}:${normalizedSelection.yField}`;
+          return `${item.instanceId}:${normalizedSelection.xField}:${normalizedSelection.yField}:${normalizedSelection.renderer}`;
         })
         .join("|"),
     [comparisonPanels, activeLibraryType, hasPlaybackData, showMusicQualityScore],
@@ -2007,16 +2011,24 @@ export function LibraryDetailPage() {
     () => serializeLibraryFileSearchFilters(appliedSearchFilters),
     [appliedSearchFilters],
   );
-  const deferredAppliedSearchFilterKey = useDeferredValue(appliedSearchFilterKey);
+  const [debouncedAppliedSearchFilterKey, setDebouncedAppliedSearchFilterKey] =
+    useState(appliedSearchFilterKey);
   const deferredDuplicateSearch = useDeferredValue(duplicateSearch);
-  const deferredAppliedSearchFilters = useMemo(
-    () => deserializeLibraryFileSearchFilters(deferredAppliedSearchFilterKey),
-    [deferredAppliedSearchFilterKey],
+  const debouncedAppliedSearchFilters = useMemo(
+    () => deserializeLibraryFileSearchFilters(debouncedAppliedSearchFilterKey),
+    [debouncedAppliedSearchFilterKey],
   );
   const hasAppliedSearchFilters = useMemo(
-    () => hasActiveSearchFilters(deferredAppliedSearchFilters),
-    [deferredAppliedSearchFilters],
+    () => hasActiveSearchFilters(debouncedAppliedSearchFilters),
+    [debouncedAppliedSearchFilters],
   );
+  useEffect(() => {
+    const timeoutId = window.setTimeout(
+      () => setDebouncedAppliedSearchFilterKey(appliedSearchFilterKey),
+      FILE_SEARCH_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [appliedSearchFilterKey]);
   const duplicateSearchTokens = useMemo(
     () => searchValueTokens(deferredDuplicateSearch),
     [deferredDuplicateSearch],
@@ -2081,8 +2093,8 @@ export function LibraryDetailPage() {
   );
   const hasDuplicateContentInCurrentView = duplicateViewFilteredGroups.length > 0;
   const fileQueryKey = useMemo(
-    () => buildFileCacheKey(libraryId, deferredAppliedSearchFilterKey, sortKey, sortDirection),
-    [deferredAppliedSearchFilterKey, libraryId, sortDirection, sortKey],
+    () => buildFileCacheKey(libraryId, debouncedAppliedSearchFilterKey, sortKey, sortDirection),
+    [debouncedAppliedSearchFilterKey, libraryId, sortDirection, sortKey],
   );
   const activeFileQueryKeyRef = useRef(fileQueryKey);
   const hasLoadedFilesOnceRef = useRef(false);
@@ -2462,7 +2474,7 @@ export function LibraryDetailPage() {
         limit: PAGE_SIZE,
         cursor,
         includeTotal: false,
-        filters: deferredAppliedSearchFilters,
+        filters: debouncedAppliedSearchFilters,
         sortKey,
         sortDirection,
         signal: controller.signal,
@@ -2494,9 +2506,9 @@ export function LibraryDetailPage() {
         filesCountAbortRef.current = countController;
         api.libraryFiles(libraryId, {
           offset: 0,
-          limit: 1,
+          limit: 0,
           includeTotal: true,
-          filters: deferredAppliedSearchFilters,
+          filters: debouncedAppliedSearchFilters,
           sortKey,
           sortDirection,
           signal: countController.signal,
@@ -2581,7 +2593,7 @@ export function LibraryDetailPage() {
         limit: PAGE_SIZE,
         cursor,
         includeTotal: true,
-        filters: deferredAppliedSearchFilters,
+        filters: debouncedAppliedSearchFilters,
         sortKey,
         sortDirection,
         signal: controller.signal,
@@ -2632,7 +2644,11 @@ export function LibraryDetailPage() {
   });
 
   const loadGroupedSeriesDetail = useEffectEvent(async (seriesId: number, queryKey: string) => {
-    const cacheKey = buildLibrarySeriesGroupedDetailCacheKey(libraryId, seriesId, deferredAppliedSearchFilterKey);
+    const cacheKey = buildLibrarySeriesGroupedDetailCacheKey(
+      libraryId,
+      seriesId,
+      debouncedAppliedSearchFilterKey,
+    );
     const cachedDetail = librarySeriesGroupedDetailCache.get(cacheKey);
     if (cachedDetail) {
       setExpandedSeriesDetailsById((current) => (current[seriesId] ? current : { ...current, [seriesId]: cachedDetail }));
@@ -2652,7 +2668,7 @@ export function LibraryDetailPage() {
 
     try {
       const payload = await api.librarySeriesGroupedDetail(libraryId, seriesId, {
-        filters: deferredAppliedSearchFilters,
+        filters: debouncedAppliedSearchFilters,
         signal: controller.signal,
       });
       if (activeFileQueryKeyRef.current !== queryKey) {
@@ -2689,7 +2705,7 @@ export function LibraryDetailPage() {
 
     try {
       const payload = await api.downloadLibraryFilesCsv(libraryId, {
-        filters: deferredAppliedSearchFilters,
+        filters: appliedSearchFilters,
         sortKey,
         sortDirection,
         signal: controller.signal,
@@ -3093,6 +3109,7 @@ export function LibraryDetailPage() {
       api.libraryComparison(libraryId, {
         xField: selection.xField,
         yField: selection.yField,
+        renderer: selection.renderer,
         signal: controller.signal,
       })
         .then((payload) => {

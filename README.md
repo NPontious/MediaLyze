@@ -228,7 +228,7 @@ MediaLyze exposes separate limits for per-scan analysis workers and parallel lib
 Ignore rules use glob patterns matched against the normalized relative path inside each library. MediaLyze ships editable built-in defaults for common system and temporary paths such as `*/.DS_Store`, `*/@eaDir/*`, `*/.deletedByTMM/*`, and `*.part`. Set `DISABLE_DEFAULT_IGNORE_PATTERNS=true` if you do not want those defaults preloaded on first start.
 See [docs/patterns.md](docs/patterns.md) for folder discovery, series recognition, bonus-content rules, and ignore-pattern examples.
 
-Jellyfin permissions, Docker path mappings, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md).
+Provider-neutral connections, conservative automatic path inference, automatic/manual library assignment, synchronization, and provider development are documented in [docs/connectors.md](docs/connectors.md). Jellyfin-specific permissions, playback-data privacy, compatibility, and secret handling are documented in [docs/jellyfin.md](docs/jellyfin.md). `JELLYFIN_API_KEY_FILE` applies only to the migrated standard Jellyfin connection; additional Jellyfin servers can be configured in the shared Connector Settings accordions. Remaining read-only diagnostics stages are tracked in [docs/connector-ui-deferred.md](docs/connector-ui-deferred.md).
 
 Repository automation, Docker and desktop publishing, manual workflow controls, and release recovery are documented in [docs/github_actions.md](docs/github_actions.md).
 

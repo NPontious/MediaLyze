@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import String, and_, case, cast, func, literal, or_, select
+from sqlalchemy import String, and_, bindparam, case, cast, func, literal, or_, select, text
 
 from backend.app.models.entities import (
     JellyfinItem,
@@ -245,6 +245,23 @@ def match_patterns(expression, patterns: list[str]):
     return or_(*(func.lower(func.coalesce(expression, "")).like(pattern) for pattern in patterns))
 
 
+def _fts_quote(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _fts_match_clause(query_text: str, parameter_name: str):
+    return text(
+        "media_files.id IN ("
+        "SELECT rowid FROM media_file_search_fts "
+        f"WHERE media_file_search_fts MATCH :{parameter_name}"
+        ")"
+    ).bindparams(bindparam(parameter_name, query_text))
+
+
+def _fts_terms_query(values: set[str] | list[str]) -> str:
+    return " OR ".join(_fts_quote(value) for value in sorted(set(values)) if value)
+
+
 def _apply_clause(query, clause, *, negated: bool = False):
     return query.where(~clause if negated else clause)
 
@@ -253,10 +270,18 @@ def token_matches_source(token: str, source_label: str) -> bool:
     return bool(token) and source_label.startswith(token)
 
 
-def apply_legacy_search(query, primary_video_streams, audio_aggregates, subtitle_aggregates, search: str):
+def apply_legacy_search(
+    query,
+    primary_video_streams,
+    audio_aggregates,
+    subtitle_aggregates,
+    search: str,
+    *,
+    use_fts: bool = False,
+):
     resolution_label = resolution_label_expr(primary_video_streams)
 
-    for token in search_tokens(search):
+    for token_index, token in enumerate(search_tokens(search)):
         patterns = {f"%{token}%"}
         for language_term in expand_language_search_terms(token):
             patterns.add(f"%{language_term}%")
@@ -267,6 +292,22 @@ def apply_legacy_search(query, primary_video_streams, audio_aggregates, subtitle
             source_matches.append(func.coalesce(subtitle_aggregates.c.has_internal_subtitles, 0) == 1)
         if any(token_matches_source(pattern.strip("%"), "external") for pattern in pattern_list):
             source_matches.append(func.coalesce(subtitle_aggregates.c.has_external_subtitles, 0) == 1)
+
+        if use_fts and len(token) >= 3:
+            fts_values = {pattern.strip("%") for pattern in pattern_list}
+            query = query.where(
+                or_(
+                    _fts_match_clause(
+                        _fts_terms_query(fts_values),
+                        f"legacy_fts_{token_index}",
+                    ),
+                    MediaFile.library_root.has(
+                        match_patterns(LibraryRoot.display_name, pattern_list)
+                    ),
+                    match_patterns(resolution_label, pattern_list),
+                )
+            )
+            continue
 
         query = query.where(
             or_(
@@ -409,15 +450,63 @@ def _hdr_token_patterns(token: str) -> list[str]:
     return sorted(patterns)
 
 
-def _apply_text_filter(query, expression, raw_value: str, token_builder=_text_token_patterns):
-    for term in search_terms(raw_value):
-        query = _apply_clause(query, match_patterns(expression, token_builder(term.value)), negated=term.negated)
+def _apply_text_filter(
+    query,
+    expression,
+    raw_value: str,
+    token_builder=_text_token_patterns,
+    *,
+    use_fts: bool = False,
+    fts_columns: tuple[str, ...] = (),
+    fts_parameter_prefix: str = "text",
+):
+    for term_index, term in enumerate(search_terms(raw_value)):
+        patterns = token_builder(term.value)
+        if use_fts and fts_columns and len(term.value) >= 3:
+            values = sorted({pattern.strip("%") for pattern in patterns})
+            fts_query = " OR ".join(
+                f"{column} : {_fts_quote(value)}"
+                for column in fts_columns
+                for value in values
+            )
+            query = _apply_clause(
+                query,
+                _fts_match_clause(
+                    fts_query,
+                    f"{fts_parameter_prefix}_{term_index}",
+                ),
+                negated=term.negated,
+            )
+            continue
+        query = _apply_clause(
+            query,
+            match_patterns(expression, patterns),
+            negated=term.negated,
+        )
     return query
 
 
-def _apply_file_search_filter(query, raw_value: str):
-    for term in search_terms(raw_value):
+def _apply_file_search_filter(query, raw_value: str, *, use_fts: bool = False):
+    for term_index, term in enumerate(search_terms(raw_value)):
         patterns = _text_token_patterns(term.value)
+        if use_fts and len(term.value) >= 3:
+            query = _apply_clause(
+                query,
+                or_(
+                    _fts_match_clause(
+                        " OR ".join(
+                            f"{column} : {_fts_quote(term.value)}"
+                            for column in ("filename", "relative_path", "extension")
+                        ),
+                        f"file_fts_{term_index}",
+                    ),
+                    MediaFile.library_root.has(
+                        match_patterns(LibraryRoot.display_name, patterns)
+                    ),
+                ),
+                negated=term.negated,
+            )
+            continue
         query = _apply_clause(
             query,
             or_(
@@ -541,15 +630,27 @@ def apply_field_search_filters(
     bit_depth_expression=None,
     duration_expression=None,
     resolution_categories: list[ResolutionCategory] | None = None,
+    use_fts: bool = False,
 ):
     if filters is None:
         return query
 
     normalized = filters.normalized()
     if normalized.file_search:
-        query = _apply_file_search_filter(query, normalized.file_search)
+        query = _apply_file_search_filter(
+            query,
+            normalized.file_search,
+            use_fts=use_fts,
+        )
     if normalized.search_container:
-        query = _apply_text_filter(query, MediaFile.extension, normalized.search_container)
+        query = _apply_text_filter(
+            query,
+            MediaFile.extension,
+            normalized.search_container,
+            use_fts=use_fts,
+            fts_columns=("extension",),
+            fts_parameter_prefix="container_fts",
+        )
     if normalized.search_size:
         query = _apply_numeric_filter(query, MediaFile.size_bytes, normalized.search_size, _parse_size_value, "size")
     if normalized.search_quality_score:
@@ -585,7 +686,14 @@ def apply_field_search_filters(
             "bit_depth",
         )
     if normalized.search_video_codec:
-        query = _apply_text_filter(query, primary_video_streams.c.codec, normalized.search_video_codec)
+        query = _apply_text_filter(
+            query,
+            primary_video_streams.c.codec,
+            normalized.search_video_codec,
+            use_fts=use_fts,
+            fts_columns=("primary_video_codec",),
+            fts_parameter_prefix="video_codec_fts",
+        )
     if normalized.search_resolution:
         query = _apply_resolution_filter(
             query,
@@ -604,12 +712,22 @@ def apply_field_search_filters(
             "duration",
         )
     if normalized.search_audio_codecs:
-        query = _apply_text_filter(query, audio_aggregates.c.audio_codecs_search, normalized.search_audio_codecs)
+        query = _apply_text_filter(
+            query,
+            audio_aggregates.c.audio_codecs_search,
+            normalized.search_audio_codecs,
+            use_fts=use_fts,
+            fts_columns=("audio_codecs_search",),
+            fts_parameter_prefix="audio_codecs_fts",
+        )
     if normalized.search_audio_spatial_profiles:
         query = _apply_text_filter(
             query,
             audio_aggregates.c.audio_spatial_profiles_search,
             normalized.search_audio_spatial_profiles,
+            use_fts=use_fts,
+            fts_columns=("audio_spatial_profiles_search",),
+            fts_parameter_prefix="audio_spatial_fts",
         )
     if normalized.search_audio_languages:
         query = _apply_text_filter(
@@ -617,6 +735,9 @@ def apply_field_search_filters(
             audio_aggregates.c.audio_languages_search,
             normalized.search_audio_languages,
             _language_token_patterns,
+            use_fts=use_fts,
+            fts_columns=("audio_languages_search",),
+            fts_parameter_prefix="audio_languages_fts",
         )
     if normalized.search_jellyfin_name:
         jellyfin_title = (
@@ -634,33 +755,40 @@ def apply_field_search_filters(
         )
         query = _apply_text_filter(query, jellyfin_title, normalized.search_jellyfin_name)
     text_filters = (
-        ("search_audio_title", MediaFile.audio_title),
-        ("search_audio_artist", MediaFile.audio_artist),
-        ("search_audio_album", MediaFile.audio_album),
-        ("search_audio_album_artist", MediaFile.audio_album_artist),
-        ("search_audio_genre", MediaFile.audio_genre),
-        ("search_audio_date", MediaFile.audio_date),
-        ("search_audio_disc", MediaFile.audio_disc),
-        ("search_audio_composer", MediaFile.audio_composer),
-        ("search_track_number", MediaFile.track_number),
-        ("search_bit_rate_mode", MediaFile.bit_rate_mode),
-        ("search_chapter_titles", MediaFile.chapter_titles_search),
-        ("search_audiobook_narrator", MediaFile.audiobook_narrator),
-        ("search_audiobook_author", MediaFile.audiobook_author),
-        ("search_audiobook_publisher", MediaFile.audiobook_publisher),
-        ("search_audiobook_series", MediaFile.audiobook_series),
-        ("search_audiobook_series_part", MediaFile.audiobook_series_part),
-        ("search_audiobook_description", MediaFile.audiobook_description),
-        ("search_audiobook_copyright", MediaFile.audiobook_copyright),
-        ("search_audiobook_asin", MediaFile.audiobook_asin),
-        ("search_audiobook_isbn", MediaFile.audiobook_isbn),
-        ("search_audiobook_language", MediaFile.audiobook_language),
-        ("search_audiobook_abridged", MediaFile.audiobook_abridged),
+        ("search_audio_title", MediaFile.audio_title, "audio_title"),
+        ("search_audio_artist", MediaFile.audio_artist, "audio_artist"),
+        ("search_audio_album", MediaFile.audio_album, "audio_album"),
+        ("search_audio_album_artist", MediaFile.audio_album_artist, "audio_album_artist"),
+        ("search_audio_genre", MediaFile.audio_genre, "audio_genre"),
+        ("search_audio_date", MediaFile.audio_date, "audio_date"),
+        ("search_audio_disc", MediaFile.audio_disc, "audio_disc"),
+        ("search_audio_composer", MediaFile.audio_composer, "audio_composer"),
+        ("search_track_number", MediaFile.track_number, "track_number"),
+        ("search_bit_rate_mode", MediaFile.bit_rate_mode, "bit_rate_mode"),
+        ("search_chapter_titles", MediaFile.chapter_titles_search, "chapter_titles_search"),
+        ("search_audiobook_narrator", MediaFile.audiobook_narrator, "audiobook_narrator"),
+        ("search_audiobook_author", MediaFile.audiobook_author, "audiobook_author"),
+        ("search_audiobook_publisher", MediaFile.audiobook_publisher, "audiobook_publisher"),
+        ("search_audiobook_series", MediaFile.audiobook_series, "audiobook_series"),
+        ("search_audiobook_series_part", MediaFile.audiobook_series_part, "audiobook_series_part"),
+        ("search_audiobook_description", MediaFile.audiobook_description, "audiobook_description"),
+        ("search_audiobook_copyright", MediaFile.audiobook_copyright, "audiobook_copyright"),
+        ("search_audiobook_asin", MediaFile.audiobook_asin, "audiobook_asin"),
+        ("search_audiobook_isbn", MediaFile.audiobook_isbn, "audiobook_isbn"),
+        ("search_audiobook_language", MediaFile.audiobook_language, "audiobook_language"),
+        ("search_audiobook_abridged", MediaFile.audiobook_abridged, "audiobook_abridged"),
     )
-    for field_name, expression in text_filters:
+    for field_name, expression, fts_column in text_filters:
         value = getattr(normalized, field_name)
         if value:
-            query = _apply_text_filter(query, expression, value)
+            query = _apply_text_filter(
+                query,
+                expression,
+                value,
+                use_fts=use_fts,
+                fts_columns=(fts_column,),
+                fts_parameter_prefix=f"{fts_column}_fts",
+            )
     if normalized.search_audio_channels:
         query = _apply_numeric_filter(query, MediaFile.audio_channels, normalized.search_audio_channels, int, "audio_channels")
     if normalized.search_sample_rate:
@@ -679,9 +807,19 @@ def apply_field_search_filters(
             subtitle_aggregates.c.subtitle_languages_search,
             normalized.search_subtitle_languages,
             _language_token_patterns,
+            use_fts=use_fts,
+            fts_columns=("subtitle_languages_search",),
+            fts_parameter_prefix="subtitle_languages_fts",
         )
     if normalized.search_subtitle_codecs:
-        query = _apply_text_filter(query, subtitle_aggregates.c.subtitle_codecs_search, normalized.search_subtitle_codecs)
+        query = _apply_text_filter(
+            query,
+            subtitle_aggregates.c.subtitle_codecs_search,
+            normalized.search_subtitle_codecs,
+            use_fts=use_fts,
+            fts_columns=("subtitle_codecs_search",),
+            fts_parameter_prefix="subtitle_codecs_fts",
+        )
     if normalized.search_subtitle_sources:
         query = _apply_subtitle_source_filter(query, subtitle_aggregates, normalized.search_subtitle_sources)
 

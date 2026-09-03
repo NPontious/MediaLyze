@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock, Timer
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -11,12 +11,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from tzlocal import get_localzone
-from watchdog.events import FileSystemEvent, FileSystemEventHandler, FileMovedEvent
+from watchdog.events import FileMovedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from backend.app.core.config import Settings
 from backend.app.db.session import SessionLocal
 from backend.app.models.entities import (
+    ConnectorConnection,
+    ConnectorSyncJob,
     JellyfinConnection,
     JellyfinSyncTriggerSource,
     JobStatus,
@@ -26,20 +28,35 @@ from backend.app.models.entities import (
     ScanMode,
     ScanTriggerSource,
 )
+from backend.app.schemas.history import (
+    HistoryReconstructionJobStatus,
+    HistoryReconstructionPhase,
+    HistoryReconstructionStatusRead,
+)
 from backend.app.services.app_settings import get_app_settings
+from backend.app.services.connector_credentials import read_connector_secret
+from backend.app.services.connector_matching import (
+    compare_legacy_jellyfin_matches,
+)
+from backend.app.services.connector_security import redact_connector_error
+from backend.app.services.connector_service import is_legacy_default_connection
+from backend.app.services.connector_sync import (
+    claim_connector_sync_job,
+    create_or_get_connector_sync_job,
+    mirror_legacy_jellyfin_snapshot,
+    recover_orphaned_connector_sync_jobs,
+    request_connector_sync_cancellation,
+    run_connector_recompute,
+    run_connector_sync,
+)
+from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
 from backend.app.services.history_retention import (
     HistoryRetentionResult,
     apply_history_retention,
     run_pending_history_compaction,
 )
 from backend.app.services.history_storage import get_history_storage
-from backend.app.services.history_reconstruction import reconstruct_history_from_media_files
-from backend.app.services.library_history_service import get_dashboard_history, get_library_history
-from backend.app.services.library_service import get_library_summary
-from backend.app.services.jellyfin_matching import (
-    recompute_jellyfin_matches,
-    refresh_jellyfin_mapping_state,
-)
+from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
 from backend.app.services.jellyfin_jobs import (
     cancel_queued_jellyfin_sync_job,
     create_or_get_jellyfin_sync_job,
@@ -48,28 +65,29 @@ from backend.app.services.jellyfin_jobs import (
     mark_jellyfin_sync_cancellation_requested,
     mark_jellyfin_sync_job_running,
     recover_orphaned_jellyfin_sync_jobs,
+    update_jellyfin_sync_job_progress,
+)
+from backend.app.services.jellyfin_matching import (
+    recompute_jellyfin_matches,
+    refresh_jellyfin_mapping_state,
 )
 from backend.app.services.jellyfin_progress import (
+    jellyfin_cancellation_requested,
     request_jellyfin_cancellation,
     reset_jellyfin_cancellation,
 )
-from backend.app.services.jellyfin_credentials import read_jellyfin_api_key
-from backend.app.services.jellyfin_sync import run_jellyfin_sync
+from backend.app.services.jellyfin_sync import JellyfinSyncCancelled, run_jellyfin_sync
+from backend.app.services.library_history_service import get_dashboard_history, get_library_history
+from backend.app.services.library_service import get_library_summary
 from backend.app.services.path_access import is_watch_supported_for_library
-from backend.app.services.stats_cache import stats_cache
-from backend.app.services.update_status import check_for_updates
-from backend.app.schemas.history import (
-    HistoryReconstructionJobStatus,
-    HistoryReconstructionPhase,
-    HistoryReconstructionStatusRead,
-)
-from backend.app.utils.time import utc_now
 from backend.app.services.scanner import (
     execute_scan_job,
     queue_quality_recompute_job,
     queue_scan_job,
 )
-
+from backend.app.services.stats_cache import stats_cache
+from backend.app.services.update_status import check_for_updates
+from backend.app.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +134,11 @@ class ScanRuntimeManager:
         self.scheduler = BackgroundScheduler(timezone=resolve_scheduler_timezone())
         self.executor_max_workers = max(1, settings.scan_runtime_worker_count)
         self.executor = self._build_executor(self.executor_max_workers)
+        self.connector_executor_max_workers = self.executor_max_workers
+        self.connector_executor = self._build_connector_executor(
+            self.connector_executor_max_workers
+        )
+        self.connector_futures: dict[int, Future] = {}
         self.maintenance_executor = self._build_maintenance_executor()
         self.lock = Lock()
         self.watch_observers: dict[int, tuple[tuple[str, ...], Observer]] = {}
@@ -144,7 +167,9 @@ class ScanRuntimeManager:
         self._ensure_history_maintenance_job()
         self._ensure_update_check_jobs()
         self._recover_orphaned_jellyfin_sync_jobs()
+        self._recover_orphaned_connector_sync_jobs()
         self.refresh_jellyfin_schedule()
+        self.refresh_connector_schedules()
         self._recover_orphaned_jobs()
         self.request_update_check()
         self.sync_all_libraries()
@@ -173,6 +198,7 @@ class ScanRuntimeManager:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
         self._shutdown_executor(self.executor, cancel_futures=True)
+        self._shutdown_executor(self.connector_executor, cancel_futures=True)
         self._shutdown_executor(self.maintenance_executor, cancel_futures=True)
 
     def refresh_worker_settings(self) -> bool:
@@ -184,14 +210,22 @@ class ScanRuntimeManager:
 
         previous_executor: ThreadPoolExecutor | None = None
         with self.lock:
-            if next_workers == self.executor_max_workers:
+            if (
+                next_workers == self.executor_max_workers
+                and next_workers == self.connector_executor_max_workers
+            ):
                 return False
             previous_executor = self.executor
             self.executor = self._build_executor(next_workers)
             self.executor_max_workers = next_workers
+            previous_connector_executor = self.connector_executor
+            self.connector_executor = self._build_connector_executor(next_workers)
+            self.connector_executor_max_workers = next_workers
 
         if previous_executor is not None:
             self._shutdown_executor(previous_executor, cancel_futures=False)
+        if previous_connector_executor is not None:
+            self._shutdown_executor(previous_connector_executor, cancel_futures=False)
         return True
 
     def sync_all_libraries(self) -> None:
@@ -344,6 +378,27 @@ class ScanRuntimeManager:
                 getattr(getattr(self, "settings", None), "jellyfin_api_key_file", None),
             ):
                 raise ValueError("Jellyfin URL and API key are required before synchronization")
+            standard_connector = next(
+                (
+                    candidate
+                    for candidate in db.scalars(
+                        select(ConnectorConnection).where(
+                            ConnectorConnection.provider == "jellyfin"
+                        )
+                    )
+                    if is_legacy_default_connection(candidate)
+                ),
+                None,
+            )
+            if standard_connector is not None and db.scalar(
+                select(ConnectorSyncJob.id).where(
+                    ConnectorSyncJob.connection_id == standard_connector.id,
+                    ConnectorSyncJob.status.in_([JobStatus.queued, JobStatus.running]),
+                )
+            ) is not None:
+                raise ValueError(
+                    "The standard Jellyfin connector is already recomputing matches"
+                )
             job, accepted = create_or_get_jellyfin_sync_job(db, trigger_source)
             result: dict[str, int | str | bool] = {
                 "job_id": job.id,
@@ -357,7 +412,7 @@ class ScanRuntimeManager:
         if accepted:
             reset_jellyfin_cancellation()
             try:
-                self.maintenance_executor.submit(self._run_jellyfin_sync, job.id)
+                self.connector_executor.submit(self._run_jellyfin_sync, job.id)
             except Exception as exc:
                 failed_db = SessionLocal()
                 try:
@@ -374,6 +429,193 @@ class ScanRuntimeManager:
 
     def request_scheduled_jellyfin_sync(self) -> dict[str, int | str | bool]:
         return self.request_jellyfin_sync(JellyfinSyncTriggerSource.scheduled)
+
+    def request_connector_sync(
+        self,
+        connection_id: int,
+        trigger_source: str = "manual",
+    ) -> dict[str, int | str | bool]:
+        with self.lock:
+            if not self.started:
+                raise RuntimeError("Scan runtime is not started")
+        db = SessionLocal()
+        try:
+            connection = db.get(ConnectorConnection, connection_id)
+            if connection is None:
+                raise ValueError("Connector connection not found")
+            if is_legacy_default_connection(connection):
+                return self.request_jellyfin_sync(
+                    JellyfinSyncTriggerSource(trigger_source)
+                )
+            if not connection.enabled:
+                raise ValueError("Connector connection is disabled")
+            if not connection.base_url or not read_connector_secret(db, connection.id):
+                raise ValueError("Connector URL and secret are required before synchronization")
+            job, accepted = create_or_get_connector_sync_job(db, connection_id, trigger_source)
+            result = {
+                "job_id": job.id,
+                "status": job.status.value,
+                "trigger_source": job.trigger_source,
+                "accepted": accepted,
+            }
+        finally:
+            db.close()
+        if accepted:
+            future = self.connector_executor.submit(self._run_connector_job, job.id)
+            with self.lock:
+                self.connector_futures[job.id] = future
+            future.add_done_callback(
+                lambda _future, submitted_job_id=job.id: self._forget_connector_future(
+                    submitted_job_id
+                )
+            )
+        return result
+
+    def request_connector_recompute(
+        self,
+        connection_id: int,
+        trigger_source: str = "binding",
+    ) -> dict[str, int | str | bool]:
+        with self.lock:
+            if not self.started:
+                raise RuntimeError("Scan runtime is not started")
+        db = SessionLocal()
+        try:
+            connection = db.get(ConnectorConnection, connection_id)
+            if connection is None:
+                raise ValueError("Connector connection not found")
+            if is_legacy_default_connection(connection):
+                legacy_job = get_active_jellyfin_sync_job(db)
+                if legacy_job is not None:
+                    return {
+                        "job_id": legacy_job.id,
+                        "status": legacy_job.status.value,
+                        "trigger_source": legacy_job.trigger_source.value,
+                        "accepted": False,
+                    }
+            job, accepted = create_or_get_connector_sync_job(
+                db,
+                connection_id,
+                trigger_source,
+                job_type="recompute",
+            )
+            result = {
+                "job_id": job.id,
+                "status": job.status.value,
+                "trigger_source": job.trigger_source,
+                "accepted": accepted,
+            }
+        finally:
+            db.close()
+        if accepted:
+            future = self.connector_executor.submit(self._run_connector_job, job.id)
+            with self.lock:
+                self.connector_futures[job.id] = future
+            future.add_done_callback(
+                lambda _future, submitted_job_id=job.id: self._forget_connector_future(
+                    submitted_job_id
+                )
+            )
+        return result
+
+    def _forget_connector_future(self, job_id: int) -> None:
+        with self.lock:
+            self.connector_futures.pop(job_id, None)
+
+    def cancel_connector_sync(
+        self,
+        connection_id: int,
+        job_id: int | None = None,
+    ) -> dict[str, int | str | bool | None]:
+        db = SessionLocal()
+        try:
+            connection = db.get(ConnectorConnection, connection_id)
+            if connection is None:
+                return {
+                    "job_id": None,
+                    "status": None,
+                    "cancellation_requested": False,
+                }
+            legacy_default = is_legacy_default_connection(connection)
+            if legacy_default:
+                generic_active = db.scalar(
+                    select(ConnectorSyncJob).where(
+                        ConnectorSyncJob.connection_id == connection_id,
+                        ConnectorSyncJob.status.in_([JobStatus.queued, JobStatus.running]),
+                    )
+                )
+                if generic_active is None:
+                    return self.cancel_jellyfin_sync(job_id)
+            job = request_connector_sync_cancellation(db, connection_id, job_id)
+            if job is not None and job.status == JobStatus.canceled:
+                with self.lock:
+                    future = self.connector_futures.get(job.id)
+                if future is not None:
+                    future.cancel()
+            return {
+                "job_id": job.id if job else None,
+                "status": job.status.value if job else None,
+                "cancellation_requested": bool(job),
+            }
+        finally:
+            db.close()
+
+    def _run_connector_job(self, job_id: int) -> None:
+        db = SessionLocal()
+        try:
+            job = claim_connector_sync_job(db, job_id)
+            if job is None:
+                return
+            if job.job_type == "recompute":
+                run_connector_recompute(db, job_id)
+            else:
+                run_connector_sync(db, job_id)
+        except Exception as exc:
+            logger.error(
+                "Connector synchronization failed for job %s: %s",
+                job_id,
+                redact_connector_error(exc),
+            )
+        finally:
+            db.close()
+
+    def refresh_connector_schedules(self) -> None:
+        db = SessionLocal()
+        try:
+            connections = list(db.scalars(select(ConnectorConnection)))
+            desired_ids: set[str] = set()
+            for connection in connections:
+                # The migrated singleton stays on the legacy Jellyfin schedule in
+                # the compatibility release so users/playback continue to sync.
+                if is_legacy_default_connection(connection):
+                    continue
+                job_id = f"connector-sync-{connection.id}"
+                enabled = bool(
+                    connection.enabled
+                    and connection.base_url
+                    and read_connector_secret(db, connection.id)
+                    and connection.sync_interval_minutes > 0
+                )
+                if not enabled:
+                    if self.scheduler.get_job(job_id):
+                        self.scheduler.remove_job(job_id)
+                    continue
+                desired_ids.add(job_id)
+                self.scheduler.add_job(
+                    self.request_connector_sync,
+                    trigger="interval",
+                    minutes=max(5, int(connection.sync_interval_minutes)),
+                    args=[connection.id, "scheduled"],
+                    id=job_id,
+                    replace_existing=True,
+                    max_instances=1,
+                    coalesce=True,
+                )
+            for scheduled in self.scheduler.get_jobs():
+                if scheduled.id.startswith("connector-sync-") and scheduled.id not in desired_ids:
+                    self.scheduler.remove_job(scheduled.id)
+        finally:
+            db.close()
 
     def cancel_jellyfin_sync(self, job_id: int | None = None) -> dict[str, int | str | bool | None]:
         db = SessionLocal()
@@ -392,9 +634,13 @@ class ScanRuntimeManager:
                     "status": JobStatus.canceled.value if canceled else job.status.value,
                     "cancellation_requested": canceled,
                 }
-            requested = mark_jellyfin_sync_cancellation_requested(db, job.id)
+            # Signal the in-process worker before attempting the SQLite write.
+            # The compatibility mirror can hold a long write transaction, and
+            # waiting for that transaction here used to make cancellation look
+            # permanently stuck.
+            requested = request_jellyfin_cancellation(job.id)
             if requested:
-                request_jellyfin_cancellation(job.id)
+                mark_jellyfin_sync_cancellation_requested(db, job.id)
             return {
                 "job_id": job.id,
                 "status": job.status.value,
@@ -492,14 +738,64 @@ class ScanRuntimeManager:
                 return
             try:
                 summary = run_jellyfin_sync(db, job_id=job_id)
+                if summary.get("status") == "canceled":
+                    finish_jellyfin_sync_job(db, job_id, JobStatus.canceled, summary=summary)
+                    return
+                update_jellyfin_sync_job_progress(
+                    db,
+                    job_id,
+                    phase="mapping",
+                    detail=None,
+                    current=0,
+                    total=None,
+                )
+
+                def check_cancellation() -> None:
+                    if jellyfin_cancellation_requested():
+                        raise JellyfinSyncCancelled("Jellyfin synchronization was canceled")
+
+                connector_id, connector_matching = mirror_legacy_jellyfin_snapshot(
+                    db,
+                    cancellation_check=check_cancellation,
+                    progress_callback=lambda phase, current, total: (
+                        update_jellyfin_sync_job_progress(
+                            db,
+                            job_id,
+                            phase=phase,
+                            detail=None,
+                            current=current,
+                            total=total,
+                        )
+                    ),
+                )
+                if connector_id is not None:
+                    summary["connector_matching"] = connector_matching
+                    summary["connector_shadow"] = compare_legacy_jellyfin_matches(
+                        db, connector_id
+                    )
+            except JellyfinSyncCancelled:
+                db.rollback()
+                finish_jellyfin_sync_job(
+                    db,
+                    job_id,
+                    JobStatus.canceled,
+                    summary={"status": "canceled"},
+                )
+                return
             except Exception as exc:
+                connection = db.get(JellyfinConnection, 1)
+                secret = read_jellyfin_api_key(
+                    connection,
+                    getattr(getattr(self, "settings", None), "jellyfin_api_key_file", None),
+                ) if connection is not None else ""
+                safe_error = redact_connector_error(exc, secrets=(secret,))
                 finish_jellyfin_sync_job(
                     db,
                     job_id,
                     JobStatus.failed,
-                    error=str(exc),
+                    error=safe_error,
                 )
-                logger.exception("Jellyfin sync job %s failed", job_id)
+                logger.error("Jellyfin sync job %s failed: %s", job_id, safe_error)
                 return
             status = (
                 JobStatus.canceled
@@ -518,6 +814,15 @@ class ScanRuntimeManager:
                 logger.warning("Canceled %s orphaned Jellyfin sync job(s)", recovered)
         finally:
             db.close()
+    def _recover_orphaned_connector_sync_jobs(self) -> None:
+        db = SessionLocal()
+        try:
+            recovered = recover_orphaned_connector_sync_jobs(db)
+            if recovered:
+                logger.info("Canceled %s orphaned connector sync job(s)", recovered)
+        finally:
+            db.close()
+
     def submit_scan_job(self, job_id: int) -> None:
         db = SessionLocal()
         try:
@@ -537,12 +842,39 @@ class ScanRuntimeManager:
         self.executor.submit(self._run_job, job_id, library_id)
 
     def _run_job(self, job_id: int, library_id: int) -> None:
+        before_db = SessionLocal()
+        try:
+            before_files = {
+                file_id: (root_id, relative_path)
+                for file_id, root_id, relative_path in before_db.execute(
+                    select(
+                        MediaFile.id,
+                        MediaFile.library_root_id,
+                        MediaFile.relative_path,
+                    ).where(MediaFile.library_id == library_id)
+                )
+                if root_id is not None
+            }
+        finally:
+            before_db.close()
         try:
             execute_scan_job(job_id, self.settings, is_cancel_requested=self.is_job_cancel_requested)
         finally:
+            connector_recompute_ids: list[int] = []
             match_db = SessionLocal()
             try:
                 job = match_db.get(ScanJob, job_id)
+                after_files = {
+                    file_id: (root_id, relative_path)
+                    for file_id, root_id, relative_path in match_db.execute(
+                        select(
+                            MediaFile.id,
+                            MediaFile.library_root_id,
+                            MediaFile.relative_path,
+                        ).where(MediaFile.library_id == library_id)
+                    )
+                    if root_id is not None
+                }
                 changed_ids = set(
                     match_db.scalars(
                         select(MediaFile.id).where(
@@ -552,13 +884,41 @@ class ScanRuntimeManager:
                         )
                     )
                 ) if job and job.started_at else set()
-                if changed_ids:
+                changed_locators = {
+                    locator
+                    for file_id in set(before_files) | set(after_files)
+                    if before_files.get(file_id) != after_files.get(file_id)
+                    for locator in (before_files.get(file_id), after_files.get(file_id))
+                    if locator is not None
+                }
+                changed_locators.update(
+                    after_files[file_id]
+                    for file_id in changed_ids
+                    if file_id in after_files
+                )
+                if changed_ids or changed_locators:
                     recompute_jellyfin_matches(match_db, media_file_ids=changed_ids)
+                    connector_recompute_ids = list(
+                        match_db.scalars(
+                            select(ConnectorConnection.id).where(
+                                ConnectorConnection.enabled.is_(True)
+                            )
+                        )
+                    )
             except Exception:
                 match_db.rollback()
                 logger.exception("Failed to refresh Jellyfin matches after scan %s", job_id)
             finally:
                 match_db.close()
+            for connection_id in connector_recompute_ids:
+                try:
+                    self.request_connector_recompute(connection_id, trigger_source="scan")
+                except Exception:
+                    logger.exception(
+                        "Failed to queue connector mapping refresh after scan %s for connection %s",
+                        job_id,
+                        connection_id,
+                    )
             should_attempt_compaction = False
             with self.lock:
                 self.submitted_job_ids.discard(job_id)
@@ -1153,4 +1513,11 @@ class ScanRuntimeManager:
         return ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="medialyze-maintenance",
+        )
+
+    @staticmethod
+    def _build_connector_executor(max_workers: int) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=max(1, max_workers),
+            thread_name_prefix="medialyze-connector",
         )

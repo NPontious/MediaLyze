@@ -1,25 +1,39 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Bug, ChevronDown, ChevronRight, Download, GitCompare, House, Settings, X } from "lucide-react";
+import { Activity, Bug, ChevronDown, ChevronRight, Download, Files, GitCompare, History, House, LibraryBig, Map, RefreshCw, Settings, UserRoundCheck, X } from "lucide-react";
 import { FilePlusCorner, FileXCorner, File, FileDiff, FileExclamationPoint, FileSearchCorner, FileCheckCorner } from "lucide-react";
 import { AnimatePresence, motion, useAnimation, type Transition } from "motion/react";
 
 import { AnimatedSearchIcon } from "./AnimatedSearchIcon";
 import { BanIcon } from "./BanIcon";
+import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import { FolderInputIcon } from "./FolderInputIcon";
 import { FolderOutputIcon } from "./FolderOutputIcon";
 import { GithubIcon } from "./GithubIcon";
+<<<<<<< HEAD
 import { api, type ScanJob, type UpdateStatus } from "../lib/api";
+=======
+import { HandCoinsIcon } from "./HandCoinsIcon";
+import { TelemetryModeToggle } from "./TelemetryModeToggle";
+import { api, type ConnectorConnection, type ConnectorSyncJob, type ScanJob, type TelemetryMode, type UpdateStatus } from "../lib/api";
+>>>>>>> upstream/main
 import { APP_VERSION } from "../lib/app-version";
 import { useAppData } from "../lib/app-data";
 import {
   getAllReleaseNotes,
   getCurrentReleaseNotes,
   isDevelopmentVersion,
+<<<<<<< HEAD
+=======
+  isFirstOpenAfterUpdate,
+  isUpdateReminderDue,
+  markBrowserUpdateReminder,
+>>>>>>> upstream/main
   markReleaseNotesSeen,
   mergeReleaseNotes,
   normalizeReleaseVersion,
+  readBrowserUpdateReminder,
   shouldShowReleaseNotes,
   type ReleaseNotes,
 } from "../lib/release-notes";
@@ -31,6 +45,18 @@ const GITHUB_ISSUE_URL = "https://github.com/NPontious/MediaLyze/issues/new/choo
 const UI_ELEMENTS_CLICK_WINDOW_MS = 1500;
 const UI_ELEMENTS_CLICK_COUNT = 3;
 const RELEASE_NOTE_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+const GITHUB_RELEASES_URL = `${GITHUB_REPOSITORY_URL}releases`;
+
+type InstallerDownloadState =
+  | "idle"
+  | "loading"
+  | "success"
+  | "canceled"
+  | "asset_unavailable"
+  | "unsupported_platform"
+  | "integrity_error"
+  | "network_error"
+  | "save_error";
 
 const CIRCLE_CHEVRON_TRANSITION: Transition = {
   times: [0, 0.4, 1],
@@ -213,6 +239,143 @@ function ScanJobCard({
   );
 }
 
+type ActiveConnectorJob = {
+  connection: ConnectorConnection;
+  job: ConnectorSyncJob;
+};
+
+type ConnectorProgressMetric = {
+  current: number;
+  total: number | null;
+  detail: string | null;
+};
+
+function connectorProgressMetrics(job: ConnectorSyncJob): Record<string, ConnectorProgressMetric> {
+  const rawMetrics = job.sync_summary?.progress_metrics;
+  if (!rawMetrics || typeof rawMetrics !== "object" || Array.isArray(rawMetrics)) return {};
+  return Object.fromEntries(
+    Object.entries(rawMetrics).flatMap(([key, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const metric = value as Record<string, unknown>;
+      if (typeof metric.current !== "number") return [];
+      return [[key, {
+        current: metric.current,
+        total: typeof metric.total === "number" ? metric.total : null,
+        detail: typeof metric.detail === "string" ? metric.detail : null,
+      }]];
+    }),
+  );
+}
+
+function ConnectorSyncJobCard({
+  activeJob,
+  onStop,
+  stopping,
+}: {
+  activeJob: ActiveConnectorJob;
+  onStop: () => void;
+  stopping: boolean;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
+    return !window.matchMedia("(max-width: 500px)").matches;
+  });
+
+  const { connection, job } = activeJob;
+  const progressTotal = job.progress_total ?? 0;
+  const isDeterminate = job.status === "running" && progressTotal > 0;
+  const progressPercent = isDeterminate
+    ? Math.min(100, Math.max(0, (job.progress_current / progressTotal) * 100))
+    : 0;
+  const phaseKey = job.status === "queued" ? "queued" : job.progress_phase ?? "starting";
+  const phaseTranslationGroup = phaseKey.startsWith("mirroring_") ? "syncMirrorStep" : "syncStep";
+  const phaseLabel = t(`connectors.${phaseTranslationGroup}.${phaseKey}`, {
+    defaultValue: phaseKey.replaceAll("_", " "),
+  });
+  const savedMetrics = connectorProgressMetrics(job);
+  const activeMetric = { current: job.progress_current, total: job.progress_total, detail: job.progress_detail };
+  const metricDefinitions = [
+    { key: "items", icon: Files, tooltip: "assetsProgress" },
+    { key: "user_states", icon: UserRoundCheck, tooltip: "usersProgress" },
+    { key: "playback_events", icon: History, tooltip: "playbackProgress" },
+    { key: "libraries", icon: LibraryBig, tooltip: "librariesProgress" },
+  ] as const;
+  const metrics = metricDefinitions.flatMap((definition) => {
+    const metric = savedMetrics[definition.key] ?? (phaseKey === definition.key ? activeMetric : null);
+    if (!metric || (metric.current <= 0 && (metric.total ?? 0) <= 0)) return [];
+    const value = metric.total === null
+      ? metric.current.toLocaleString()
+      : `${metric.current.toLocaleString()} / ${metric.total.toLocaleString()}`;
+    return [{ ...definition, metric, value }];
+  });
+
+  return (
+    <div
+      className={`scan-job-card connector-sync-job-card${isDeterminate ? " is-determinate" : " is-indeterminate"}`}
+      style={isDeterminate ? { "--scan-progress": `${progressPercent}%` } as React.CSSProperties : undefined}
+    >
+      <div className="scan-job-card-main">
+        <span className="scan-job-card-search-icon connector-sync-provider-icon" aria-hidden="true">
+          <ConnectorProviderIcon provider={connection.provider} />
+        </span>
+        <span className="scan-job-card-name" title={connection.name}>{connection.name}</span>
+        {expanded ? (
+            <div className="scan-job-metrics">
+              <span className="scan-job-metric-item">
+                <span
+                  className="scan-job-metric-icon-wrap"
+                  title={t("connectors.syncBanner.currentPhase", { phase: phaseLabel })}
+                >
+                  <Activity size={14} aria-hidden="true" />
+                  <span className="scan-job-metric-value">{phaseLabel}</span>
+                </span>
+              </span>
+              {metrics.map(({ key, icon: MetricIcon, tooltip, metric, value }) => (
+                <span key={key} className="scan-job-metric-item">
+                  <span className="scan-job-metric-sep" aria-hidden="true" />
+                  <span
+                    className="scan-job-metric-icon-wrap"
+                    title={t(`connectors.syncBanner.${tooltip}`, {
+                      current: metric.current.toLocaleString(),
+                      total: metric.total?.toLocaleString() ?? "–",
+                      detail: metric.detail ?? "",
+                    })}
+                  >
+                    <MetricIcon size={14} aria-hidden="true" />
+                    <span className="scan-job-metric-value">{value}</span>
+                  </span>
+                </span>
+              ))}
+            </div>
+        ) : null}
+        <div className="scan-job-card-actions">
+          <button
+            type="button"
+            className="secondary icon-only-button scan-job-toggle-button"
+            aria-label={t("connectors.syncBanner.toggleMetrics")}
+            title={t("connectors.syncBanner.toggleMetrics")}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? <FolderInputIcon size={16} aria-hidden="true" /> : <FolderOutputIcon size={16} aria-hidden="true" />}
+          </button>
+          <span className="scan-job-action-sep" aria-hidden="true" />
+          <button
+            type="button"
+            className="secondary icon-only-button scan-banner-stop"
+            aria-label={t("connectors.syncBanner.stopJob")}
+            title={t("connectors.syncBanner.stopJob")}
+            disabled={stopping}
+            onClick={onStop}
+          >
+            <BanIcon size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 export function AppShell() {
   const { t } = useTranslation();
@@ -221,20 +384,39 @@ export function AppShell() {
   const { appSettings, appSettingsLoaded, libraries, librariesLoaded, loadDashboard, loadLibraries, setAppSettings } = useAppData();
   const [localReleaseNotes] = useState<ReleaseNotes[]>(() => getAllReleaseNotes());
   const [releaseNotes] = useState<ReleaseNotes | null>(() => getCurrentReleaseNotes());
+  const initialCurrentReleaseNotesOpenRef = useRef(shouldShowReleaseNotes(APP_VERSION, releaseNotes));
   const currentReleaseVersion = releaseNotes?.version ?? normalizeReleaseVersion(APP_VERSION);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [showReleaseNotes, setShowReleaseNotes] = useState(() => shouldShowReleaseNotes(APP_VERSION, releaseNotes));
+  const [showReleaseNotes, setShowReleaseNotes] = useState(initialCurrentReleaseNotesOpenRef.current);
   const [expandedReleaseVersion, setExpandedReleaseVersion] = useState(currentReleaseVersion);
   const [stoppingScans, setStoppingScans] = useState(false);
   const [scanCancelError, setScanCancelError] = useState<string | null>(null);
+  const [activeConnectorJobs, setActiveConnectorJobs] = useState<ActiveConnectorJob[]>([]);
+  const [stoppingConnectorJobs, setStoppingConnectorJobs] = useState<Set<number>>(() => new Set());
+  const [connectorCancelError, setConnectorCancelError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [downloadState, setDownloadState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [downloadState, setDownloadState] = useState<InstallerDownloadState>("idle");
   const [releaseActionsMenuOpen, setReleaseActionsMenuOpen] = useState(false);
   const hadActiveJobsRef = useRef(hasActiveJobs);
+  const automaticUpdateReminderHandledRef = useRef(false);
+  const automaticUpdateReminderOpenRef = useRef(false);
   const settingsIconClickRef = useRef({ count: 0, lastClickedAt: 0 });
   const versionLabel = APP_VERSION === "dev" ? "dev" : `v${APP_VERSION}`;
   const latestAvailableVersion = updateStatus?.latest_version ?? null;
   const updateAvailable = APP_VERSION !== "dev" && Boolean(updateStatus?.update_available && latestAvailableVersion);
+  const desktopBridge = getDesktopBridge();
+  const desktopRuntime = desktopBridge?.getRuntimeInfo?.() ?? null;
+  const matchingDesktopAsset = desktopRuntime
+    ? updateStatus?.desktop_assets?.find(
+        (asset) => asset.platform === desktopRuntime.platform && asset.arch === desktopRuntime.arch,
+      ) ?? null
+    : null;
+  const knownDesktopTarget = desktopRuntime
+    ? (desktopRuntime.platform === "darwin" && desktopRuntime.arch === "arm64")
+      || (desktopRuntime.platform === "win32" && desktopRuntime.arch === "x64")
+      || (desktopRuntime.platform === "linux" && desktopRuntime.arch === "x64")
+    : false;
+  const latestReleaseUrl = updateStatus?.latest_release_url ?? GITHUB_RELEASES_URL;
   const allReleaseNotes = useMemo(() => {
     const mergedReleaseNotes = mergeReleaseNotes(localReleaseNotes, updateStatus?.release_notes ?? []);
     return updateAvailable &&
@@ -248,6 +430,7 @@ export function AppShell() {
 
   function dismissReleaseNotes() {
     markReleaseNotesSeen(APP_VERSION, releaseNotes);
+    automaticUpdateReminderOpenRef.current = false;
     setShowReleaseNotes(false);
     setReleaseActionsMenuOpen(false);
   }
@@ -256,17 +439,23 @@ export function AppShell() {
     if (!latestAvailableVersion) {
       return;
     }
-    const bridge = getDesktopBridge();
-    if (!bridge?.downloadLatestInstaller) {
+    if (!desktopBridge?.downloadLatestInstaller || !matchingDesktopAsset) {
       return;
     }
     setDownloadState("loading");
     try {
-      const result = await bridge.downloadLatestInstaller(latestAvailableVersion);
-      setDownloadState(result.ok ? "success" : "error");
+      const result = await desktopBridge.downloadLatestInstaller(latestAvailableVersion);
+      setDownloadState(result.ok ? "success" : result.status ?? "network_error");
     } catch {
-      setDownloadState("error");
+      setDownloadState("network_error");
     }
+  }
+
+  async function cancelInstallerDownload() {
+    if (!desktopBridge?.cancelInstallerDownload) {
+      return;
+    }
+    await desktopBridge.cancelInstallerDownload().catch(() => false);
   }
 
   function openReleaseNotes() {
@@ -274,6 +463,7 @@ export function AppShell() {
       return;
     }
     setExpandedReleaseVersion(updateAvailable && latestAvailableVersion ? latestAvailableVersion : releaseNotes?.version ?? allReleaseNotes[0].version);
+    automaticUpdateReminderOpenRef.current = false;
     setReleaseActionsMenuOpen(false);
     setShowReleaseNotes(true);
   }
@@ -308,6 +498,101 @@ export function AppShell() {
 
   useEffect(() => {
     void api.updateStatus().then(setUpdateStatus).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (
+      automaticUpdateReminderHandledRef.current
+      || !appSettingsLoaded
+      || updateStatus === null
+    ) {
+      return;
+    }
+    automaticUpdateReminderHandledRef.current = true;
+    if (
+      initialCurrentReleaseNotesOpenRef.current
+      || appSettings.feature_flags.hide_automatic_update_reminders === true
+      || !updateAvailable
+      || !latestAvailableVersion
+      || updateStatus.automatic_reminder_eligible !== true
+    ) {
+      return;
+    }
+
+    const openReminder = (markShown: () => Promise<boolean> | boolean) => {
+      automaticUpdateReminderOpenRef.current = true;
+      setExpandedReleaseVersion(latestAvailableVersion);
+      setShowReleaseNotes(true);
+      window.requestAnimationFrame(() => {
+        void Promise.resolve(markShown()).then((marked) => {
+          if (!marked && automaticUpdateReminderOpenRef.current) {
+            automaticUpdateReminderOpenRef.current = false;
+            setShowReleaseNotes(false);
+          }
+        });
+      });
+    };
+
+    if (isDesktopApp()) {
+      void api.desktopUpdateReminder()
+        .then((reminder) => {
+          if (isUpdateReminderDue(reminder.reminded_at)) {
+            openReminder(() =>
+              api.markDesktopUpdateReminder(latestAvailableVersion)
+                .then(() => true)
+                .catch(() => false)
+            );
+          }
+        })
+        .catch(() => undefined);
+    } else {
+      const storage = readBrowserUpdateReminder();
+      if (storage.available && isUpdateReminderDue(storage.reminder?.remindedAt ?? null)) {
+        openReminder(() => markBrowserUpdateReminder(latestAvailableVersion));
+      }
+    }
+  }, [
+    appSettings.feature_flags.hide_automatic_update_reminders,
+    appSettingsLoaded,
+    latestAvailableVersion,
+    updateAvailable,
+    updateStatus,
+  ]);
+
+  useEffect(() => {
+    let disposed = false;
+    let refreshRunning = false;
+
+    async function refreshConnectorJobs() {
+      if (refreshRunning) return;
+      refreshRunning = true;
+      try {
+        const connections = await api.connectors();
+        const jobs = await Promise.all(connections.map(async (connection) => ({
+          connection,
+          job: await api.connectorSyncStatus(connection.id),
+        })));
+        if (!disposed) {
+          setActiveConnectorJobs(jobs.filter((entry): entry is ActiveConnectorJob => (
+            entry.job?.status === "queued" || entry.job?.status === "running"
+          )));
+        }
+      } catch {
+        // Preserve the last known active jobs while connector polling recovers.
+      } finally {
+        refreshRunning = false;
+      }
+    }
+
+    void refreshConnectorJobs();
+    const timer = window.setInterval(() => void refreshConnectorJobs(), 5000);
+    const handleFocus = () => void refreshConnectorJobs();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
   useEffect(() => {
@@ -411,6 +696,27 @@ export function AppShell() {
                   </>
                 )}
               </NavLink>
+              <NavLink
+                to="/storage-map"
+                end
+                aria-label={t("nav.storageMapAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <Map aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
             </div>
             <div className="media-nav-libraries">
               {libraries.map((library) => (
@@ -436,11 +742,16 @@ export function AppShell() {
             </div>
           </nav>
         </div>
-        {activeJobs.length > 0 ? (
+        {activeJobs.length > 0 || activeConnectorJobs.length > 0 ? (
           <div className="scan-banner">
             {scanCancelError ? (
               <div className="scan-banner-error" role="alert">
                 {scanCancelError}
+              </div>
+            ) : null}
+            {connectorCancelError ? (
+              <div className="scan-banner-error" role="alert">
+                {connectorCancelError}
               </div>
             ) : null}
             <div className="scan-banner-list">
@@ -458,6 +769,29 @@ export function AppShell() {
                       setScanCancelError(t("scanBanner.cancelFailed"));
                     } finally {
                       setStoppingScans(false);
+                    }
+                  }}
+                />
+              ))}
+              {activeConnectorJobs.map((activeJob) => (
+                <ConnectorSyncJobCard
+                  key={`connector-${activeJob.connection.id}-${activeJob.job.id}`}
+                  activeJob={activeJob}
+                  stopping={stoppingConnectorJobs.has(activeJob.job.id)}
+                  onStop={async () => {
+                    setStoppingConnectorJobs((current) => new Set(current).add(activeJob.job.id));
+                    setConnectorCancelError(null);
+                    try {
+                      await api.cancelConnectorSync(activeJob.connection.id, activeJob.job.id);
+                      setActiveConnectorJobs((current) => current.filter((entry) => entry.job.id !== activeJob.job.id));
+                    } catch {
+                      setConnectorCancelError(t("connectors.syncBanner.cancelFailed"));
+                    } finally {
+                      setStoppingConnectorJobs((current) => {
+                        const next = new Set(current);
+                        next.delete(activeJob.job.id);
+                        return next;
+                      });
                     }
                   }}
                 />
@@ -492,20 +826,21 @@ export function AppShell() {
                   <ReleaseNotesMenuIcon open={releaseActionsMenuOpen} />
                 </button>
                 <div id="release-notes-secondary-actions" className="release-notes-secondary-actions">
-                  {isDesktopApp() && updateAvailable && latestAvailableVersion ? (
+                  {isDesktopApp() && updateAvailable && latestAvailableVersion && matchingDesktopAsset ? (
                     <button
                       type="button"
                       className={`release-notes-download release-notes-download-${downloadState}`}
-                      disabled={downloadState === "loading"}
-                      onClick={() => void downloadLatestInstaller()}
+                      onClick={() => downloadState === "loading"
+                        ? void cancelInstallerDownload()
+                        : void downloadLatestInstaller()}
                     >
                       <Download aria-hidden="true" className="nav-icon" />
                       <span>
                         {downloadState === "loading"
-                          ? t("releaseNotes.downloadLoading")
+                          ? t("releaseNotes.downloadCancel")
                           : downloadState === "success"
                             ? t("releaseNotes.downloadSuccess")
-                            : downloadState === "error"
+                            : downloadState !== "idle"
                               ? t("releaseNotes.downloadRetry", { version: latestAvailableVersion })
                               : t("releaseNotes.download", { version: latestAvailableVersion })}
                       </span>
@@ -543,6 +878,22 @@ export function AppShell() {
                 </button>
               </div>
             </div>
+            {isDesktopApp() && updateAvailable && latestAvailableVersion && !matchingDesktopAsset ? (
+              <div className="alert release-notes-alert">
+                {knownDesktopTarget
+                  ? t("releaseNotes.downloadUnavailable")
+                  : t("releaseNotes.downloadUnsupported")}
+                {" "}
+                <a href={latestReleaseUrl} target="_blank" rel="noreferrer">
+                  {t("releaseNotes.openReleasePage")}
+                </a>
+              </div>
+            ) : null}
+            {downloadState !== "idle" && downloadState !== "loading" && downloadState !== "success" ? (
+              <div className="alert release-notes-alert">
+                {t(`releaseNotes.downloadStates.${downloadState}`)}
+              </div>
+            ) : null}
             <div className="release-notes-content">
               {allReleaseNotes.map((versionNotes) => {
                 const isExpanded = expandedReleaseVersion === versionNotes.version;
@@ -581,6 +932,9 @@ export function AppShell() {
                     </button>
                     {isExpanded ? (
                       <div id={`release-notes-version-${versionNotes.version}`} className="release-notes-version-body">
+                        {versionNotes.sections.length === 0 ? (
+                          <p>{t("releaseNotes.noDetails")}</p>
+                        ) : null}
                         {versionNotes.sections.map((section, sectionIndex) => (
                           <section key={`${section.title || "changes"}-${sectionIndex}`} className="release-notes-section">
                             {section.title ? <h3>{section.title}</h3> : null}
