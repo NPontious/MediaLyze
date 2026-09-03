@@ -555,6 +555,34 @@ UI catalog maintenance rule:
 * catalog examples should use exported shared components where possible; for non-exported page-local patterns, reproduce the real DOM shape and classes closely and keep catalog-specific CSS limited to layout/annotation only
 * the catalog should remain useful for comparing light and dark theme behavior, related variants, and source locations so future design consolidation work can rely on it
 
+Frontend design consistency and density:
+
+* `frontend/globals.css` is the source for global visual tokens and base primitives; `frontend/src/medialyze.css` contains feature and layout styling; shared React patterns live under `frontend/src/components/`. Inspect these sources, `/ui-elements`, and the nearest current page before introducing a new visual treatment.
+* Existing components, class combinations, CSS variables, spacing, typography, control sizes, surface hierarchy, iconography, and interaction patterns are the default. Reuse them first. A new component or selector needs a concrete gap that an existing pattern cannot cover; do not create one-off card, badge, button, spacing, modal, or form styles only to make a new screen look different.
+* New pages and features must match the visual density of adjacent current pages. Prefer content-driven layouts, compact vertical rhythm, and clear grouping. Avoid oversized headings or controls, unnecessary empty padding, duplicate nested surfaces, arbitrary margins or minimum heights, and full-width blocks unless the content or responsive behavior requires them.
+* CSS presence alone is not evidence that a pattern is current. When conflicting visual variants exist, use the latest accepted implementation and the `/ui-elements` catalog as the reference; if that is ambiguous, identify the conflict before choosing a variant.
+* If no suitable current pattern exists or the request intentionally changes the design language, state which existing patterns were considered and present a concise proposal before implementing a large new visual system. Do not silently invent a competing design language.
+* Treat `/ui-elements` as a living design reference, not merely documentation. Before implementation compare the intended pattern in both light and dark themes and at narrow widths; after implementation update the representative example and its source reference. Keep the catalog free of known legacy variants unless they are intentionally supported.
+* Every meaningful visual state must be designed consistently: default, hover, focus-visible, active or selected, disabled, loading, error, empty, long content, light and dark theme, and mobile or narrow widths as applicable. Use semantic interactive elements and preserve keyboard access, visible focus, readable contrast, and usable touch targets.
+* For materially visual changes, run the relevant frontend checks and build, and inspect the affected route or `/ui-elements` when the environment allows it at light, dark, and narrow widths. If visual inspection is unavailable, state that explicitly and do not claim visual verification.
+* When the user rejects a design or prefers a replacement, perform a design-impact audit: search all frontend components, pages, catalog entries, and CSS for the old selectors, class combinations, tokens, and distinctive declarations. Report the affected locations, separate intentional exceptions from true legacy uses, and explicitly propose whether the migration should cover them. Do not silently expand a feature change into an unrelated migration.
+* If the user approves a broader migration, update all affected usages in the same change set where practical, update `/ui-elements` and relevant tests, and remove obsolete selectors, variables, keyframes, and overrides. Before finishing, use `rg` to verify that no active references to the old pattern remain; if any must remain, document why and where.
+
+Frontend design decision history:
+
+* Repository-wide frontend design decisions are recorded in this section of `AGENTS.md` until a dedicated history document is introduced.
+* Record a decision when a design becomes canonical, replaces or rejects a product-wide pattern, or leaves intentional exceptions after a migration. Keep entries dated and concise; do not record every local spacing tweak.
+* Each entry should include the decision, rationale, canonical implementation and catalog references, deprecated selectors or patterns, migration scope, status, and remaining intentional exceptions.
+* Update the entry when the canonical pattern or migration status changes. The history must not keep legacy CSS alive; after migration, retain only identifiers needed to explain intentional exceptions.
+
+### 2026-09-03 — Reuse accepted UI patterns and retire rejected variants
+
+* Decision: new frontend areas reuse current shared components, visual tokens, neighboring page patterns, and `/ui-elements`; legacy variants are not default choices.
+* Rationale: prevent stale designs, excessive whitespace, and parallel CSS systems.
+* Canonical references: `frontend/globals.css`, `frontend/src/medialyze.css`, `frontend/src/components/`, and `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: when a variant is rejected, audit all usages, propose the migration scope, then remove obsolete selectors and related CSS after approval.
+* Status: active.
+
 ## 8.3 Internationalization
 
 Current translation state:
@@ -1097,6 +1125,9 @@ When updating documentation, code, or behavior in this repository:
 * verify claims against code, tests, workflows, or GitHub release metadata
 * do not document unverified scale claims as benchmarked facts; treat large-library support as a design goal unless there is measured evidence
 * prefer concrete current file paths and interfaces over speculative future structure
+* for frontend work, apply the design consistency, density, state, and design-impact-audit rules in section 8.2 before finishing the implementation
+* keep a visual pattern's source of truth singular: when a new accepted variant replaces an old one, migrate or explicitly account for every remaining usage instead of allowing both variants to become default choices
+* when a frontend design decision becomes product-wide, update the decision history in section 8.2 with its canonical references and migration status
 * if a larger change affects architecture, runtime behavior, public interfaces, release flow, repository structure, or other information relevant for future development, update `AGENTS.md` in the same work
 * if a change affects supported library modes, scan behavior, media/subtitle extensions, parsed metadata fields, codec/HDR/subtitle classification logic, or unsupported-input handling, update `docs/supported_metadata.md` in the same work so the support matrix stays current
 * if a change is relevant for the next release, add it to `CHANGELOG.md` under `vUnreleased`
