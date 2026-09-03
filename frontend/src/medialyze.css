@@ -12805,6 +12805,10 @@ html[data-theme="dark"] .transcoding-panel select.transcode-control {
   align-items: center;
 }
 
+.transcode-video-encode-fields {
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+}
+
 .transcode-stream-encode-fields .transcode-control {
   min-width: 0;
 }

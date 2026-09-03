@@ -27,6 +27,8 @@ const STREAM_ACTIONS: TranscodeStreamAction[] = ["copy", "encode", "drop"];
 type StreamKind = "video_streams" | "audio_streams" | "subtitle_streams";
 type QualityMode = "crf" | "cq" | "qp" | "global_quality";
 type QualitySpec = { mode: QualityMode; min: number; max: number; default: number; step: number };
+type PresetFamily = "x264" | "qsv" | "nvenc" | "amf" | "svtav1" | "generic";
+type PresetOption = { value: string; labelKey: string };
 
 const QUALITY_SPECS: Record<string, QualitySpec> = {
   libx264: { mode: "crf", min: 0, max: 51, default: 23, step: 1 },
@@ -55,6 +57,65 @@ const HARDWARE_QUALITY_SPECS: Record<string, QualitySpec> = {
   mpeg2_qsv: { mode: "global_quality", min: 1, max: 51, default: 23, step: 1 },
   mjpeg_qsv: { mode: "global_quality", min: 1, max: 100, default: 80, step: 1 },
 };
+
+// FFmpeg exposes the speed/quality trade-off as `preset` for these encoder
+// families.  Keep the values curated instead of forwarding arbitrary option
+// text from the capability probe: the probe reports option names, but not a
+// reliable, portable list of accepted values.
+const X264_PRESETS: PresetOption[] = [
+  { value: "ultrafast", labelKey: "ultrafast" },
+  { value: "superfast", labelKey: "superfast" },
+  { value: "veryfast", labelKey: "veryfast" },
+  { value: "faster", labelKey: "faster" },
+  { value: "fast", labelKey: "fast" },
+  { value: "medium", labelKey: "medium" },
+  { value: "slow", labelKey: "slow" },
+  { value: "slower", labelKey: "slower" },
+  { value: "veryslow", labelKey: "veryslow" },
+];
+
+const QSV_PRESETS: PresetOption[] = [
+  { value: "veryfast", labelKey: "veryfast" },
+  { value: "faster", labelKey: "faster" },
+  { value: "fast", labelKey: "fast" },
+  { value: "medium", labelKey: "medium" },
+  { value: "slow", labelKey: "slow" },
+  { value: "slower", labelKey: "slower" },
+  { value: "veryslow", labelKey: "veryslow" },
+];
+
+const NVENC_PRESETS: PresetOption[] = [
+  { value: "p1", labelKey: "p1" },
+  { value: "p2", labelKey: "p2" },
+  { value: "p3", labelKey: "p3" },
+  { value: "p4", labelKey: "p4" },
+  { value: "p5", labelKey: "p5" },
+  { value: "p6", labelKey: "p6" },
+  { value: "p7", labelKey: "p7" },
+];
+
+const AMF_PRESETS: PresetOption[] = [
+  { value: "speed", labelKey: "speed" },
+  { value: "balanced", labelKey: "balanced" },
+  { value: "quality", labelKey: "qualityFirst" },
+];
+
+const SVT_AV1_PRESETS: PresetOption[] = [
+  { value: "0", labelKey: "svt0" },
+  { value: "2", labelKey: "svt2" },
+  { value: "4", labelKey: "svt4" },
+  { value: "6", labelKey: "svt6" },
+  { value: "8", labelKey: "svt8" },
+  { value: "10", labelKey: "svt10" },
+  { value: "12", labelKey: "svt12" },
+  { value: "13", labelKey: "svt13" },
+];
+
+const GENERIC_PRESETS: PresetOption[] = [
+  { value: "fast", labelKey: "fast" },
+  { value: "medium", labelKey: "medium" },
+  { value: "slow", labelKey: "slow" },
+];
 
 const AUDIO_BITRATES: Record<string, number[]> = {
   aac: [64_000, 96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
@@ -178,6 +239,58 @@ function encoderQualitySpec(encoder: TranscodeEncoderCapability | undefined): Qu
   const defaultValue = encoder?.quality_default ?? fallback?.default ?? 23;
   const step = encoder?.quality_step ?? fallback?.step ?? 1;
   return { mode, min, max, default: defaultValue, step };
+}
+
+function encoderPresetFamily(encoder: TranscodeEncoderCapability | undefined): PresetFamily | null {
+  if (!encoder || !encoder.options.some((option) => option.toLowerCase() === "preset")) return null;
+  const name = encoder.name.toLowerCase();
+  // VAAPI currently ignores `preset` in the backend command builder; do not
+  // expose a control that would look active while having no effect.
+  if (name.endsWith("_vaapi")) return null;
+  if (name === "libx264" || name === "libx265") return "x264";
+  if (name === "libsvtav1") return "svtav1";
+  if (name.endsWith("_qsv")) return "qsv";
+  if (name.endsWith("_nvenc")) return "nvenc";
+  if (name.endsWith("_amf")) return "amf";
+  return "generic";
+}
+
+function encoderPresetOptions(encoder: TranscodeEncoderCapability | undefined): PresetOption[] {
+  switch (encoderPresetFamily(encoder)) {
+    case "x264": return X264_PRESETS;
+    case "qsv": return QSV_PRESETS;
+    case "nvenc": return NVENC_PRESETS;
+    case "amf": return AMF_PRESETS;
+    case "svtav1": return SVT_AV1_PRESETS;
+    case "generic": return GENERIC_PRESETS;
+    default: return [];
+  }
+}
+
+function defaultPresetForEncoder(encoder: TranscodeEncoderCapability | undefined): string | null {
+  const options = encoderPresetOptions(encoder);
+  if (!options.length) return null;
+  switch (encoderPresetFamily(encoder)) {
+    case "svtav1": return "6";
+    case "nvenc": return "p4";
+    case "amf": return "balanced";
+    default: return "medium";
+  }
+}
+
+function selectedPresetValue(
+  stream: TranscodePlan["video_streams"][number],
+  encoder: TranscodeEncoderCapability | undefined,
+): string | null {
+  const options = encoderPresetOptions(encoder);
+  if (!options.length) return null;
+  return options.some((option) => option.value === stream.preset)
+    ? stream.preset ?? defaultPresetForEncoder(encoder)
+    : defaultPresetForEncoder(encoder);
+}
+
+function presetGuidanceKey(family: PresetFamily | null): string {
+  return family ?? "default";
 }
 
 function clampQuality(value: number, spec: QualitySpec): number {
@@ -423,10 +536,13 @@ function StreamControlFields({
   if (kind === "video_streams") {
     const spec = encoderQualitySpec(selected);
     const quality = selectedQuality(stream, spec);
+    const presetFamily = encoderPresetFamily(selected);
+    const presetOptions = encoderPresetOptions(selected);
+    const preset = selectedPresetValue(stream, selected);
     const resolutions = resolutionOptions(source as VideoStream | undefined, stream.width, stream.height, t);
     const resolutionValue = stream.width && stream.height ? `${stream.width}x${stream.height}` : "original";
     return (
-      <div className="transcode-stream-encode-fields">
+      <div className="transcode-stream-encode-fields transcode-video-encode-fields">
         <label className="transcode-control-field transcode-encoder-field">
           <span className="transcode-field-label">
             <span>{t("transcoding.encoder")}</span>
@@ -445,6 +561,7 @@ function StreamControlFields({
                 codec: next?.codec ?? stream.codec,
                 crf: nextSpec.mode === "crf" ? nextQuality : null,
                 cq: nextSpec.mode === "crf" ? null : nextQuality,
+                preset: defaultPresetForEncoder(next),
               });
             }}
           >
@@ -475,6 +592,30 @@ function StreamControlFields({
             <output>{quality}</output>
           </span>
         </label>
+        {presetOptions.length ? (
+          <label className="transcode-control-field transcode-preset-field">
+            <span className="transcode-field-label">
+              <span>{t("transcoding.speedPreset")}</span>
+              <TooltipTrigger
+                ariaLabel={t("transcoding.presetHelpAria")}
+                content={t("transcoding.presetHelp", { guidance: t(`transcoding.presetGuidance.${presetGuidanceKey(presetFamily)}`) })}
+              />
+            </span>
+            <select
+              className={controlClass}
+              aria-label={`video ${stream.stream_index} speed preset`}
+              title={t("transcoding.presetHelp", { guidance: t(`transcoding.presetGuidance.${presetGuidanceKey(presetFamily)}`) })}
+              value={preset ?? ""}
+              onChange={(event) => onPatch({ preset: event.target.value || null })}
+            >
+              {presetOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.value} · {t(`transcoding.presetValues.${option.labelKey}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="transcode-control-field transcode-resolution-field">
           <span className="transcode-field-label">
             <span>{t("transcoding.resolution")}</span>
@@ -938,6 +1079,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
                   codec: encoder?.codec ?? stream.codec,
                   crf: kind === "video_streams" && quality.mode === "crf" ? quality.default : null,
                   cq: kind === "video_streams" && quality.mode !== "crf" ? quality.default : null,
+                  preset: kind === "video_streams" ? defaultPresetForEncoder(encoder) : null,
                   bitrate: kind === "audio_streams" ? defaultAudioBitrate(source as AudioStream | undefined, encoder?.name ?? "aac") || null : null,
                   language: kind !== "video_streams" ? sourceLanguage || "und" : null,
                   width: null,

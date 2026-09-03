@@ -49,6 +49,7 @@ const capabilities: TranscodeCapabilities = {
   encoders: [
     { name: "libx264", codec: "h264", hardware: false, available: true, tested: false, test_error: null, options: ["crf", "preset", "profile"] },
     { name: "h264_nvenc", codec: "h264", hardware: true, available: true, tested: true, test_error: null, options: ["cq", "preset"] },
+    { name: "av1_qsv", codec: "av1", hardware: true, available: true, tested: true, test_error: null, options: ["global_quality", "preset"] },
     { name: "aac", codec: "aac", hardware: false, available: true, tested: false, test_error: null, options: [] },
     { name: "mov_text", codec: "mov_text", hardware: false, available: true, tested: false, test_error: null, options: [] },
   ],
@@ -163,9 +164,13 @@ describe("TranscodingPanel", () => {
     expect(screen.getByRole("combobox", { name: "Action for stream 0" })).toHaveValue("encode");
     expect(screen.getByRole("combobox", { name: "Action for stream 0" })).toHaveClass("settings-choice-input", "transcode-control");
     expect(screen.getByRole("slider", { name: "video 0 quality" })).toHaveClass("settings-choice-input", "transcode-control");
+    expect(screen.getByRole("combobox", { name: "video 0 speed preset" })).toHaveValue("medium");
     expect(screen.getByRole("combobox", { name: "video 0 resolution" })).toHaveClass("settings-choice-input", "transcode-control");
     expect(screen.queryByRole("textbox", { name: "video 0 codec" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Locally reported encoder options/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "video 0 encoder" }), { target: { value: "av1_qsv" } });
+    expect(screen.getByRole("combobox", { name: "video 0 speed preset" })).toHaveValue("medium");
+    fireEvent.change(screen.getByRole("combobox", { name: "video 0 speed preset" }), { target: { value: "slow" } });
     fireEvent.change(screen.getByRole("combobox", { name: "video 0 resolution" }), { target: { value: "1280x720" } });
     fireEvent.click(screen.getByText("Subtitle streams"));
     fireEvent.change(screen.getByRole("combobox", { name: "Action for stream 2" }), { target: { value: "drop" } });
@@ -182,6 +187,7 @@ describe("TranscodingPanel", () => {
 
     const sentPlan = vi.mocked(api.validateFileTranscode).mock.calls[0][1];
     expect(sentPlan.video_streams[0].width).toBe(1280);
+    expect(sentPlan.video_streams[0].preset).toBe("slow");
     expect(sentPlan.subtitle_streams[0].action).toBe("drop");
     expect(sentPlan.external_subtitles[0]).toMatchObject({ subtitle_id: 8, action: "encode" });
   });

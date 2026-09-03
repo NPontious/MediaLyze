@@ -2358,7 +2358,7 @@ export function UiElementsPage() {
                   </section>
                 </div>
               </VariantCard>
-              <VariantCard title="Compact transcoding plan" source="TranscodingPanel" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-stream-group", "transcode-stream-group-summary", "transcode-stream-encode-fields", "transcode-control-field", "transcode-range-row", "transcode-filename-section", "transcode-filename-preview", "transcode-action-button", "transcode-preview-link"]} wide>
+              <VariantCard title="Compact transcoding plan" source="TranscodingPanel" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-stream-group", "transcode-stream-group-summary", "transcode-stream-encode-fields", "transcode-video-encode-fields", "transcode-control-field", "transcode-preset-field", "transcode-range-row", "transcode-filename-section", "transcode-filename-preview", "transcode-action-button", "transcode-preview-link"]} wide>
                 <div className="transcoding-panel">
                   <div className="transcode-configuration-grid">
                     <label><span>Profile</span><select className="settings-choice-input transcode-control" defaultValue="compatibility"><option value="compatibility">Original / copy</option></select></label>
@@ -2369,9 +2369,10 @@ export function UiElementsPage() {
                     <article className="transcode-stream-row">
                       <div><strong>#0</strong><span>HEVC</span></div>
                       <select className="settings-choice-input transcode-control" defaultValue="encode"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select>
-                      <div className="transcode-stream-encode-fields">
+                      <div className="transcode-stream-encode-fields transcode-video-encode-fields">
                         <label className="transcode-control-field"><span className="transcode-field-label"><span>Encoder</span><TooltipTrigger ariaLabel="Encoder information" content="Intel QSV exposes H.264, H.265 / HEVC, and AV1 when the selected DRM device passes the capability test." /></span><select className="settings-choice-input transcode-control" defaultValue="hevc_qsv"><option value="hevc_qsv">hevc_qsv · H.265 / HEVC · GPU</option><option value="av1_qsv">av1_qsv · AV1 · GPU</option><option value="libx264">libx264 · H.264 / AVC · CPU</option></select></label>
                         <label className="transcode-control-field"><span className="transcode-field-label"><span>Quality (ICQ)</span><TooltipTrigger ariaLabel="Explain quality control" content="Lower values mean higher quality for Intel QSV's constant-quality mode." /></span><span className="transcode-range-row"><input className="settings-choice-input transcode-control" type="range" min="1" max="51" defaultValue="23" /><output>23</output></span></label>
+                        <label className="transcode-control-field transcode-preset-field"><span className="transcode-field-label"><span>Speed preset</span><TooltipTrigger ariaLabel="Explain encoding speed preset" content="Faster presets reduce encoding time but usually reduce compression efficiency and increase file size." /></span><select className="settings-choice-input transcode-control" defaultValue="medium"><option value="veryfast">veryfast · Very fast</option><option value="fast">fast · Fast</option><option value="medium">medium · Balanced</option><option value="slow">slow · Slow</option><option value="veryslow">veryslow · Very slow</option></select></label>
                         <label className="transcode-control-field"><span className="transcode-field-label"><span>Output resolution</span><TooltipTrigger ariaLabel="Explain output resolution" content="Only equal or lower heights are offered." /></span><select className="settings-choice-input transcode-control" defaultValue="1920x1080"><option value="1920x1080">1080p (1920×1080)</option></select></label>
                       </div>
                     </article>

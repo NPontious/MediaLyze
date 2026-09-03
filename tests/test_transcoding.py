@@ -228,6 +228,20 @@ def test_validation_builds_explicit_maps_and_clean_filename(monkeypatch, tmp_pat
     assert "shell" not in validation.ffmpeg_command.lower()
 
 
+def test_validation_forwards_video_speed_preset(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.video_streams[0].preset = "slow"
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+
+    assert validation.valid is True
+    preset_index = validation.ffmpeg_arguments.index("-preset:v:0")
+    assert validation.ffmpeg_arguments[preset_index + 1] == "slow"
+
+
 def test_filename_template_can_include_selected_subtitle_languages(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
