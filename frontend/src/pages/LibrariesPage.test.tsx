@@ -56,6 +56,12 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
     default_ignore_patterns: ["*/@eaDir/*"],
     pattern_recognition: {
       analyze_bonus_content: true,
+      duplicate_matching: {
+        duration_tolerance_seconds: 10,
+        user_filename_suffix_regexes: [],
+        default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+        effective_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+      },
       show_season_patterns: {
         recognition_mode: "folder_depth",
         series_folder_depth: 1,
@@ -686,6 +692,12 @@ describe("LibrariesPage ignore patterns", () => {
   it("persists bonus-content folder recognition settings through app settings", async () => {
     const patternRecognition = {
       analyze_bonus_content: true,
+      duplicate_matching: {
+        duration_tolerance_seconds: 10,
+        user_filename_suffix_regexes: [],
+        default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+        effective_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+      },
       show_season_patterns: {
         recognition_mode: "folder_depth" as const,
         series_folder_depth: 1,
@@ -720,6 +732,11 @@ describe("LibrariesPage ignore patterns", () => {
       expect(updateSpy).toHaveBeenCalledWith({
         pattern_recognition: {
           analyze_bonus_content: true,
+          duplicate_matching: {
+            duration_tolerance_seconds: 10,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
           show_season_patterns: patternRecognition.show_season_patterns,
           bonus_content: {
             user_folder_patterns: ["Featurettes/*", "extras/*"],
@@ -729,6 +746,30 @@ describe("LibrariesPage ignore patterns", () => {
           },
         },
       }),
+    );
+  });
+
+  it("persists duplicate runtime tolerance from pattern recognition settings", async () => {
+    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+
+    renderPage({ activePanel: "patternRecognition" });
+
+    await screen.findByDisplayValue("(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$");
+    const durationInput = await screen.findByLabelText("Maximum runtime difference (seconds)");
+    fireEvent.change(durationInput, { target: { value: "18" } });
+    fireEvent.blur(durationInput);
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+        pattern_recognition: expect.objectContaining({
+          duplicate_matching: {
+            duration_tolerance_seconds: 18,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
+        }),
+      })),
     );
   });
 
@@ -749,6 +790,12 @@ describe("LibrariesPage ignore patterns", () => {
       createAppSettings({
         pattern_recognition: {
           analyze_bonus_content: true,
+          duplicate_matching: {
+            duration_tolerance_seconds: 10,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+            effective_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
           show_season_patterns: {
             recognition_mode: "regex",
             series_folder_depth: 1,
@@ -777,6 +824,11 @@ describe("LibrariesPage ignore patterns", () => {
       expect(updateSpy).toHaveBeenCalledWith({
         pattern_recognition: {
           analyze_bonus_content: true,
+          duplicate_matching: {
+            duration_tolerance_seconds: 10,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
           show_season_patterns: {
             recognition_mode: "regex",
             series_folder_depth: 1,

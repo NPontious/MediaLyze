@@ -1197,7 +1197,11 @@ def run_scan(
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
     ignore_patterns = tuple(app_settings.ignore_patterns)
     pattern_recognition_settings = app_settings.pattern_recognition
-    duplicate_strategy = get_duplicate_detection_strategy(library.duplicate_detection_mode)
+    duplicate_matching_settings = pattern_recognition_settings.duplicate_matching
+    duplicate_strategy = get_duplicate_detection_strategy(
+        library.duplicate_detection_mode,
+        duplicate_matching_settings,
+    )
     new_files = SampledPathList()
     modified_files = SampledPathList()
     deleted_files = SampledPathList()
@@ -1341,7 +1345,12 @@ def run_scan(
         duplicate_groups = 0
         duplicate_files = 0
         if include_duplicate_counts:
-            duplicate_groups, duplicate_files = get_duplicate_group_counts(db, library.id, library.duplicate_detection_mode)
+            duplicate_groups, duplicate_files = get_duplicate_group_counts(
+                db,
+                library.id,
+                library.duplicate_detection_mode,
+                duplicate_matching_settings,
+            )
         return {
             "ignore_patterns": list(ignore_patterns),
             "discovery": {

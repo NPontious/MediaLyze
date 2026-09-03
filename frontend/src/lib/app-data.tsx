@@ -106,6 +106,19 @@ function normalizeAppSettings(payload: Partial<AppSettings> | null | undefined):
     pattern_recognition: {
       analyze_bonus_content:
         payload?.pattern_recognition?.analyze_bonus_content ?? DEFAULT_PATTERN_RECOGNITION.analyze_bonus_content,
+      duplicate_matching: {
+        duration_tolerance_seconds:
+          payload?.pattern_recognition?.duplicate_matching?.duration_tolerance_seconds ??
+          DEFAULT_PATTERN_RECOGNITION.duplicate_matching.duration_tolerance_seconds,
+        user_filename_suffix_regexes:
+          payload?.pattern_recognition?.duplicate_matching?.user_filename_suffix_regexes ?? [],
+        default_filename_suffix_regexes:
+          payload?.pattern_recognition?.duplicate_matching?.default_filename_suffix_regexes ??
+          DEFAULT_PATTERN_RECOGNITION.duplicate_matching.default_filename_suffix_regexes,
+        effective_filename_suffix_regexes:
+          payload?.pattern_recognition?.duplicate_matching?.effective_filename_suffix_regexes ??
+          DEFAULT_PATTERN_RECOGNITION.duplicate_matching.effective_filename_suffix_regexes,
+      },
       show_season_patterns: {
         recognition_mode:
           payload?.pattern_recognition?.show_season_patterns?.recognition_mode ??

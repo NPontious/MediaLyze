@@ -73,6 +73,9 @@ import {
   rawVisualDensityToGbPerHour,
 } from "../lib/quality-format";
 import {
+  DEFAULT_DUPLICATE_DURATION_TOLERANCE_SECONDS,
+  DUPLICATE_DURATION_TOLERANCE_MAX,
+  DUPLICATE_DURATION_TOLERANCE_MIN,
   DEFAULT_SHOW_SEASON_PATTERN_INPUTS,
   defaultBonusFolderPatternInputs,
   defaultPatternRecognitionSettings,
@@ -197,6 +200,7 @@ type IgnorePatternGroup = "user" | "default";
 type PatternSectionKey =
   | "series_folder_regexes"
   | "season_folder_regexes"
+  | "duplicate_filename_suffix_regexes"
   | "bonus_folder_patterns";
 
 type TelemetryPayloadView = "last" | "minimal" | "enabled";
@@ -208,6 +212,7 @@ const PATTERN_RECOGNITION_SECTION_STORAGE_KEY = "medialyze-pattern-recognition-s
 const DEFAULT_PATTERN_RECOGNITION_SECTION_STATE: PatternRecognitionSectionState = {
   series_folder_regexes: true,
   season_folder_regexes: true,
+  duplicate_filename_suffix_regexes: true,
   bonus_folder_patterns: false,
 };
 
@@ -219,6 +224,18 @@ function normalizePatternRecognitionInputs(settings?: PatternRecognitionSettings
   return {
     ...next,
     analyze_bonus_content: true,
+    duplicate_matching: {
+      ...DEFAULT_PATTERN_RECOGNITION_INPUTS.duplicate_matching,
+      ...next.duplicate_matching,
+      user_filename_suffix_regexes:
+        next.duplicate_matching?.user_filename_suffix_regexes ?? [],
+      default_filename_suffix_regexes:
+        next.duplicate_matching?.default_filename_suffix_regexes ??
+        DEFAULT_PATTERN_RECOGNITION_INPUTS.duplicate_matching.default_filename_suffix_regexes,
+      effective_filename_suffix_regexes:
+        next.duplicate_matching?.effective_filename_suffix_regexes ??
+        DEFAULT_PATTERN_RECOGNITION_INPUTS.duplicate_matching.effective_filename_suffix_regexes,
+    },
     show_season_patterns: {
       ...DEFAULT_SHOW_SEASON_PATTERN_INPUTS,
       ...next.show_season_patterns,
@@ -917,9 +934,14 @@ export function LibrariesPage() {
   const [patternRecognitionInputs, setPatternRecognitionInputs] = useState<PatternRecognitionSettings>(
     normalizePatternRecognitionInputs(appSettings.pattern_recognition ?? DEFAULT_PATTERN_RECOGNITION_INPUTS),
   );
+  const [duplicateDurationToleranceInput, setDuplicateDurationToleranceInput] = useState(() => String(
+    normalizePatternRecognitionInputs(appSettings.pattern_recognition ?? DEFAULT_PATTERN_RECOGNITION_INPUTS)
+      .duplicate_matching.duration_tolerance_seconds,
+  ));
   const [patternRecognitionDrafts, setPatternRecognitionDrafts] = useState<Record<PatternSectionKey, string>>({
     series_folder_regexes: "",
     season_folder_regexes: "",
+    duplicate_filename_suffix_regexes: "",
     bonus_folder_patterns: "",
   });
   const [ignorePatternSectionState, setIgnorePatternSectionState] = useState(() => getIgnorePatternSectionState());
@@ -1121,6 +1143,9 @@ export function LibrariesPage() {
     persistedResolutionCategories.current = normalizeResolutionCategories(updated.resolution_categories);
     setResolutionCategoryDrafts(cloneResolutionCategoryDrafts(persistedResolutionCategories.current));
     setPatternRecognitionInputs(normalizePatternRecognitionInputs(updated.pattern_recognition));
+    setDuplicateDurationToleranceInput(
+      String(normalizePatternRecognitionInputs(updated.pattern_recognition).duplicate_matching.duration_tolerance_seconds),
+    );
     setAppSettings(updated);
   }
 
@@ -1826,7 +1851,11 @@ export function LibrariesPage() {
     ignorePatternsSuccessId.current = ignorePatternsRequestId.current;
     setUserIgnorePatternInputs(persisted.user);
     setDefaultIgnorePatternInputs(persisted.default);
-    setPatternRecognitionInputs(normalizePatternRecognitionInputs(appSettings.pattern_recognition));
+    const normalizedPatternRecognition = normalizePatternRecognitionInputs(appSettings.pattern_recognition);
+    setPatternRecognitionInputs(normalizedPatternRecognition);
+    setDuplicateDurationToleranceInput(
+      String(normalizedPatternRecognition.duplicate_matching.duration_tolerance_seconds),
+    );
     setResolutionCategoryDrafts(cloneResolutionCategoryDrafts(persistedResolution));
     setHideAutomaticUpdateReminders(appSettings.feature_flags.hide_automatic_update_reminders === true);
     setShowAnalyzedFilesCsvExport(appSettings.feature_flags.show_analyzed_files_csv_export);
@@ -3126,6 +3155,11 @@ export function LibrariesPage() {
       case "series_folder_regexes":
       case "season_folder_regexes":
         return settings.show_season_patterns[key];
+      case "duplicate_filename_suffix_regexes":
+        return [
+          ...settings.duplicate_matching.user_filename_suffix_regexes,
+          ...settings.duplicate_matching.default_filename_suffix_regexes,
+        ];
       case "bonus_folder_patterns":
         return [...settings.bonus_content.user_folder_patterns, ...settings.bonus_content.default_folder_patterns];
     }
@@ -3142,6 +3176,18 @@ export function LibrariesPage() {
         show_season_patterns: {
           ...settings.show_season_patterns,
           [key]: patterns,
+        },
+      };
+    }
+    if (key === "duplicate_filename_suffix_regexes") {
+      const nextPatterns = patterns.map((pattern) => pattern.trim());
+      return {
+        ...settings,
+        duplicate_matching: {
+          ...settings.duplicate_matching,
+          user_filename_suffix_regexes: nextPatterns,
+          default_filename_suffix_regexes: [],
+          effective_filename_suffix_regexes: nextPatterns,
         },
       };
     }
@@ -3164,6 +3210,7 @@ export function LibrariesPage() {
   async function savePatternRecognition(nextSettings: PatternRecognitionSettings) {
     const normalizedSettings = normalizePatternRecognitionInputs(nextSettings);
     setPatternRecognitionInputs(normalizedSettings);
+    setDuplicateDurationToleranceInput(String(normalizedSettings.duplicate_matching.duration_tolerance_seconds));
     setIsSavingPatternRecognition(true);
     setPatternRecognitionStatus(null);
     try {
@@ -3176,6 +3223,11 @@ export function LibrariesPage() {
             season_folder_depth: normalizedSettings.show_season_patterns.season_folder_depth,
             series_folder_regexes: normalizedSettings.show_season_patterns.series_folder_regexes,
             season_folder_regexes: normalizedSettings.show_season_patterns.season_folder_regexes,
+          },
+          duplicate_matching: {
+            duration_tolerance_seconds: normalizedSettings.duplicate_matching.duration_tolerance_seconds,
+            user_filename_suffix_regexes: normalizedSettings.duplicate_matching.user_filename_suffix_regexes,
+            default_filename_suffix_regexes: normalizedSettings.duplicate_matching.default_filename_suffix_regexes,
           },
           bonus_content: {
             user_folder_patterns: normalizedSettings.bonus_content.user_folder_patterns,
@@ -3192,7 +3244,9 @@ export function LibrariesPage() {
       setHistoryRetentionStatus(null);
       setResolutionCategoriesStatus(null);
     } catch (reason) {
-      setPatternRecognitionInputs(normalizePatternRecognitionInputs(appSettings.pattern_recognition));
+      const reverted = normalizePatternRecognitionInputs(appSettings.pattern_recognition);
+      setPatternRecognitionInputs(reverted);
+      setDuplicateDurationToleranceInput(String(reverted.duplicate_matching.duration_tolerance_seconds));
       setPatternRecognitionStatus((reason as Error).message);
     } finally {
       setIsSavingPatternRecognition(false);
@@ -3252,6 +3306,40 @@ export function LibrariesPage() {
         user_file_patterns: [],
         default_file_patterns: [],
         effective_file_patterns: [],
+      },
+    });
+  }
+
+  async function restoreDefaultDuplicateMatching() {
+    await savePatternRecognition({
+      ...patternRecognitionInputs,
+      duplicate_matching: {
+        ...patternRecognitionInputs.duplicate_matching,
+        duration_tolerance_seconds: DEFAULT_DUPLICATE_DURATION_TOLERANCE_SECONDS,
+        user_filename_suffix_regexes: [],
+        default_filename_suffix_regexes:
+          DEFAULT_PATTERN_RECOGNITION_INPUTS.duplicate_matching.default_filename_suffix_regexes,
+        effective_filename_suffix_regexes:
+          DEFAULT_PATTERN_RECOGNITION_INPUTS.duplicate_matching.effective_filename_suffix_regexes,
+      },
+    });
+  }
+
+  async function saveDuplicateDurationTolerance() {
+    const currentValue = patternRecognitionInputs.duplicate_matching.duration_tolerance_seconds;
+    const parsedValue = Number(duplicateDurationToleranceInput);
+    const normalizedValue = Number.isFinite(parsedValue)
+      ? Math.min(
+        DUPLICATE_DURATION_TOLERANCE_MAX,
+        Math.max(DUPLICATE_DURATION_TOLERANCE_MIN, Math.round(parsedValue)),
+      )
+      : currentValue;
+    setDuplicateDurationToleranceInput(String(normalizedValue));
+    await savePatternRecognition({
+      ...patternRecognitionInputs,
+      duplicate_matching: {
+        ...patternRecognitionInputs.duplicate_matching,
+        duration_tolerance_seconds: normalizedValue,
       },
     });
   }
@@ -6407,6 +6495,56 @@ export function LibrariesPage() {
                 >
                   {t("libraries.patternRecognition.docsLink")}
                 </a>
+              </div>
+              <div className="field">
+                <div className="distribution-copy">
+                  <div className="field-label-row">
+                    <strong>{t("libraries.patternRecognition.duplicateTitle")}</strong>
+                    <TooltipTrigger
+                      ariaLabel={t("libraries.patternRecognition.duplicateTooltipAria")}
+                      content={t("libraries.patternRecognition.duplicateHint")}
+                      preserveLineBreaks
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary small settings-panel-header-action pattern-recognition-action-button"
+                    aria-label={t("libraries.patternRecognition.restoreDuplicateDefaults")}
+                    disabled={isSavingPatternRecognition}
+                    onClick={() => void restoreDefaultDuplicateMatching()}
+                  >
+                    {t("libraries.patternRecognition.restoreDefaults")}
+                  </button>
+                </div>
+                <div className="inline-form-grid">
+                  <label>
+                    <span>{t("libraries.patternRecognition.durationTolerance")}</span>
+                    <input
+                      className="settings-choice-input"
+                      type="number"
+                      min={DUPLICATE_DURATION_TOLERANCE_MIN}
+                      max={DUPLICATE_DURATION_TOLERANCE_MAX}
+                      step={1}
+                      value={duplicateDurationToleranceInput}
+                      disabled={isSavingPatternRecognition}
+                      onChange={(event) => {
+                        setDuplicateDurationToleranceInput(event.currentTarget.value);
+                        setPatternRecognitionStatus(null);
+                      }}
+                      onBlur={() => void saveDuplicateDurationTolerance()}
+                    />
+                  </label>
+                </div>
+                <p className="field-hint">{t("libraries.patternRecognition.durationToleranceHint")}</p>
+                <div className="ignore-pattern-sections">
+                  {renderPatternRecognitionList(
+                    "duplicate_filename_suffix_regexes",
+                    t("libraries.patternRecognition.filenameSuffixRegexes"),
+                    t("libraries.patternRecognition.filenameSuffixPlaceholder"),
+                  )}
+                </div>
               </div>
               <div className="field">
                 <div className="distribution-copy">

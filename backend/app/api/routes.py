@@ -1985,6 +1985,7 @@ def library_duplicates(
     limit: int = Query(default=25, ge=1, le=200),
     include_suppressed: bool = Query(default=False),
     db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
 ) -> DuplicateGroupPageRead:
     try:
         return list_library_duplicate_groups(
@@ -1993,6 +1994,7 @@ def library_duplicates(
             offset=offset,
             limit=limit,
             include_suppressed=include_suppressed,
+            duplicate_matching_settings=load_app_settings(db, settings).pattern_recognition.duplicate_matching,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Library not found") from exc

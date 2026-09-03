@@ -10,8 +10,10 @@ from backend.app.services.duplicates import (
     DisabledDuplicateDetectionStrategy,
     FileHashDuplicateDetectionStrategy,
     FilenameDuplicateDetectionStrategy,
+    backfill_filename_pattern_signatures,
     get_duplicate_detection_strategy,
     list_library_duplicate_groups,
+    normalize_filename_pattern_signature,
     suppress_duplicate_group,
     unsuppress_duplicate_group,
 )
@@ -113,7 +115,7 @@ def test_filename_duplicate_detection_groups_normalized_stems(tmp_path: Path) ->
         db.add(library)
         db.flush()
 
-        for file_path in files:
+        for index, file_path in enumerate(files):
             media_file = MediaFile(
                 library_id=library.id,
                 relative_path=file_path.name,
@@ -121,6 +123,7 @@ def test_filename_duplicate_detection_groups_normalized_stems(tmp_path: Path) ->
                 extension=file_path.suffix.lstrip("."),
                 size_bytes=file_path.stat().st_size,
                 mtime=file_path.stat().st_mtime,
+                duration_seconds=3600 + index,
             )
             strategy.apply_payload(media_file, strategy.build_payload(file_path))
             db.add(media_file)
@@ -138,6 +141,140 @@ def test_filename_duplicate_detection_groups_normalized_stems(tmp_path: Path) ->
         "movie name 2024 final.mp4",
         "movie-name.2024__final.avi",
     ]
+
+
+def test_filename_duplicate_detection_groups_release_variants_with_runtime_tolerance(tmp_path: Path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    short_name = library_dir / "Atomic Blonde.mp4"
+    release_name = library_dir / "Atomic Blonde (2017) [1080p, SDR, h265] [ger, eng, fra, ita, esp].mp4"
+    short_name.write_text("short-release")
+    release_name.write_text("full-release")
+
+    strategy = get_duplicate_detection_strategy(DuplicateDetectionMode.filename)
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(library_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            duplicate_detection_mode=DuplicateDetectionMode.filename,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+
+        for index, file_path in enumerate((short_name, release_name)):
+            media_file = MediaFile(
+                library_id=library.id,
+                relative_path=file_path.name,
+                filename=file_path.name,
+                extension=file_path.suffix.lstrip("."),
+                size_bytes=file_path.stat().st_size,
+                mtime=file_path.stat().st_mtime,
+                duration_seconds=3600 + index * 8,
+            )
+            strategy.apply_payload(media_file, strategy.build_payload(file_path))
+            db.add(media_file)
+
+        db.commit()
+        groups = list_library_duplicate_groups(db, library.id)
+
+    assert normalize_filename_pattern_signature(short_name) == "atomic blonde"
+    assert normalize_filename_pattern_signature(release_name) == "atomic blonde"
+    assert groups.total_groups == 1
+    assert groups.duplicate_file_count == 2
+    assert groups.items[0].signature == "atomic blonde"
+
+
+def test_filename_duplicate_detection_rejects_runtime_outside_tolerance(tmp_path: Path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    files = [library_dir / "Atomic Blonde.mp4", library_dir / "Atomic Blonde (2017).mp4"]
+    for file_path in files:
+        file_path.write_text(file_path.name)
+
+    strategy = get_duplicate_detection_strategy(DuplicateDetectionMode.filename)
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(library_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            duplicate_detection_mode=DuplicateDetectionMode.filename,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+
+        for duration, file_path in zip((3600, 3611), files):
+            media_file = MediaFile(
+                library_id=library.id,
+                relative_path=file_path.name,
+                filename=file_path.name,
+                extension=file_path.suffix.lstrip("."),
+                size_bytes=file_path.stat().st_size,
+                mtime=file_path.stat().st_mtime,
+                duration_seconds=duration,
+            )
+            strategy.apply_payload(media_file, strategy.build_payload(file_path))
+            db.add(media_file)
+
+        db.commit()
+        groups = list_library_duplicate_groups(db, library.id)
+
+    assert groups.total_groups == 0
+    assert groups.duplicate_file_count == 0
+
+
+def test_backfill_filename_pattern_signatures_migrates_existing_media_files(tmp_path: Path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    file_path = library_dir / "Atomic Blonde (2017) [1080p].mp4"
+    file_path.write_text("release")
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(library_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            duplicate_detection_mode=DuplicateDetectionMode.filename,
+            scan_config={},
+        )
+        db.add(library)
+        db.flush()
+        media_file = MediaFile(
+            library_id=library.id,
+            relative_path=file_path.name,
+            filename=file_path.name,
+            extension="mp4",
+            size_bytes=file_path.stat().st_size,
+            mtime=file_path.stat().st_mtime,
+            filename_signature="atomic blonde 2017 1080p",
+        )
+        db.add(media_file)
+        db.commit()
+
+        assert backfill_filename_pattern_signatures(db) == 1
+        db.commit()
+        db.refresh(media_file)
+        assert media_file.filename_pattern_signature == "atomic blonde"
+        assert backfill_filename_pattern_signatures(db) == 0
 
 
 def test_filehash_duplicate_detection_groups_only_exact_content_duplicates(tmp_path: Path) -> None:
@@ -229,6 +366,7 @@ def test_combined_duplicate_detection_groups_include_filename_and_filehash_match
                 extension=file_path.suffix.lstrip("."),
                 size_bytes=file_path.stat().st_size,
                 mtime=file_path.stat().st_mtime,
+                duration_seconds=3600 if file_path in (filename_a, filename_b) else None,
             )
             strategy.apply_payload(media_file, strategy.build_payload(file_path))
             db.add(media_file)
@@ -283,6 +421,7 @@ def test_duplicate_suppression_hides_and_restores_filename_groups(tmp_path: Path
                 extension=file_path.suffix.lstrip("."),
                 size_bytes=file_path.stat().st_size,
                 mtime=file_path.stat().st_mtime,
+                duration_seconds=3600,
             )
             strategy.apply_payload(media_file, strategy.build_payload(file_path))
             db.add(media_file)
@@ -348,6 +487,7 @@ def test_duplicate_suppression_is_mode_specific_for_combined_detection(tmp_path:
                 extension=file_path.suffix.lstrip("."),
                 size_bytes=file_path.stat().st_size,
                 mtime=file_path.stat().st_mtime,
+                duration_seconds=3600 if file_path in (filename_a, filename_b) else None,
             )
             strategy.apply_payload(media_file, strategy.build_payload(file_path))
             db.add(media_file)

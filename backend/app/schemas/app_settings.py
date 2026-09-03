@@ -12,6 +12,9 @@ PARALLEL_SCAN_JOB_COUNT_MAX = 8
 COMPARISON_SCATTER_POINT_LIMIT_MIN = 1
 COMPARISON_SCATTER_POINT_LIMIT_MAX = 500000
 DEFAULT_COMPARISON_SCATTER_POINT_LIMIT = 5000
+DUPLICATE_DURATION_TOLERANCE_MIN = 0
+DUPLICATE_DURATION_TOLERANCE_MAX = 300
+DEFAULT_DUPLICATE_DURATION_TOLERANCE_SECONDS = 10
 
 
 class ResolutionCategory(BaseModel):
@@ -137,6 +140,27 @@ class ShowSeasonPatternSettingsUpdate(BaseModel):
     episode_file_regexes: list[str] | None = None
 
 
+class DuplicateMatchingSettings(BaseModel):
+    duration_tolerance_seconds: int = Field(
+        default=DEFAULT_DUPLICATE_DURATION_TOLERANCE_SECONDS,
+        ge=DUPLICATE_DURATION_TOLERANCE_MIN,
+        le=DUPLICATE_DURATION_TOLERANCE_MAX,
+    )
+    user_filename_suffix_regexes: list[str] = Field(default_factory=list)
+    default_filename_suffix_regexes: list[str] = Field(default_factory=list)
+    effective_filename_suffix_regexes: list[str] = Field(default_factory=list)
+
+
+class DuplicateMatchingSettingsUpdate(BaseModel):
+    duration_tolerance_seconds: int | None = Field(
+        default=None,
+        ge=DUPLICATE_DURATION_TOLERANCE_MIN,
+        le=DUPLICATE_DURATION_TOLERANCE_MAX,
+    )
+    user_filename_suffix_regexes: list[str] | None = None
+    default_filename_suffix_regexes: list[str] | None = None
+
+
 class BonusContentPatternSettings(BaseModel):
     user_folder_patterns: list[str] = Field(default_factory=list)
     default_folder_patterns: list[str] = Field(default_factory=list)
@@ -155,12 +179,14 @@ class BonusContentPatternSettingsUpdate(BaseModel):
 
 class PatternRecognitionSettings(BaseModel):
     analyze_bonus_content: bool = True
+    duplicate_matching: DuplicateMatchingSettings = Field(default_factory=DuplicateMatchingSettings)
     show_season_patterns: ShowSeasonPatternSettings = Field(default_factory=ShowSeasonPatternSettings)
     bonus_content: BonusContentPatternSettings = Field(default_factory=BonusContentPatternSettings)
 
 
 class PatternRecognitionSettingsUpdate(BaseModel):
     analyze_bonus_content: bool | None = None
+    duplicate_matching: DuplicateMatchingSettingsUpdate | None = None
     show_season_patterns: ShowSeasonPatternSettingsUpdate | None = None
     bonus_content: BonusContentPatternSettingsUpdate | None = None
 

@@ -149,6 +149,9 @@ def test_get_app_settings_seeds_built_in_default_ignore_patterns_for_new_install
     assert loaded.feature_flags.in_depth_dolby_vision_profiles is False
     assert loaded.feature_flags.show_all_playbacks_when_unstacked is False
     assert loaded.pattern_recognition.analyze_bonus_content is True
+    assert loaded.pattern_recognition.duplicate_matching.duration_tolerance_seconds == 10
+    assert loaded.pattern_recognition.duplicate_matching.user_filename_suffix_regexes == []
+    assert len(loaded.pattern_recognition.duplicate_matching.default_filename_suffix_regexes) == 1
     assert loaded.pattern_recognition.show_season_patterns.recognition_mode.value == "folder_depth"
     assert loaded.pattern_recognition.show_season_patterns.series_folder_depth == 1
     assert loaded.pattern_recognition.show_season_patterns.season_folder_depth == 2
@@ -194,6 +197,10 @@ def test_update_app_settings_persists_pattern_recognition(tmp_path) -> None:
             AppSettingsUpdate(
                 pattern_recognition={
                     "analyze_bonus_content": False,
+                    "duplicate_matching": {
+                        "duration_tolerance_seconds": 12,
+                        "user_filename_suffix_regexes": [r"\s+\(Director's Cut\)$"],
+                    },
                     "show_season_patterns": {
                         "recognition_mode": "regex",
                         "series_folder_depth": 1,
@@ -214,6 +221,14 @@ def test_update_app_settings_persists_pattern_recognition(tmp_path) -> None:
         stored = db.get(AppSetting, "global")
 
     assert updated.pattern_recognition.analyze_bonus_content is True
+    assert updated.pattern_recognition.duplicate_matching.duration_tolerance_seconds == 12
+    assert updated.pattern_recognition.duplicate_matching.user_filename_suffix_regexes == [
+        r"\s+\(Director's Cut\)$"
+    ]
+    assert updated.pattern_recognition.duplicate_matching.effective_filename_suffix_regexes == [
+        r"\s+\(Director's Cut\)$",
+        r"(?:\s+\(\d{4}\)|\s+\[[^\]]*\])+\s*$",
+    ]
     assert updated.pattern_recognition.show_season_patterns.recognition_mode.value == "regex"
     assert updated.pattern_recognition.bonus_content.effective_folder_patterns == ["*/Extras/*", "*/Specials/*"]
     assert updated.pattern_recognition.bonus_content.effective_file_patterns == []
@@ -221,6 +236,25 @@ def test_update_app_settings_persists_pattern_recognition(tmp_path) -> None:
     assert stored.value["pattern_recognition"]["analyze_bonus_content"] is True
     assert stored.value["pattern_recognition"]["bonus_content"]["user_file_patterns"] == []
     assert stored.value["pattern_recognition"]["bonus_content"]["default_file_patterns"] == []
+
+
+def test_update_app_settings_rejects_invalid_duplicate_filename_regex(tmp_path) -> None:
+    session_factory = build_session_factory()
+    settings = build_settings(tmp_path)
+
+    with session_factory() as db:
+        with pytest.raises(ValueError, match="Invalid duplicate filename suffix regex"):
+            update_app_settings(
+                db,
+                AppSettingsUpdate(
+                    pattern_recognition={
+                        "duplicate_matching": {
+                            "user_filename_suffix_regexes": ["("],
+                        },
+                    },
+                ),
+                settings,
+            )
 
 
 def test_update_app_settings_rejects_invalid_pattern_recognition_regex(tmp_path) -> None:

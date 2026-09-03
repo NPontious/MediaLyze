@@ -1489,6 +1489,30 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
+              <VariantCard title="Duplicate filename matching settings" source={`${settings} > Pattern recognition`} classes={["distribution-copy", "inline-form-grid", "pattern-recognition-section", "ignore-pattern-section-toggle"]} wide>
+                <div className="field">
+                  <div className="distribution-copy">
+                    <div className="field-label-row">
+                      <strong>Duplicate filename matching</strong>
+                      <button type="button" className="secondary small settings-panel-header-action pattern-recognition-action-button">
+                        Restore defaults
+                      </button>
+                    </div>
+                  </div>
+                  <div className="inline-form-grid">
+                    <label>
+                      <span>Maximum runtime difference (seconds)</span>
+                      <input className="settings-choice-input" type="number" min={0} max={300} defaultValue={10} />
+                    </label>
+                  </div>
+                  <div className="ignore-pattern-section pattern-recognition-section">
+                    <button type="button" className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain" aria-expanded="true">
+                      <span className="ignore-pattern-section-title">Filename suffix regexes</span>
+                      <span className="ignore-pattern-section-meta"><span className="badge">1</span><ChevronDown aria-hidden="true" className="nav-icon" /></span>
+                    </button>
+                  </div>
+                </div>
+              </VariantCard>
               <VariantCard title="Compatibility profile actions" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-action-button"]}>
                 <div className="compatibility-profile-card-actions">
                   <button type="button" className="secondary compatibility-profile-action-button">

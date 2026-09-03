@@ -177,6 +177,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "quality_score_breakdown": "ALTER TABLE media_files ADD COLUMN quality_score_breakdown JSON",
         "raw_ffprobe_json": "ALTER TABLE media_files ADD COLUMN raw_ffprobe_json JSON",
         "filename_signature": "ALTER TABLE media_files ADD COLUMN filename_signature VARCHAR(512)",
+        "filename_pattern_signature": "ALTER TABLE media_files ADD COLUMN filename_pattern_signature VARCHAR(512)",
         "content_hash": "ALTER TABLE media_files ADD COLUMN content_hash VARCHAR(128)",
         "content_hash_algorithm": "ALTER TABLE media_files ADD COLUMN content_hash_algorithm VARCHAR(32)",
         "duration_seconds": "ALTER TABLE media_files ADD COLUMN duration_seconds FLOAT",
@@ -373,6 +374,10 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_media_series_library_normalized_title ON media_series (library_id, normalized_title)",
     "CREATE INDEX IF NOT EXISTS ix_media_seasons_series_number ON media_seasons (series_id, season_number)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_filename_signature ON media_files (library_id, filename_signature)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_files_library_filename_pattern_signature "
+        "ON media_files (library_id, filename_pattern_signature)"
+    ),
     (
         "CREATE INDEX IF NOT EXISTS ix_media_files_library_content_hash "
         "ON media_files (library_id, content_hash_algorithm, content_hash)"
@@ -1568,6 +1573,7 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
 def init_db(engine: Engine | None = None) -> None:
     from backend.app.db.base import Base
     from backend.app.models import entities  # noqa: F401
+    from backend.app.services.duplicates import backfill_filename_pattern_signatures
     from backend.app.services.app_settings import get_app_settings
     from backend.app.services.quality_profiles import migrate_legacy_library_quality_profiles
 
@@ -1577,6 +1583,7 @@ def init_db(engine: Engine | None = None) -> None:
     session_factory = sessionmaker(bind=active_engine, autoflush=False, autocommit=False, expire_on_commit=False)
     with session_factory() as db:
         app_settings = get_app_settings(db)
+        backfill_filename_pattern_signatures(db, app_settings.pattern_recognition.duplicate_matching)
         migrate_legacy_library_quality_profiles(db, app_settings.resolution_categories)
         db.commit()
     with active_engine.begin() as connection:

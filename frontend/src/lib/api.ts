@@ -1357,6 +1357,8 @@ export type TranscodePlan = {
   cover: "keep" | "drop";
   attachments: "keep" | "drop";
   filename_template: string;
+  filename_template_override?: boolean | null;
+  include_subtitle_languages?: boolean;
 };
 
 export type TranscodeEncoderCapability = {
@@ -1610,6 +1612,12 @@ export type AppSettings = {
   default_ignore_patterns: string[];
   pattern_recognition?: {
     analyze_bonus_content: boolean;
+    duplicate_matching: {
+      duration_tolerance_seconds: number;
+      user_filename_suffix_regexes: string[];
+      default_filename_suffix_regexes: string[];
+      effective_filename_suffix_regexes: string[];
+    };
     show_season_patterns: {
       recognition_mode: "folder_depth" | "regex";
       series_folder_depth: number;
@@ -2610,6 +2618,11 @@ export const api = {
     default_ignore_patterns?: string[];
     pattern_recognition?: {
       analyze_bonus_content?: boolean;
+      duplicate_matching?: {
+        duration_tolerance_seconds?: number;
+        user_filename_suffix_regexes?: string[];
+        default_filename_suffix_regexes?: string[];
+      };
       show_season_patterns?: {
         recognition_mode?: "folder_depth" | "regex";
         series_folder_depth?: number;

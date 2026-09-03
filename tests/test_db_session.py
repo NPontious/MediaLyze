@@ -151,6 +151,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
         "quality_score",
         "raw_ffprobe_json",
         "filename_signature",
+        "filename_pattern_signature",
         "content_hash",
         "content_hash_algorithm",
         "max_audio_bit_depth",
@@ -312,6 +313,7 @@ def test_init_db_adds_missing_indexes_for_existing_sqlite_schema() -> None:
     assert "ix_media_files_library_last_analyzed_at" in index_names
     assert "ix_media_files_library_quality_score" in index_names
     assert "ix_media_files_library_filename_signature" in index_names
+    assert "ix_media_files_library_filename_pattern_signature" in index_names
     assert "ix_media_files_library_content_hash" in index_names
     assert "ix_video_streams_bit_depth" in video_stream_index_names
     assert "ix_subtitle_streams_codec" in subtitle_index_names

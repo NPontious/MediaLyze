@@ -81,12 +81,13 @@ Files with non-matching extensions are skipped during discovery and never become
 
 ## 4) Pattern Systems At A Glance
 
-MediaLyze uses three pattern families:
+MediaLyze uses four pattern families:
 
 | Pattern Family | Syntax | Purpose |
 |---|---|---|
 | show / season recognition | folder depth or Python regex | extract show / season structure |
 | bonus-content matching | glob | keep media indexed but classify it as bonus |
+| duplicate filename matching | Python regex suffix cleanup plus runtime tolerance | group likely filename variants as duplicates |
 | ignore matching | glob | skip files or folders entirely |
 
 Use:
@@ -94,7 +95,23 @@ Use:
 - `Folder depth` when your show library mostly follows a regular structure such as `Series/Season/Episode`
 - `Regex` when season folder names themselves must be parsed, for example `S01` or `01`
 - `Bonus folder patterns` when extras should stay indexed but be marked as bonus content
+- `Duplicate filename matching` when the same title has different release-style filename suffixes
 - `Ignore patterns` when paths should never be indexed or analyzed
+
+### 4.1 Duplicate filename matching
+
+Filename duplicate detection keeps the existing normalized filename signature and additionally derives a title-core signature. The title core is lowercased, separators are normalized, and the configured suffix regexes are removed from the end of the name. The default suffix regex removes a trailing four-digit year and/or square-bracketed release metadata.
+
+For example, these filenames produce the same title core:
+
+```text
+Atomic Blonde.mp4
+Atomic Blonde (2017) [1080p, SDR, h265] [ger, eng, fra, ita, esp].mp4
+```
+
+The filename-based duplicate group is only reported when every file in the group has a known runtime and the difference between the shortest and longest runtime is within the configured `duration_tolerance_seconds` value. The default is `10` seconds; `0` requires equal runtimes. File-hash duplicate detection is not runtime-gated.
+
+The suffix regex list and runtime tolerance are configured in Settings under `Pattern recognition`. Changes to suffix regexes are applied to existing files during the next scan.
 
 ## 5) Show, Season, And Episode Recognition
 

@@ -4,14 +4,15 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings, get_settings
-from backend.app.models.entities import AppSetting, Library, QualityProfileDefinition
+from backend.app.models.entities import AppSetting, Library, MediaFile, QualityProfileDefinition
 from backend.app.schemas.app_settings import (
     AppSettingsRead,
     AppSettingsUpdate,
+    DuplicateMatchingSettings,
     FeatureFlagsRead,
     HistoryRetentionBucketRead,
     HistoryRetentionRead,
@@ -110,6 +111,8 @@ def _deserialize_pattern_recognition(payload: Any) -> PatternRecognitionSettings
     show_payload = show_candidate if isinstance(show_candidate, dict) else {}
     bonus_candidate = candidate.get("bonus_content")
     bonus_payload = bonus_candidate if isinstance(bonus_candidate, dict) else {}
+    duplicate_candidate = candidate.get("duplicate_matching")
+    duplicate_payload = duplicate_candidate if isinstance(duplicate_candidate, dict) else {}
 
     user_folder_patterns = normalize_pattern_list(bonus_payload.get("user_folder_patterns"))
     default_folder_patterns = normalize_pattern_list(
@@ -117,8 +120,32 @@ def _deserialize_pattern_recognition(payload: Any) -> PatternRecognitionSettings
         if isinstance(bonus_payload.get("default_folder_patterns"), list)
         else defaults.bonus_content.default_folder_patterns
     )
+    user_filename_suffix_regexes = normalize_pattern_list(duplicate_payload.get("user_filename_suffix_regexes"))
+    default_filename_suffix_regexes = normalize_pattern_list(
+        duplicate_payload.get("default_filename_suffix_regexes")
+        if isinstance(duplicate_payload.get("default_filename_suffix_regexes"), list)
+        else defaults.duplicate_matching.default_filename_suffix_regexes
+    )
+    try:
+        duration_tolerance_seconds = int(
+            duplicate_payload.get(
+                "duration_tolerance_seconds",
+                defaults.duplicate_matching.duration_tolerance_seconds,
+            )
+        )
+    except (TypeError, ValueError):
+        duration_tolerance_seconds = defaults.duplicate_matching.duration_tolerance_seconds
     result = PatternRecognitionSettings(
         analyze_bonus_content=True,
+        duplicate_matching=DuplicateMatchingSettings(
+            duration_tolerance_seconds=duration_tolerance_seconds,
+            user_filename_suffix_regexes=user_filename_suffix_regexes,
+            default_filename_suffix_regexes=default_filename_suffix_regexes,
+            effective_filename_suffix_regexes=merge_pattern_lists(
+                user_filename_suffix_regexes,
+                default_filename_suffix_regexes,
+            ),
+        ),
         show_season_patterns={
             "recognition_mode": show_payload.get("recognition_mode")
             if isinstance(show_payload.get("recognition_mode"), str)
@@ -453,6 +480,20 @@ def update_app_settings(
     next_pattern_recognition = current.pattern_recognition.model_copy(deep=True)
     if payload.pattern_recognition is not None:
         pattern_payload = payload.pattern_recognition
+        if pattern_payload.duplicate_matching is not None:
+            duplicate_updates = pattern_payload.duplicate_matching.model_dump(exclude_none=True)
+            next_duplicate_matching = next_pattern_recognition.duplicate_matching.model_copy(update=duplicate_updates)
+            next_duplicate_matching.user_filename_suffix_regexes = normalize_pattern_list(
+                next_duplicate_matching.user_filename_suffix_regexes
+            )
+            next_duplicate_matching.default_filename_suffix_regexes = normalize_pattern_list(
+                next_duplicate_matching.default_filename_suffix_regexes
+            )
+            next_duplicate_matching.effective_filename_suffix_regexes = merge_pattern_lists(
+                next_duplicate_matching.user_filename_suffix_regexes,
+                next_duplicate_matching.default_filename_suffix_regexes,
+            )
+            next_pattern_recognition.duplicate_matching = next_duplicate_matching
         if pattern_payload.show_season_patterns is not None:
             show_updates = pattern_payload.show_season_patterns.model_dump(exclude_none=True)
             next_pattern_recognition.show_season_patterns = (
@@ -482,6 +523,10 @@ def update_app_settings(
         next_pattern_recognition.show_season_patterns.episode_file_regexes
     )
     validate_pattern_recognition_settings(next_pattern_recognition)
+    duplicate_matching_patterns_changed = (
+        current.pattern_recognition.duplicate_matching.effective_filename_suffix_regexes
+        != next_pattern_recognition.duplicate_matching.effective_filename_suffix_regexes
+    )
     history_retention_updates = {}
     if payload.history_retention is not None:
         for key in ("file_history", "library_history", "scan_history", "transcode_history"):
@@ -528,6 +573,17 @@ def update_app_settings(
     if payload.pattern_recognition is not None or "pattern_recognition" in existing_value:
         next_value["pattern_recognition"] = next_pattern_recognition.model_dump(mode="json")
     setting.value = next_value
+    if duplicate_matching_patterns_changed:
+        db.execute(
+            update(MediaFile)
+            .where(
+                or_(
+                    MediaFile.filename_signature.is_not(None),
+                    MediaFile.filename_pattern_signature.is_not(None),
+                )
+            )
+            .values(filename_signature=None, filename_pattern_signature=None)
+        )
     db.commit()
     db.refresh(setting)
     result = _deserialize_app_settings(setting.value, settings or get_settings())

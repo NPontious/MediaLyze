@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 - compact and modernize Transcode form controls, align select chevrons consistently, and remove the verbose encoder-option hint from the stream plan
 - constrain stream editing to safe Copy / Encode / Remove controls with encoder-aware quality and bitrate sliders, aspect-ratio-preserving downscale presets, localized BCP 47 language selection, and copy-by-default profiles
 - make Intel QSV/VAAPI HEVC, AV1, VP9, MPEG-2, and MJPEG encoders survive capability detection with backend-specific hardware probes and explicit DRM-device selection
+- streamline the Transcode page with collapsible stream groups, compact action controls, tooltip-based guidance, live filename previews with subtitle-language tokens, and a synchronized comparison Preview route for linked variants
+- improve filename duplicate matching with title-core cleanup for release-style suffixes, runtime tolerance filtering, and configurable Pattern recognition settings
 
 ### 🐛 Bug fixes
 

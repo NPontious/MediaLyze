@@ -8,20 +8,31 @@ from pathlib import Path
 import re
 from typing import Protocol
 
-from sqlalchemy import Select, delete, exists, func, select, union
+from sqlalchemy import Select, and_, case, delete, exists, func, or_, select, union
 from sqlalchemy.orm import Session
 
 from backend.app.models.entities import DuplicateDetectionMode, DuplicateGroupSuppression, Library, LibraryRoot, MediaFile
+from backend.app.schemas.app_settings import DuplicateMatchingSettings
 from backend.app.schemas.duplicates import (
     DuplicateGroupFileRead,
     DuplicateGroupPageRead,
     DuplicateGroupRead,
     DuplicateSuppressionRead,
 )
+from backend.app.services.pattern_recognition import default_duplicate_matching_settings, merge_pattern_lists
 
 FILE_HASH_ALGORITHM = "sha256"
 FILE_HASH_CHUNK_SIZE = 1024 * 1024
 FILENAME_SIGNATURE_PATTERN = re.compile(r"[\s._-]+")
+
+
+def _effective_duplicate_filename_suffix_regexes(settings: DuplicateMatchingSettings) -> list[str]:
+    if settings.effective_filename_suffix_regexes:
+        return settings.effective_filename_suffix_regexes
+    return merge_pattern_lists(
+        settings.user_filename_suffix_regexes,
+        settings.default_filename_suffix_regexes,
+    )
 
 
 class DuplicateDetectionStrategy(Protocol):
@@ -41,17 +52,41 @@ def normalize_filename_signature(file_path: Path) -> str:
     return FILENAME_SIGNATURE_PATTERN.sub(" ", file_path.stem.lower()).strip()
 
 
+def normalize_filename_pattern_signature(
+    file_path: Path,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
+) -> str:
+    settings = duplicate_matching_settings or default_duplicate_matching_settings()
+    candidate = normalize_filename_signature(file_path)
+    for pattern in _effective_duplicate_filename_suffix_regexes(settings):
+        candidate = re.sub(pattern, "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+    return candidate
+
+
 class FilenameDuplicateDetectionStrategy:
     mode = DuplicateDetectionMode.filename
 
+    def __init__(self, duplicate_matching_settings: DuplicateMatchingSettings | None = None) -> None:
+        self.duplicate_matching_settings = duplicate_matching_settings or default_duplicate_matching_settings()
+
     def needs_processing(self, media_file: MediaFile) -> bool:
-        return not (media_file.filename_signature or "").strip()
+        return not (media_file.filename_signature or "").strip() or not (
+            media_file.filename_pattern_signature or ""
+        ).strip()
 
     def build_payload(self, file_path: Path) -> dict[str, str | None]:
-        return {"filename_signature": normalize_filename_signature(file_path)}
+        return {
+            "filename_signature": normalize_filename_signature(file_path),
+            "filename_pattern_signature": normalize_filename_pattern_signature(
+                file_path,
+                self.duplicate_matching_settings,
+            ),
+        }
 
     def apply_payload(self, media_file: MediaFile, payload: dict[str, str | None]) -> None:
         media_file.filename_signature = payload.get("filename_signature")
+        media_file.filename_pattern_signature = payload.get("filename_pattern_signature")
 
 
 class FileHashDuplicateDetectionStrategy:
@@ -78,9 +113,9 @@ class FileHashDuplicateDetectionStrategy:
 class CombinedDuplicateDetectionStrategy:
     mode = DuplicateDetectionMode.both
 
-    def __init__(self) -> None:
+    def __init__(self, duplicate_matching_settings: DuplicateMatchingSettings | None = None) -> None:
         self._strategies = (
-            FilenameDuplicateDetectionStrategy(),
+            FilenameDuplicateDetectionStrategy(duplicate_matching_settings),
             FileHashDuplicateDetectionStrategy(),
         )
 
@@ -120,15 +155,42 @@ def get_active_duplicate_detection_modes(mode: DuplicateDetectionMode | str) -> 
     return (normalized_mode,)
 
 
-def get_duplicate_detection_strategy(mode: DuplicateDetectionMode | str) -> DuplicateDetectionStrategy:
+def get_duplicate_detection_strategy(
+    mode: DuplicateDetectionMode | str,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
+) -> DuplicateDetectionStrategy:
     normalized_mode = DuplicateDetectionMode(mode)
     if normalized_mode == DuplicateDetectionMode.off:
         return DisabledDuplicateDetectionStrategy()
     if normalized_mode == DuplicateDetectionMode.both:
-        return CombinedDuplicateDetectionStrategy()
+        return CombinedDuplicateDetectionStrategy(duplicate_matching_settings)
     if normalized_mode == DuplicateDetectionMode.filehash:
         return FileHashDuplicateDetectionStrategy()
-    return FilenameDuplicateDetectionStrategy()
+    return FilenameDuplicateDetectionStrategy(duplicate_matching_settings)
+
+
+def backfill_filename_pattern_signatures(
+    db: Session,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
+) -> int:
+    updated = 0
+    media_files = db.scalars(
+        select(MediaFile).where(
+            or_(
+                MediaFile.filename_pattern_signature.is_(None),
+                func.length(func.trim(MediaFile.filename_pattern_signature)) == 0,
+            )
+        )
+    ).all()
+    for media_file in media_files:
+        media_file.filename_pattern_signature = normalize_filename_pattern_signature(
+            Path(media_file.filename),
+            duplicate_matching_settings,
+        )
+        updated += 1
+    if updated:
+        db.flush()
+    return updated
 
 
 def normalize_suppression_mode(mode: DuplicateDetectionMode | str) -> DuplicateDetectionMode:
@@ -214,12 +276,45 @@ def _suppression_exists_expression(library_id: int, mode: DuplicateDetectionMode
     )
 
 
+def _filename_signature_expression():
+    # Keep the legacy signature as a fallback until the next scan/startup
+    # backfill has populated the enhanced title-core signature.
+    return func.coalesce(MediaFile.filename_pattern_signature, MediaFile.filename_signature)
+
+
+def _filename_signature_is_present():
+    signature_column = _filename_signature_expression()
+    return func.length(func.trim(signature_column)) > 0
+
+
+def _filename_group_duration_condition(
+    duplicate_matching_settings: DuplicateMatchingSettings | None,
+):
+    settings = duplicate_matching_settings or default_duplicate_matching_settings()
+    enhanced_signature_present = and_(
+        MediaFile.filename_pattern_signature.is_not(None),
+        func.length(func.trim(MediaFile.filename_pattern_signature)) > 0,
+    )
+    # Legacy rows predate title-core signatures and have no runtime-aware
+    # group semantics. They remain queryable until they are backfilled or
+    # reprocessed; all enhanced groups require known runtimes in range.
+    return or_(
+        func.sum(case((enhanced_signature_present, 1), else_=0)) == 0,
+        and_(
+            func.count(case((MediaFile.duration_seconds > 0, MediaFile.id))) == func.count(MediaFile.id),
+            func.max(MediaFile.duration_seconds) - func.min(MediaFile.duration_seconds)
+            <= settings.duration_tolerance_seconds,
+        ),
+    )
+
+
 def _active_signature_statement(
     library_id: int,
     mode: DuplicateDetectionMode,
     *,
     include_suppressed: bool = False,
     suppressed_only: bool = False,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
 ) -> Select:
     if mode == DuplicateDetectionMode.both:
         raise ValueError("Combined duplicate mode must be expanded before building a signature query")
@@ -249,7 +344,7 @@ def _active_signature_statement(
             return statement.where(~suppression_exists)
         return statement
 
-    signature_column = MediaFile.filename_signature
+    signature_column = _filename_signature_expression()
     statement = (
         select(
             signature_column.label("signature"),
@@ -259,11 +354,13 @@ def _active_signature_statement(
         )
         .where(
             MediaFile.library_id == library_id,
-            MediaFile.filename_signature.is_not(None),
-            func.length(func.trim(MediaFile.filename_signature)) > 0,
+            _filename_signature_is_present(),
         )
         .group_by(signature_column)
-        .having(func.count(MediaFile.id) > 1)
+        .having(
+            func.count(MediaFile.id) > 1,
+            _filename_group_duration_condition(duplicate_matching_settings),
+        )
     )
     suppression_exists = _suppression_exists_expression(library_id, mode, signature_column)
     if suppressed_only:
@@ -273,8 +370,16 @@ def _active_signature_statement(
     return statement
 
 
-def _duplicate_file_membership_statement(library_id: int, mode: DuplicateDetectionMode) -> Select:
-    grouped = _active_signature_statement(library_id, mode).subquery()
+def _duplicate_file_membership_statement(
+    library_id: int,
+    mode: DuplicateDetectionMode,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
+) -> Select:
+    grouped = _active_signature_statement(
+        library_id,
+        mode,
+        duplicate_matching_settings=duplicate_matching_settings,
+    ).subquery()
     if mode == DuplicateDetectionMode.filehash:
         return (
             select(MediaFile.id.label("media_file_id"))
@@ -287,26 +392,41 @@ def _duplicate_file_membership_statement(library_id: int, mode: DuplicateDetecti
             )
         )
 
+    signature_column = _filename_signature_expression()
     return (
         select(MediaFile.id.label("media_file_id"))
-        .join(grouped, MediaFile.filename_signature == grouped.c.signature)
+        .join(grouped, signature_column == grouped.c.signature)
         .where(
             MediaFile.library_id == library_id,
-            MediaFile.filename_signature.is_not(None),
-            func.length(func.trim(MediaFile.filename_signature)) > 0,
+            _filename_signature_is_present(),
         )
     )
 
 
-def get_duplicate_group_counts(db: Session, library_id: int, mode: DuplicateDetectionMode | str) -> tuple[int, int]:
+def get_duplicate_group_counts(
+    db: Session,
+    library_id: int,
+    mode: DuplicateDetectionMode | str,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
+) -> tuple[int, int]:
     active_modes = get_active_duplicate_detection_modes(mode)
     total_groups = 0
     membership_statements: list[Select] = []
 
     for active_mode in active_modes:
-        grouped = _active_signature_statement(library_id, active_mode).subquery()
+        grouped = _active_signature_statement(
+            library_id,
+            active_mode,
+            duplicate_matching_settings=duplicate_matching_settings,
+        ).subquery()
         total_groups += int(db.scalar(select(func.count()).select_from(grouped)) or 0)
-        membership_statements.append(_duplicate_file_membership_statement(library_id, active_mode))
+        membership_statements.append(
+            _duplicate_file_membership_statement(
+                library_id,
+                active_mode,
+                duplicate_matching_settings,
+            )
+        )
 
     if not membership_statements:
         return 0, 0
@@ -319,7 +439,12 @@ def get_duplicate_group_counts(db: Session, library_id: int, mode: DuplicateDete
     return int(total_groups), int(duplicate_file_count)
 
 
-def get_suppressed_duplicate_group_count(db: Session, library_id: int, mode: DuplicateDetectionMode | str) -> int:
+def get_suppressed_duplicate_group_count(
+    db: Session,
+    library_id: int,
+    mode: DuplicateDetectionMode | str,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
+) -> int:
     total_groups = 0
     for active_mode in get_active_duplicate_detection_modes(mode):
         grouped = _active_signature_statement(
@@ -327,6 +452,7 @@ def get_suppressed_duplicate_group_count(db: Session, library_id: int, mode: Dup
             active_mode,
             include_suppressed=True,
             suppressed_only=True,
+            duplicate_matching_settings=duplicate_matching_settings,
         ).subquery()
         total_groups += int(db.scalar(select(func.count()).select_from(grouped)) or 0)
     return total_groups
@@ -354,8 +480,14 @@ def _count_groups_for_mode(
     mode: DuplicateDetectionMode,
     *,
     include_suppressed: bool = False,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
 ) -> int:
-    grouped = _active_signature_statement(library_id, mode, include_suppressed=include_suppressed).subquery()
+    grouped = _active_signature_statement(
+        library_id,
+        mode,
+        include_suppressed=include_suppressed,
+        duplicate_matching_settings=duplicate_matching_settings,
+    ).subquery()
     return int(db.scalar(select(func.count()).select_from(grouped)) or 0)
 
 
@@ -386,6 +518,7 @@ def _page_group_rows(
     limit: int,
     *,
     include_suppressed: bool = False,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
 ) -> list[DuplicateGroupRow]:
     if limit <= 0:
         return []
@@ -395,7 +528,13 @@ def _page_group_rows(
     remaining_limit = limit
 
     for active_mode in get_active_duplicate_detection_modes(mode):
-        group_count = _count_groups_for_mode(db, library_id, active_mode, include_suppressed=include_suppressed)
+        group_count = _count_groups_for_mode(
+            db,
+            library_id,
+            active_mode,
+            include_suppressed=include_suppressed,
+            duplicate_matching_settings=duplicate_matching_settings,
+        )
         if remaining_offset >= group_count:
             remaining_offset -= group_count
             continue
@@ -404,6 +543,7 @@ def _page_group_rows(
             library_id,
             active_mode,
             include_suppressed=include_suppressed,
+            duplicate_matching_settings=duplicate_matching_settings,
         ).subquery()
         result_rows = db.execute(
             select(
@@ -476,6 +616,7 @@ def _group_files_by_signature(
                 .order_by(MediaFile.content_hash.asc(), LibraryRoot.display_name.asc(), MediaFile.relative_path.asc())
             ).all()
         else:
+            signature_column = _filename_signature_expression()
             rows = db.execute(
                 select(
                     MediaFile.id,
@@ -484,14 +625,14 @@ def _group_files_by_signature(
                     MediaFile.relative_path,
                     MediaFile.filename,
                     MediaFile.size_bytes,
-                    MediaFile.filename_signature.label("signature"),
+                    signature_column.label("signature"),
                 )
                 .outerjoin(LibraryRoot, LibraryRoot.id == MediaFile.library_root_id)
                 .where(
                     MediaFile.library_id == library_id,
-                    MediaFile.filename_signature.in_(signatures),
+                    signature_column.in_(signatures),
                 )
-                .order_by(MediaFile.filename_signature.asc(), LibraryRoot.display_name.asc(), MediaFile.relative_path.asc())
+                .order_by(signature_column.asc(), LibraryRoot.display_name.asc(), MediaFile.relative_path.asc())
             ).all()
 
         for row in rows:
@@ -517,14 +658,31 @@ def list_library_duplicate_groups(
     offset: int = 0,
     limit: int = 25,
     include_suppressed: bool = False,
+    duplicate_matching_settings: DuplicateMatchingSettings | None = None,
 ) -> DuplicateGroupPageRead:
     library = db.get(Library, library_id)
     if library is None:
         raise ValueError(f"Library {library_id} not found")
 
     mode = library.duplicate_detection_mode
-    total_groups, duplicate_file_count = get_duplicate_group_counts(db, library_id, mode)
-    suppressed_group_count = get_suppressed_duplicate_group_count(db, library_id, mode)
+    resolved_duplicate_matching_settings = duplicate_matching_settings
+    if resolved_duplicate_matching_settings is None:
+        from backend.app.services.app_settings import get_app_settings
+
+        resolved_duplicate_matching_settings = get_app_settings(db).pattern_recognition.duplicate_matching
+
+    total_groups, duplicate_file_count = get_duplicate_group_counts(
+        db,
+        library_id,
+        mode,
+        resolved_duplicate_matching_settings,
+    )
+    suppressed_group_count = get_suppressed_duplicate_group_count(
+        db,
+        library_id,
+        mode,
+        resolved_duplicate_matching_settings,
+    )
     group_rows = _page_group_rows(
         db,
         library_id,
@@ -532,6 +690,7 @@ def list_library_duplicate_groups(
         offset,
         limit,
         include_suppressed=include_suppressed,
+        duplicate_matching_settings=resolved_duplicate_matching_settings,
     )
     items_by_signature = _group_files_by_signature(db, library_id, group_rows)
 

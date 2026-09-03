@@ -643,6 +643,7 @@ def _load_compact_table_rows(
             defer(MediaFile.quality_score_breakdown),
             defer(MediaFile.recognition_details),
             defer(MediaFile.filename_signature),
+            defer(MediaFile.filename_pattern_signature),
             defer(MediaFile.content_hash),
             defer(MediaFile.content_hash_algorithm),
             defer(MediaFile.audio_metadata_search),

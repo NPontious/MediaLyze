@@ -2232,6 +2232,7 @@ def test_incremental_scan_backfills_missing_signatures_for_combined_duplicate_mo
     assert ffprobe_calls == []
     assert refreshed is not None
     assert refreshed.filename_signature == "movie name"
+    assert refreshed.filename_pattern_signature == "movie name"
     assert refreshed.content_hash is not None
     assert refreshed.content_hash_algorithm == "sha256"
     assert job.files_scanned == 1
