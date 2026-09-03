@@ -1,4 +1,4 @@
-import { Check, CircleAlert, ExternalLink, Film, LoaderCircle, Play, Square } from "lucide-react";
+import { Check, CircleAlert, Film, LoaderCircle, Play, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
@@ -20,7 +20,6 @@ import {
 import { formatBytes, formatCodecLabel, formatDuration } from "../lib/format";
 import { formatLanguageLabel, languageOptions, normalizeLanguageTag } from "../lib/language";
 import { TooltipTrigger } from "./TooltipTrigger";
-import { VideoWipeCompare } from "./VideoWipeCompare";
 
 const PROFILE_KEYS = ["compatibility", "storage", "modern"] as const;
 const STREAM_ACTIONS: TranscodeStreamAction[] = ["copy", "encode", "drop"];
@@ -70,6 +69,99 @@ const AUDIO_BITRATES: Record<string, number[]> = {
 };
 
 const DEFAULT_AUDIO_BITRATES = AUDIO_BITRATES.aac;
+const DEFAULT_FILENAME_TEMPLATE = "[{resolution}, {dynRange}, {codec}] [{audioLanguages}]";
+
+function filenameTemplateForSubtitleOption(includeSubtitleLanguages: boolean): string {
+  return includeSubtitleLanguages
+    ? `${DEFAULT_FILENAME_TEMPLATE} [{subtitleLanguages}]`
+    : DEFAULT_FILENAME_TEMPLATE;
+}
+
+function isKnownDefaultFilenameTemplate(template: string): boolean {
+  return template === DEFAULT_FILENAME_TEMPLATE || template === filenameTemplateForSubtitleOption(true);
+}
+
+function setSubtitleToken(template: string, enabled: boolean): string {
+  if (enabled) {
+    return template.includes("{subtitleLanguages}")
+      ? template
+      : `${template.trim()} [{subtitleLanguages}]`;
+  }
+  return template
+    .replace(/\s*\[\s*\{subtitleLanguages\}\s*\]/g, "")
+    .replace(/\{subtitleLanguages\}/g, "")
+    .replace(/\[\s*[,;|+\-]*\s*\]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function filenameLanguageSet(
+  decisions: TranscodePlan["audio_streams"] | TranscodePlan["subtitle_streams"],
+  sources: AudioStream[] | SubtitleStream[],
+): string[] {
+  return [...new Set(
+    decisions
+      .filter((decision) => decision.action !== "drop")
+      .map((decision) => {
+        const source = sources.find((entry) => entry.stream_index === decision.stream_index);
+        return normalizeLanguageTag(decision.language ?? source?.language) ?? (decision.language ?? source?.language ?? "").trim();
+      })
+      .filter(Boolean),
+  )].sort();
+}
+
+function filenamePreviewValues(file: MediaFileDetail, data: FileTranscode, plan: TranscodePlan): Record<string, string> {
+  const primaryPlan = plan.video_streams.find((stream) => stream.action !== "drop");
+  const sourceVideo = file.video_streams.find((stream) => stream.stream_index === primaryPlan?.stream_index) ?? file.video_streams[0];
+  const width = primaryPlan?.width ?? sourceVideo?.width ?? data.original.width;
+  const height = primaryPlan?.height ?? sourceVideo?.height ?? data.original.height;
+  const codec = primaryPlan?.action === "encode"
+    ? primaryPlan.codec ?? primaryPlan.encoder
+    : sourceVideo?.codec ?? data.original.video_codec;
+  const audioLanguages = filenameLanguageSet(plan.audio_streams, file.audio_streams);
+  const subtitleLanguages = filenameLanguageSet(plan.subtitle_streams, file.subtitle_streams);
+  const externalLanguages = plan.external_subtitles
+    .filter((entry) => entry.action !== "drop")
+    .map((entry) => {
+      const source = file.external_subtitles.find((subtitle) => subtitle.id === entry.subtitle_id);
+      return normalizeLanguageTag(entry.language ?? source?.language) ?? (entry.language ?? source?.language ?? "").trim();
+    })
+    .filter(Boolean);
+  const allSubtitleLanguages = [...new Set([...subtitleLanguages, ...externalLanguages])].sort();
+  const bitrate = primaryPlan?.bitrate ?? sourceVideo?.bit_rate;
+  return {
+    resolution: width && height ? `${width}x${height}` : "",
+    dynRange: plan.dynamic_range === "preserve"
+      ? data.original.dynamic_range ?? file.hdr_type ?? ""
+      : plan.dynamic_range,
+    codec: (codec ?? "").toUpperCase(),
+    audioLanguages: audioLanguages.join("+"),
+    subtitleLanguages: allSubtitleLanguages.join("+"),
+    container: plan.container.toUpperCase(),
+    videoBitrate: bitrate ? `${(bitrate / 1_000_000).toFixed(1).replace(/\.0$/, "")}Mbps` : "",
+  };
+}
+
+function renderFilenamePreview(file: MediaFileDetail, data: FileTranscode, plan: TranscodePlan): string {
+  const includeSubtitleLanguages = plan.include_subtitle_languages ?? plan.filename_template.includes("{subtitleLanguages}");
+  const override = plan.filename_template_override ?? !isKnownDefaultFilenameTemplate(plan.filename_template);
+  const template = override ? plan.filename_template : filenameTemplateForSubtitleOption(includeSubtitleLanguages);
+  const values = filenamePreviewValues(file, data, plan);
+  let rendered = template;
+  for (const [token, value] of Object.entries(values)) {
+    rendered = rendered.replaceAll(`{${token}}`, value);
+  }
+  rendered = rendered
+    .replace(/\[\s*[,;|+\-]*\s*\]/g, "")
+    .replace(/([\[,;|+])\s*([,;|+])/g, "$1")
+    .replace(/\s*,\s*(?=\])/g, "")
+    .replace(/\[\s*,\s*/g, "[")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+  const stem = file.filename.replace(/\.[^./\\]+$/, "");
+  return `${`${stem} ${rendered}`.trim() || "transcoded"}.${plan.container}`;
+}
 
 function encoderQualitySpec(encoder: TranscodeEncoderCapability | undefined): QualitySpec {
   const fallback = encoder ? QUALITY_SPECS[encoder.name] ?? HARDWARE_QUALITY_SPECS[encoder.name] : undefined;
@@ -241,6 +333,39 @@ type StreamLanguageFieldProps = {
   onPatch?: (patch: Record<string, unknown>) => void;
 };
 
+function StreamActionField({
+  streamIndex,
+  value,
+  controlClass,
+  t,
+  onChange,
+}: {
+  streamIndex: number;
+  value: string;
+  controlClass: string;
+  t: (key: string, options?: Record<string, unknown>) => string;
+  onChange: (value: TranscodeStreamAction) => void;
+}) {
+  return (
+    <div className="transcode-action-field">
+      <select
+        className={controlClass}
+        aria-label={t("transcoding.streamAction", { index: streamIndex })}
+        title={t("transcoding.actionHelp")}
+        value={STREAM_ACTIONS.includes(value as TranscodeStreamAction) ? value : "copy"}
+        onChange={(event) => onChange(event.target.value as TranscodeStreamAction)}
+      >
+        {STREAM_ACTIONS.map((action) => <option key={action} value={action}>{t(`transcoding.actions.${action}`)}</option>)}
+      </select>
+      <TooltipTrigger
+        className="transcode-dropdown-tooltip"
+        ariaLabel={t("transcoding.actionHelpAria")}
+        content={t("transcoding.actionHelp")}
+      />
+    </div>
+  );
+}
+
 function StreamLanguageField({
   kind,
   stream,
@@ -256,19 +381,24 @@ function StreamLanguageField({
   const selectedLanguage = normalizeLanguageTag(stream.language ?? sourceLanguage) || "und";
   return (
     <label className="transcode-control-field transcode-language-field">
-      <span className="transcode-field-label">
-        <span>{t("transcoding.language")}</span>
-        <TooltipTrigger ariaLabel={t("transcoding.languageHelpAria")} content={t("transcoding.languageHelp")} />
+      <span className="transcode-select-with-tooltip">
+        <span className="sr-only">{t("transcoding.language")}</span>
+        <select
+          className={controlClass}
+          aria-label={`${streamKindLabel(kind)} ${stream.stream_index} language`}
+          title={t("transcoding.languageHelp")}
+          value={languageTags.includes(selectedLanguage) ? selectedLanguage : "und"}
+          disabled={disabled}
+          onChange={(event) => onPatch?.({ language: event.target.value })}
+        >
+          {languageTags.map((tag) => <option key={tag} value={tag}>{formatLanguageLabel(tag, languageLocale)}</option>)}
+        </select>
+        <TooltipTrigger
+          className="transcode-dropdown-tooltip"
+          ariaLabel={t("transcoding.languageHelpAria")}
+          content={t("transcoding.languageHelp")}
+        />
       </span>
-      <select
-        className={controlClass}
-        aria-label={`${streamKindLabel(kind)} ${stream.stream_index} language`}
-        value={languageTags.includes(selectedLanguage) ? selectedLanguage : "und"}
-        disabled={disabled}
-        onChange={(event) => onPatch?.({ language: event.target.value })}
-      >
-        {languageTags.map((tag) => <option key={tag} value={tag}>{formatLanguageLabel(tag, languageLocale)}</option>)}
-      </select>
     </label>
   );
 }
@@ -555,7 +685,12 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
   const [plan, setPlan] = useState<TranscodePlan | null>(null);
   const [validation, setValidation] = useState<TranscodeValidation | null>(null);
   const [job, setJob] = useState<TranscodeJob | null>(null);
-  const [selectedVariantId, setSelectedVariantId] = useState<number | null>(null);
+  const [openStreamGroups, setOpenStreamGroups] = useState<Record<StreamKind, boolean>>({
+    video_streams: true,
+    audio_streams: false,
+    subtitle_streams: false,
+  });
+  const [openExternalSubtitles, setOpenExternalSubtitles] = useState(false);
   const [rawProbe, setRawProbe] = useState<Record<string, unknown> | null>(file.raw_ffprobe_json);
   const [loading, setLoading] = useState(true);
   const [validating, setValidating] = useState(false);
@@ -571,7 +706,6 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
     setCapabilities(nextCapabilities);
     setPlan((current) => current ?? clonePlan(nextData.profiles.compatibility));
     setJob(nextData.jobs.find(jobIsActive) ?? null);
-    setSelectedVariantId((current) => current ?? nextData.variants.find((variant) => variant.output_file_id)?.id ?? null);
     setError(null);
   }, [file.id]);
 
@@ -581,7 +715,8 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
     setPlan(null);
     setValidation(null);
     setJob(null);
-    setSelectedVariantId(null);
+    setOpenStreamGroups({ video_streams: true, audio_streams: false, subtitle_streams: false });
+    setOpenExternalSubtitles(false);
     setError(null);
     setLoading(true);
     void refresh().catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false));
@@ -671,7 +806,6 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
   if (loading) return <div className="panel-loader"><LoaderCircle className="spin" aria-hidden="true" />{t("panel.loading")}</div>;
   if (!data || !plan || !capabilities) return <p className="notice error">{error ?? t("transcoding.unavailable")}</p>;
 
-  const selectedVariant = data.variants.find((variant) => variant.id === selectedVariantId && variant.output_file_id);
   const activeJob = jobIsActive(job) ? job : null;
   const transcodeControlClass = "settings-choice-input transcode-control";
 
@@ -744,8 +878,19 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
 
       <section className="transcode-streams">
         {(["video_streams", "audio_streams", "subtitle_streams"] as const).map((kind) => (
-          <div key={kind} className="transcode-stream-group">
-            <h3>{t(`transcoding.streamGroups.${kind}`)}</h3>
+          <details
+            key={kind}
+            className="transcode-stream-group"
+            open={openStreamGroups[kind]}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setOpenStreamGroups((current) => ({ ...current, [kind]: isOpen }));
+            }}
+          >
+            <summary className="transcode-stream-group-summary">
+              <span>{t(`transcoding.streamGroups.${kind}`)}</span>
+              <span className="transcode-stream-group-count">{plan[kind].length}</span>
+            </summary>
             {plan[kind].map((stream) => {
               const source = sourceForStream(file, kind, stream.stream_index);
               const language = source && "language" in source ? source.language : null;
@@ -807,9 +952,13 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
                     <span>{formatCodecLabel(source?.codec, codecKind)}</span>
                     {language ? <span className="transcode-language-badge">{formatLanguageLabel(language, i18n.language)}</span> : <span className="transcode-language-badge">{formatLanguageLabel("und", i18n.language)}</span>}
                   </div>
-                  <select className={transcodeControlClass} aria-label={t("transcoding.streamAction", { index: stream.stream_index })} value={STREAM_ACTIONS.includes(streamAction) ? streamAction : "copy"} onChange={(event) => setAction(event.target.value as TranscodeStreamAction)}>
-                    {STREAM_ACTIONS.map((action) => <option key={action} value={action}>{t(`transcoding.actions.${action}`)}</option>)}
-                  </select>
+                  <StreamActionField
+                    streamIndex={stream.stream_index}
+                    value={streamAction}
+                    controlClass={transcodeControlClass}
+                    t={t}
+                    onChange={setAction}
+                  />
                   {streamAction === "encode" ? (
                     <StreamControlFields
                       kind={kind}
@@ -841,17 +990,26 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
                           disabled
                         />
                       ) : null}
-                      <p className="transcode-copy-note">{t("transcoding.copyNote")}</p>
                     </>
                   ) : null}
                 </article>
               );
             })}
-          </div>
+          </details>
         ))}
         {file.external_subtitles.length ? (
-          <div className="transcode-stream-group">
-            <h3>{t("transcoding.externalSubtitles")}</h3>
+          <details
+            className="transcode-stream-group"
+            open={openExternalSubtitles}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setOpenExternalSubtitles(isOpen);
+            }}
+          >
+            <summary className="transcode-stream-group-summary">
+              <span>{t("transcoding.externalSubtitles")}</span>
+              <span className="transcode-stream-group-count">{file.external_subtitles.length}</span>
+            </summary>
             {file.external_subtitles.map((subtitle) => {
               const selected = plan.external_subtitles.find((entry) => entry.subtitle_id === subtitle.id);
               return (
@@ -869,7 +1027,7 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
                 </label>
               );
             })}
-          </div>
+          </details>
         ) : null}
       </section>
 
@@ -896,20 +1054,89 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
         ))}
       </div>
 
-      <label className="transcode-filename-template">
-        <span>{t("transcoding.filenameTemplate")}</span>
-        <input className={transcodeControlClass} value={plan.filename_template} onChange={(event) => {
-          setPlan({ ...plan, profile: "expert", filename_template: event.target.value });
-          setValidation(null);
-        }} />
-        <small>{t("transcoding.filenameTokens")}</small>
-      </label>
+      {(() => {
+        const includeSubtitleLanguages = plan.include_subtitle_languages ?? plan.filename_template.includes("{subtitleLanguages}");
+        const templateOverride = plan.filename_template_override ?? !isKnownDefaultFilenameTemplate(plan.filename_template);
+        const defaultTemplate = filenameTemplateForSubtitleOption(includeSubtitleLanguages);
+        const displayedTemplate = templateOverride ? plan.filename_template : defaultTemplate;
+        const preview = renderFilenamePreview(file, data, plan);
+        return (
+          <section className="transcode-filename-section">
+            <div className="transcode-filename-heading">
+              <h3>{t("transcoding.filenameTemplate")}</h3>
+              <TooltipTrigger
+                ariaLabel={t("transcoding.filenameTemplateHelpAria")}
+                content={t("transcoding.filenameTemplateHelp")}
+              />
+            </div>
+            <label className="transcode-filename-option">
+              <input
+                type="checkbox"
+                checked={templateOverride}
+                onChange={(event) => {
+                  const nextOverride = event.target.checked;
+                  setPlan({
+                    ...plan,
+                    profile: "expert",
+                    filename_template_override: nextOverride,
+                    filename_template: nextOverride ? plan.filename_template || defaultTemplate : defaultTemplate,
+                  });
+                  setValidation(null);
+                }}
+              />
+              <span>{t("transcoding.filenameTemplateOverride")}</span>
+            </label>
+            <label className="transcode-filename-option">
+              <input
+                type="checkbox"
+                checked={includeSubtitleLanguages}
+                onChange={(event) => {
+                  const nextInclude = event.target.checked;
+                  setPlan({
+                    ...plan,
+                    profile: "expert",
+                    include_subtitle_languages: nextInclude,
+                    filename_template: templateOverride
+                      ? setSubtitleToken(plan.filename_template, nextInclude)
+                      : filenameTemplateForSubtitleOption(nextInclude),
+                  });
+                  setValidation(null);
+                }}
+              />
+              <span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span>
+            </label>
+            <input
+              className={transcodeControlClass}
+              value={displayedTemplate}
+              disabled={!templateOverride}
+              aria-label={t("transcoding.filenameTemplate")}
+              onChange={(event) => {
+                const nextTemplate = event.target.value;
+                setPlan({
+                  ...plan,
+                  profile: "expert",
+                  filename_template: nextTemplate,
+                  filename_template_override: true,
+                  include_subtitle_languages: nextTemplate.includes("{subtitleLanguages}"),
+                });
+                setValidation(null);
+              }}
+            />
+            <small>{t("transcoding.filenameTokens")}</small>
+            <div className="transcode-filename-preview">
+              <span>{t("transcoding.filenamePreview")}</span>
+              <code aria-live="polite">{preview}</code>
+            </div>
+            <small className="transcode-filename-help">{t("transcoding.filenameTemplateOverrideHelp")}</small>
+          </section>
+        );
+      })()}
 
       <div className="transcode-actions">
-        <button type="button" className="secondary" onClick={() => void validate()} disabled={validating || Boolean(activeJob)}>
+        <button type="button" className="secondary transcode-action-button" onClick={() => void validate()} disabled={validating || Boolean(activeJob)}>
           {validating ? <LoaderCircle className="spin" aria-hidden="true" /> : <Check aria-hidden="true" />}{t("transcoding.validate")}
         </button>
-        <button type="button" onClick={() => void start()} disabled={starting || Boolean(activeJob) || !capabilities.ffmpeg_available}>
+        <button type="button" className="transcode-action-button transcode-start-button" onClick={() => void start()} disabled={starting || Boolean(activeJob) || !capabilities.ffmpeg_available}>
           {starting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Play aria-hidden="true" />}{t("transcoding.start")}
         </button>
       </div>
@@ -941,33 +1168,21 @@ export function TranscodingPanel({ file }: { file: MediaFileDetail }) {
 
       <section className="transcode-variants">
         <h3>{t("transcoding.variants")}</h3>
-        {!data.variants.length ? <p className="field-hint">{t("transcoding.noVariants")}</p> : null}
-        {data.variants.map((variant) => (
-          <article key={variant.id} className={variant.id === selectedVariantId ? "is-selected" : ""}>
-            <button type="button" onClick={() => setSelectedVariantId(variant.id)}>
-              <strong>{variant.output_filename}</strong>
-              <span>{t(`transcoding.analysisStatus.${variant.analysis_status}`, { defaultValue: variant.analysis_status })}</span>
-              {variant.file ? <span>
-                {formatBytes(variant.file.size_bytes ?? 0)} · {variant.file.width}x{variant.file.height} · {variant.file.dynamic_range ?? "SDR"} · {formatCodecLabel(variant.file.video_codec, "video")}
-                {variant.file.audio_codecs.length ? ` · ${variant.file.audio_codecs.map((codec) => formatCodecLabel(codec, "audio")).join(", ")}` : ""}
-                {variant.file.audio_languages.length ? ` · ${variant.file.audio_languages.map((language) => formatLanguageLabel(language, i18n.language)).join(", ")}` : ""}
-              </span> : null}
-            </button>
-            {variant.output_file_id ? <Link to={`/files/${variant.output_file_id}`} aria-label={t("transcoding.openVariant")}><ExternalLink aria-hidden="true" /></Link> : null}
-          </article>
-        ))}
+        {(() => {
+          const comparisonVariant = data.variants.find((variant) => variant.output_file_id);
+          return comparisonVariant?.output_file_id ? (
+            <div className="transcode-preview-link-card">
+              <Link
+                className="secondary transcode-preview-link"
+                to={`/files/${data.original.id ?? file.id}/preview?compare=${comparisonVariant.output_file_id}`}
+              >
+                <Play aria-hidden="true" />
+                {t("transcoding.openPreviewComparison")}
+              </Link>
+            </div>
+          ) : <p className="field-hint">{t("transcoding.noVariants")}</p>;
+        })()}
       </section>
-
-      {selectedVariant?.output_file_id ? (
-        <section className="transcode-wipe-section">
-          <h3>{t("transcoding.wipeComparison")}</h3>
-          <VideoWipeCompare
-            first={{ src: api.fileMediaUrl(data.original.id ?? file.id), label: data.original.filename }}
-            second={{ src: api.fileMediaUrl(selectedVariant.output_file_id), label: selectedVariant.output_filename }}
-          />
-          <Link className="secondary" to={`/files/compare?left=${data.original.id ?? file.id}&right=${selectedVariant.output_file_id}`}>{t("transcoding.openComparison")}</Link>
-        </section>
-      ) : null}
 
       <section className="transcode-history-section">
         <h3>{t("transcoding.history.title")}</h3>

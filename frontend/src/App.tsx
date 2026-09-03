@@ -42,6 +42,7 @@ export function App() {
                 <Route path="/libraries/:libraryId/series/:seriesId" element={<SeriesDetailPage />} />
                 <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
                 <Route path="/files/compare" element={<FileComparePage />} />
+                <Route path="/files/:fileId/preview" element={<FileDetailPage />} />
                 <Route path="/files/:fileId" element={<FileDetailPage />} />
                 <Route path="/storage-map" element={<StorageMapPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

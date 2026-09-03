@@ -156,7 +156,7 @@ describe("TranscodingPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("edits structured stream fields and shows validation, variants, and both comparison paths", async () => {
+  it("edits structured stream fields and exposes the synchronized preview path", async () => {
     render(<MemoryRouter><TranscodingPanel file={file} /></MemoryRouter>);
 
     expect((await screen.findAllByText("Movie.mkv")).length).toBeGreaterThan(0);
@@ -167,18 +167,17 @@ describe("TranscodingPanel", () => {
     expect(screen.queryByRole("textbox", { name: "video 0 codec" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Locally reported encoder options/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("combobox", { name: "video 0 resolution" }), { target: { value: "1280x720" } });
+    fireEvent.click(screen.getByText("Subtitle streams"));
     fireEvent.change(screen.getByRole("combobox", { name: "Action for stream 2" }), { target: { value: "drop" } });
     fireEvent.click(screen.getByRole("checkbox", { name: /Movie\.en\.srt/ }));
     fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
 
-    expect(await screen.findByText(validation.output_filename)).toBeInTheDocument();
+    expect((await screen.findAllByText(validation.output_filename)).length).toBeGreaterThan(0);
     expect(screen.getByText("video stream 0, audio stream 1")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Generated FFmpeg command"));
     expect(screen.getAllByText(validation.ffmpeg_command).length).toBeGreaterThan(0);
-    expect(screen.getByText(/8 KB · 1920x1080 · SDR/)).toBeInTheDocument();
     expect(screen.getByText(/Poster Font\.ttf/)).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Open variant" })[0]).toHaveAttribute("href", "/files/2");
-    expect(screen.getAllByRole("link", { name: "Open metadata comparison" })[0]).toHaveAttribute("href", "/files/compare?left=1&right=2");
+    expect(screen.getByRole("link", { name: "Open synchronized preview" })).toHaveAttribute("href", "/files/1/preview?compare=2");
     expect(screen.getByText("Full transcoding plan")).toBeInTheDocument();
 
     const sentPlan = vi.mocked(api.validateFileTranscode).mock.calls[0][1];
@@ -196,5 +195,26 @@ describe("TranscodingPanel", () => {
     expect(screen.getByText(/2.0x/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(api.cancelTranscodeJob).toHaveBeenCalledWith(5));
+  });
+
+  it("previews the generated filename and supports subtitle-language templates", async () => {
+    render(<MemoryRouter><TranscodingPanel file={file} /></MemoryRouter>);
+    await screen.findAllByText("Movie.mkv");
+
+    expect(screen.getByText("Movie [1920x1080, HDR10, H264] [en].mp4")).toBeInTheDocument();
+    const subtitleOption = screen.getByRole("checkbox", { name: "Include subtitle languages" });
+    const overrideOption = screen.getByRole("checkbox", { name: "Override default template" });
+    expect(subtitleOption).not.toBeChecked();
+    expect(overrideOption).not.toBeChecked();
+
+    fireEvent.click(subtitleOption);
+    expect(screen.getByRole("textbox", { name: "Filename template" })).toHaveValue("[{resolution}, {dynRange}, {codec}] [{audioLanguages}] [{subtitleLanguages}]");
+    expect(screen.getByText("Movie [1920x1080, HDR10, H264] [en] [de].mp4")).toBeInTheDocument();
+
+    fireEvent.click(overrideOption);
+    const templateInput = screen.getByRole("textbox", { name: "Filename template" });
+    expect(templateInput).not.toBeDisabled();
+    fireEvent.change(templateInput, { target: { value: "[{codec}] [{subtitleLanguages}]" } });
+    expect(screen.getByText("Movie [H264] [de].mp4")).toBeInTheDocument();
   });
 });

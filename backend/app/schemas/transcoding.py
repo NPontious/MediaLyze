@@ -66,6 +66,12 @@ class TranscodePlan(BaseModel):
         min_length=1,
         max_length=512,
     )
+    # ``None`` keeps the legacy API behaviour for clients that predate the
+    # explicit template controls.  Profile plans use ``False`` so the
+    # standard template remains the source of truth even when a locale/UI
+    # changes its display string.
+    filename_template_override: bool | None = None
+    include_subtitle_languages: bool = False
 
 
 class TranscodeEncoderCapability(BaseModel):

@@ -48,6 +48,7 @@ import { SlidingTogglePill } from "../components/SlidingTogglePill";
 import { StreamDetailsList } from "../components/StreamDetailsList";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { FileTranscodeHistory, TranscodingPanel } from "../components/TranscodingPanel";
+import { VideoWipeCompare } from "../components/VideoWipeCompare";
 import {
   api,
   type CompatibilityEvaluation,
@@ -557,9 +558,11 @@ function CoverDetailsList({
 
 function PreviewDetailsPanel({
   detail,
+  comparison,
   t,
 }: {
   detail: MediaFileDetail | null;
+  comparison?: MediaFileDetail | null;
   t: (key: string, options?: Record<string, unknown>) => string;
 }): ReactNode {
   if (!detail) {
@@ -568,6 +571,18 @@ function PreviewDetailsPanel({
 
   const isVideoPreview = hasVideoMetadata(detail);
   const previewUrl = api.fileMediaUrl(detail.id);
+
+  if (comparison && isVideoPreview && hasVideoMetadata(comparison)) {
+    return (
+      <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
+        <h3>{t("transcoding.previewComparison")}</h3>
+        <VideoWipeCompare
+          first={{ src: previewUrl, label: detail.filename }}
+          second={{ src: api.fileMediaUrl(comparison.id), label: comparison.filename }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="file-detail-preview-panel">
@@ -1602,11 +1617,26 @@ export function FileDetailPage() {
   const { fileId = "" } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const isPreviewRoute = /\/preview\/?$/.test(location.pathname);
+  const comparisonFileId = useMemo(() => {
+    if (!isPreviewRoute) {
+      return null;
+    }
+    const raw = new URLSearchParams(location.search).get("compare");
+    if (!raw || !/^\d+$/.test(raw)) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isSafeInteger(parsed) && parsed > 0 && String(parsed) !== fileId ? parsed : null;
+  }, [fileId, isPreviewRoute, location.search]);
   const { appSettings } = useAppData();
   const inDepthDolbyVisionProfiles = appSettings.feature_flags.in_depth_dolby_vision_profiles;
   const showAllPlaybacksWhenUnstacked =
     appSettings.feature_flags.show_all_playbacks_when_unstacked;
   const [file, setFile] = useState<MediaFileDetail | null>(null);
+  const [previewComparison, setPreviewComparison] = useState<MediaFileDetail | null>(null);
+  const [previewComparisonLoading, setPreviewComparisonLoading] = useState(false);
+  const [previewComparisonError, setPreviewComparisonError] = useState<string | null>(null);
   const [qualityDetail, setQualityDetail] = useState<MediaFileQualityScoreDetail | null>(null);
   const [qualityError, setQualityError] = useState(false);
   const [compatibilityResults, setCompatibilityResults] = useState<CompatibilityEvaluation[]>([]);
@@ -1630,7 +1660,7 @@ export function FileDetailPage() {
   const [activePanelState, setActivePanelState] = useState<{
     fileId: string;
     panelId: FileDetailPanelId;
-  }>(() => ({ fileId, panelId: DEFAULT_FILE_DETAIL_PANEL_ID }));
+  }>(() => ({ fileId, panelId: isPreviewRoute ? "preview" : DEFAULT_FILE_DETAIL_PANEL_ID }));
   const activePanelId =
     activePanelState.fileId === fileId
       ? activePanelState.panelId
@@ -1652,6 +1682,10 @@ export function FileDetailPage() {
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [fileId]);
+
+  useEffect(() => {
+    setActivePanelState({ fileId, panelId: isPreviewRoute ? "preview" : DEFAULT_FILE_DETAIL_PANEL_ID });
+  }, [fileId, isPreviewRoute]);
 
   const goBack = useCallback(() => {
     if (location.key !== "default") {
@@ -1738,6 +1772,36 @@ export function FileDetailPage() {
       })
       .finally(() => setCompatibilityLoading(false));
   }, [fileId]);
+
+  useEffect(() => {
+    if (!comparisonFileId) {
+      setPreviewComparison(null);
+      setPreviewComparisonLoading(false);
+      setPreviewComparisonError(null);
+      return;
+    }
+    let active = true;
+    setPreviewComparison(null);
+    setPreviewComparisonLoading(true);
+    setPreviewComparisonError(null);
+    api
+      .file(comparisonFileId, { includeRawFfprobe: false })
+      .then((payload) => {
+        if (!active) return;
+        setPreviewComparison(payload);
+        setPreviewComparisonError(null);
+      })
+      .catch((reason: Error) => {
+        if (!active) return;
+        setPreviewComparisonError(reason.message);
+      })
+      .finally(() => {
+        if (active) setPreviewComparisonLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [comparisonFileId]);
 
   const currentRawProbeState =
     rawProbeState.fileId === fileId
@@ -1881,8 +1945,8 @@ export function FileDetailPage() {
     },
     preview: {
       title: t("fileDetail.preview"),
-      loading: !file && !error,
-      error,
+      loading: (!file && !error) || previewComparisonLoading,
+      error: error ?? previewComparisonError,
       titleAddon: (
         <TooltipTrigger
           ariaLabel={t("fileDetail.previewPlaybackWarningAria")}
@@ -1913,7 +1977,7 @@ export function FileDetailPage() {
           </div>
         </div>
       ),
-      body: <PreviewDetailsPanel detail={file} t={t} />,
+      body: <PreviewDetailsPanel detail={file} comparison={previewComparison} t={t} />,
     },
     transcoding: {
       title: t("transcoding.title"),

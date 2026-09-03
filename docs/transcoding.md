@@ -12,7 +12,7 @@ The initial profiles are editable starting points:
 
 The normalized versioned plan stores the container; `copy`, `drop`, or `encode` for every stream (the legacy `keep` value remains accepted for old plans); encoder and quality fields; resolution, frame rate, pixel format, profile, level, preset and GOP controls; dynamic-range handling; chapter, metadata, cover, and attachment behavior; selected sidecar subtitles; and the filename template. The normal UI exposes only the three safe stream actions. The API accepts no raw command or arbitrary FFmpeg argument field.
 
-Filename tokens are `{resolution}`, `{dynRange}`, `{codec}`, `{audioLanguages}`, `{container}`, and `{videoBitrate}`. Empty values and punctuation are collapsed, names are made safe for the active operating system, and the extension always follows the selected container.
+Filename tokens are `{resolution}`, `{dynRange}`, `{codec}`, `{audioLanguages}`, `{subtitleLanguages}`, `{container}`, and `{videoBitrate}`. With `filename_template_override: false`, MediaLyze uses its standard template and can append subtitle languages when `include_subtitle_languages` is enabled. Set the override to `true` to use the supplied token template. Empty values and punctuation are collapsed, names are made safe for the active operating system, and the extension always follows the selected container.
 
 ## Validation and capabilities
 
@@ -45,7 +45,7 @@ The file endpoint returns the original summary, FFprobe attachment breakdown, cu
 
 ## Comparison
 
-Analyzed variants link to their ordinary file detail and metadata comparison pages. `VideoWipeCompare` is shared by the Transcoding panel and the two-video metadata comparison route. It synchronizes playback, seeking, volume and mute state, exposes an accessible keyboard-operable wipe slider, warns when durations differ, and reports browser playback failures.
+The Transcoding panel exposes a single synchronized-preview link for the newest analyzed variant. The `/files/{file_id}/preview?compare={variant_id}` route loads both files and keeps their playback, seeking, volume and mute state synchronized through the shared `VideoWipeCompare` control. The ordinary file detail and metadata comparison routes remain available separately; the preview comparison exposes an accessible keyboard-operable wipe slider, warns when durations differ, and reports browser playback failures.
 
 ## Runtime paths
 

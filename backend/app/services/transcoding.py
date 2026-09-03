@@ -151,11 +151,13 @@ CONTAINER_COMPATIBILITY = {
         "subtitle": {"webvtt"},
     },
 }
+DEFAULT_FILENAME_TEMPLATE = "[{resolution}, {dynRange}, {codec}] [{audioLanguages}]"
 FILENAME_TOKENS = {
     "resolution",
     "dynRange",
     "codec",
     "audioLanguages",
+    "subtitleLanguages",
     "container",
     "videoBitrate",
 }
@@ -619,6 +621,9 @@ def _profile_plan(media_file: MediaFile, profile: str, capabilities: TranscodeCa
         audio_streams=audio_plans,
         subtitle_streams=subtitle_plans,
         dynamic_range=dynamic_range,
+        filename_template=DEFAULT_FILENAME_TEMPLATE,
+        filename_template_override=False,
+        include_subtitle_languages=False,
     )
 
 
@@ -668,33 +673,57 @@ def _token_values(media_file: MediaFile, plan: TranscodePlan) -> dict[str, str]:
         if primary_video and primary_video.action == TranscodeStreamAction.encode
         else (source_video.codec if source_video else None)
     )
-    languages = sorted(
-        {
-            (plan_stream.language or source.language or "").strip()
-            for plan_stream, source in (
-                (plan_stream, next((item for item in media_file.audio_streams if item.stream_index == plan_stream.stream_index), None))
-                for plan_stream in plan.audio_streams
-                if plan_stream.action != TranscodeStreamAction.drop
-            )
-            if source is not None and (plan_stream.language or source.language or "").strip()
-        }
-    )
+    def selected_languages(
+        decisions: list[TranscodeStreamPlan],
+        sources: list[AudioStream | SubtitleStream],
+    ) -> set[str]:
+        values: set[str] = set()
+        for decision in decisions:
+            if decision.action == TranscodeStreamAction.drop:
+                continue
+            source = next((item for item in sources if item.stream_index == decision.stream_index), None)
+            language = (decision.language or (source.language if source else None) or "").strip()
+            if language:
+                values.add(language)
+        return values
+
+    audio_languages = selected_languages(plan.audio_streams, media_file.audio_streams)
+    subtitle_languages = selected_languages(plan.subtitle_streams, media_file.subtitle_streams)
+    external_rows = {item.id: item for item in media_file.external_subtitles}
+    for decision in plan.external_subtitles:
+        if decision.action == "drop":
+            continue
+        row = external_rows.get(decision.subtitle_id)
+        language = (decision.language or (row.language if row else None) or "").strip()
+        if language:
+            subtitle_languages.add(language)
     bitrate = primary_video.bitrate if primary_video else None
     return {
         "resolution": f"{width}x{height}" if width and height else "",
         "dynRange": plan.dynamic_range if plan.dynamic_range != "preserve" else (media_file.primary_video_hdr_type or ""),
         "codec": (codec or "").upper(),
-        "audioLanguages": "+".join(languages),
+        "audioLanguages": "+".join(sorted(audio_languages)),
+        "subtitleLanguages": "+".join(sorted(subtitle_languages)),
         "container": plan.container.upper(),
         "videoBitrate": f"{round(bitrate / 1_000_000, 1):g}Mbps" if bitrate else "",
     }
 
 
+def _effective_filename_template(plan: TranscodePlan) -> str:
+    if plan.filename_template_override is False:
+        template = DEFAULT_FILENAME_TEMPLATE
+        if plan.include_subtitle_languages:
+            template += " [{subtitleLanguages}]"
+        return template
+    return plan.filename_template
+
+
 def render_output_filename(media_file: MediaFile, plan: TranscodePlan) -> str:
-    unknown_tokens = set(re.findall(r"\{([^{}]+)\}", plan.filename_template)) - FILENAME_TOKENS
+    template = _effective_filename_template(plan)
+    unknown_tokens = set(re.findall(r"\{([^{}]+)\}", template)) - FILENAME_TOKENS
     if unknown_tokens:
         raise ValueError(f"Unsupported filename token(s): {', '.join(sorted(unknown_tokens))}")
-    rendered = plan.filename_template
+    rendered = template
     for token, value in _token_values(media_file, plan).items():
         rendered = rendered.replace(f"{{{token}}}", value)
     rendered = re.sub(r"\[\s*[,;|+\-]*\s*\]", "", rendered)

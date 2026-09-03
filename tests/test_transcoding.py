@@ -228,6 +228,39 @@ def test_validation_builds_explicit_maps_and_clean_filename(monkeypatch, tmp_pat
     assert "shell" not in validation.ffmpeg_command.lower()
 
 
+def test_filename_template_can_include_selected_subtitle_languages(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.filename_template_override = False
+        plan.include_subtitle_languages = True
+        plan.external_subtitles = [ExternalSubtitlePlan(subtitle_id=1, action="encode", language="en")]
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+
+    assert validation.valid is True
+    assert validation.output_filename == "Movie [1920x1080, HDR10, H264] [en] [de+en].mp4"
+
+
+def test_custom_filename_template_requires_supported_tokens_only(tmp_path) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = _compatibility_plan()
+        plan.filename_template_override = True
+        plan.filename_template = "[{codec}] [{subtitleLanguages}]"
+        assert transcoding.render_output_filename(media_file, plan) == "Movie [H264] [de].mp4"
+
+        plan.filename_template = "[{unknown}]"
+        try:
+            transcoding.render_output_filename(media_file, plan)
+        except ValueError as exc:
+            assert "unknown" in str(exc)
+        else:
+            raise AssertionError("Unknown filename token was accepted")
+
+
 def test_validation_keeps_crf_and_hardware_cq_distinct(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     capabilities = _capabilities()

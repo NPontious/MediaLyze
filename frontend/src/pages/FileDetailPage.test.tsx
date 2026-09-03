@@ -404,7 +404,7 @@ function createFileHistoryWithUnchangedGap(): MediaFileHistory {
   };
 }
 
-function renderPage(fileId: number) {
+function renderPage(fileId: number, path = `/files/${fileId}`) {
   if (!vi.isMockFunction(api.fileHistory)) {
     vi.spyOn(api, "fileHistory").mockResolvedValue({
       file_id: fileId,
@@ -440,9 +440,10 @@ function renderPage(fileId: number) {
   }
 
   return render(
-    <MemoryRouter initialEntries={[`/files/${fileId}`]}>
+    <MemoryRouter initialEntries={[path]}>
       <AppDataProvider>
         <Routes>
+          <Route path="/files/:fileId/preview" element={<FileDetailPage />} />
           <Route path="/files/:fileId" element={<FileDetailPage />} />
         </Routes>
       </AppDataProvider>
@@ -1086,6 +1087,33 @@ describe("FileDetailPage", () => {
     const player = container.querySelector(".file-detail-preview-player") as HTMLVideoElement | null;
     expect(player?.tagName).toBe("VIDEO");
     expect(player).toHaveAttribute("src", `/api/files/${file.id}/media`);
+  });
+
+  it("opens the direct synchronized preview route for a linked variant", async () => {
+    const file = createFileDetail();
+    const variant: MediaFileDetail = {
+      ...file,
+      id: 88,
+      filename: "Variant.mp4",
+      relative_path: "Shows/Season01/Variant.mp4",
+      extension: "mp4",
+      container: "mp4",
+      resolution: "1920x802",
+      hdr_type: "SDR",
+      video_codec: "h264",
+      video_streams: [{ ...file.video_streams[0], codec: "h264", width: 1920, height: 802, hdr_type: "SDR" }],
+    };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    const fileRequest = vi.spyOn(api, "file").mockImplementation((id) => Promise.resolve(Number(id) === file.id ? file : variant));
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+
+    const { container } = renderPage(file.id, `/files/${file.id}/preview?compare=${variant.id}`);
+
+    expect(await screen.findByRole("heading", { name: "Synchronized preview comparison" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".video-wipe-stage video")).toHaveLength(2);
+    expect(container.querySelector(".video-wipe-label-first")).toHaveTextContent(file.filename);
+    expect(container.querySelector(".video-wipe-label-second")).toHaveTextContent(variant.filename);
+    expect(fileRequest).toHaveBeenCalledWith(variant.id, { includeRawFfprobe: false });
   });
 
   it("renders an audio preview panel for audio-only files", async () => {

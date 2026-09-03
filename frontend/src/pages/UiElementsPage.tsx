@@ -2358,14 +2358,14 @@ export function UiElementsPage() {
                   </section>
                 </div>
               </VariantCard>
-              <VariantCard title="Transcoding plan and Wipe comparison" source="TranscodingPanel / VideoWipeCompare" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-stream-encode-fields", "transcode-control-field", "transcode-range-row", "transcode-copy-note", "transcode-validation", "video-wipe-compare"]} wide>
+              <VariantCard title="Compact transcoding plan" source="TranscodingPanel" classes={["transcoding-panel", "transcode-control", "settings-choice-input", "transcode-stream-row", "transcode-stream-group", "transcode-stream-group-summary", "transcode-stream-encode-fields", "transcode-control-field", "transcode-range-row", "transcode-filename-section", "transcode-filename-preview", "transcode-action-button", "transcode-preview-link"]} wide>
                 <div className="transcoding-panel">
                   <div className="transcode-configuration-grid">
                     <label><span>Profile</span><select className="settings-choice-input transcode-control" defaultValue="compatibility"><option value="compatibility">Original / copy</option></select></label>
                     <label><span>Target container</span><select className="settings-choice-input transcode-control" defaultValue="mp4"><option value="mp4">MP4</option></select></label>
                   </div>
-                  <div className="transcode-stream-group">
-                    <h3>Video streams</h3>
+                  <details className="transcode-stream-group" open>
+                    <summary className="transcode-stream-group-summary"><span>Video streams</span><span className="transcode-stream-group-count">1</span></summary>
                     <article className="transcode-stream-row">
                       <div><strong>#0</strong><span>HEVC</span></div>
                       <select className="settings-choice-input transcode-control" defaultValue="encode"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select>
@@ -2375,8 +2375,26 @@ export function UiElementsPage() {
                         <label className="transcode-control-field"><span className="transcode-field-label"><span>Output resolution</span><TooltipTrigger ariaLabel="Explain output resolution" content="Only equal or lower heights are offered." /></span><select className="settings-choice-input transcode-control" defaultValue="1920x1080"><option value="1920x1080">1080p (1920×1080)</option></select></label>
                       </div>
                     </article>
-                  </div>
+                  </details>
+                  <details className="transcode-stream-group">
+                    <summary className="transcode-stream-group-summary"><span>Audio streams</span><span className="transcode-stream-group-count">2</span></summary>
+                  </details>
+                  <section className="transcode-filename-section">
+                    <div className="transcode-filename-heading"><h3>Filename template</h3><TooltipTrigger ariaLabel="Explain filename template" content="Use tokens in braces and optional groups in square brackets." /></div>
+                    <label className="transcode-filename-option"><input type="checkbox" defaultChecked />Override default template</label>
+                    <label className="transcode-filename-option"><input type="checkbox" defaultChecked />Include subtitle languages</label>
+                    <input className="settings-choice-input transcode-control" defaultValue="[{resolution}, {dynRange}, {codec}] [{audioLanguages}] [{subtitleLanguages}]" />
+                    <small>Tokens: {'{resolution}, {dynRange}, {codec}, {audioLanguages}, {subtitleLanguages}'}</small>
+                    <div className="transcode-filename-preview"><span>Finished filename preview</span><code>Arrival [1920x1080, SDR, H264] [en] [de].mp4</code></div>
+                  </section>
+                  <div className="transcode-actions"><button type="button" className="secondary transcode-action-button">✓ Validate plan</button><button type="button" className="transcode-action-button">Start transcoding</button></div>
+                  <div className="transcode-preview-link-card"><a className="secondary transcode-preview-link" href="#">Open synchronized preview</a></div>
                   <section className="transcode-validation is-valid"><h3><Check aria-hidden="true" />Change preview</h3><strong>Arrival [1920x1080, SDR, H264] [en].mp4</strong><code>ffmpeg -i Arrival.mkv -map 0:0 -c:v:0 libx264 …</code></section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Synchronized preview comparison" source="FileDetailPage > Preview (?compare=variant)" classes={["file-detail-preview-comparison-panel", "video-wipe-compare"]} wide>
+                <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
+                  <h3>Synchronized preview comparison</h3>
                   <VideoWipeCompare first={{ src: "data:video/mp4;base64,", label: "Original" }} second={{ src: "data:video/mp4;base64,", label: "Variant" }} />
                 </div>
               </VariantCard>
