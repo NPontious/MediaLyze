@@ -203,6 +203,11 @@ type PatternSectionKey =
   | "duplicate_filename_suffix_regexes"
   | "bonus_folder_patterns";
 
+type PatternRecognitionSectionHeaderOptions = {
+  titleAddon?: ReactNode;
+  headerAction?: ReactNode;
+};
+
 type TelemetryPayloadView = "last" | "minimal" | "enabled";
 
 type PatternRecognitionSectionState = Record<PatternSectionKey, boolean>;
@@ -3797,24 +3802,87 @@ export function LibrariesPage() {
     return [...userIgnorePatternInputs, ...defaultIgnorePatternInputs];
   }
 
-  function renderIgnorePatternSection(title: string, expanded: boolean, inputId: string) {
-    const patterns = combinedIgnorePatterns();
+  function renderPatternRecognitionRestoreAction(
+    ariaLabel: string,
+    disabled: boolean,
+    onClick: () => Promise<void>,
+  ) {
+    return (
+      <TooltipTrigger
+        ariaLabel={ariaLabel}
+        content={ariaLabel}
+        className="secondary icon-only-button pattern-recognition-restore-button"
+        disabled={disabled}
+        pinOnClick={false}
+        onClick={() => void onClick()}
+      >
+        <History aria-hidden="true" className="nav-icon" size={16} />
+      </TooltipTrigger>
+    );
+  }
+
+  function renderPatternRecognitionSectionHeader(
+    title: string,
+    count: number,
+    expanded: boolean,
+    onToggle: () => void,
+    options: PatternRecognitionSectionHeaderOptions = {},
+  ) {
     const ToggleIcon = expanded ? ChevronDown : ChevronRight;
+    const toggleAriaLabel = expanded
+      ? t("panel.collapseAria", { title })
+      : t("panel.expandAria", { title });
+
+    return (
+      <div className="ignore-pattern-section-toggle-row">
+        <div className="ignore-pattern-section-toggle-lead">
+          <button
+            type="button"
+            className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain"
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            <span className="ignore-pattern-section-title">{title}</span>
+            <span className="sr-only">{count}</span>
+          </button>
+          {options.titleAddon}
+        </div>
+        <span className="ignore-pattern-section-meta">
+          <span className="badge">{count}</span>
+        </span>
+        {options.headerAction ? (
+          <div className="ignore-pattern-section-header-action">{options.headerAction}</div>
+        ) : null}
+        <button
+          type="button"
+          className="secondary icon-only-button ignore-pattern-section-chevron"
+          aria-label={toggleAriaLabel}
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          <ToggleIcon aria-hidden="true" className="nav-icon" />
+        </button>
+      </div>
+    );
+  }
+
+  function renderIgnorePatternSection(
+    title: string,
+    expanded: boolean,
+    inputId: string,
+    options: PatternRecognitionSectionHeaderOptions = {},
+  ) {
+    const patterns = combinedIgnorePatterns();
 
     return (
       <div className="ignore-pattern-section">
-        <button
-          type="button"
-          className="secondary ignore-pattern-section-toggle"
-          aria-expanded={expanded}
-          onClick={() => toggleIgnorePatternSection()}
-        >
-          <span className="ignore-pattern-section-title">{title}</span>
-          <span className="ignore-pattern-section-meta">
-            <span className="badge">{patterns.length}</span>
-            <ToggleIcon aria-hidden="true" className="nav-icon" />
-          </span>
-        </button>
+        {renderPatternRecognitionSectionHeader(
+          title,
+          patterns.length,
+          expanded,
+          () => toggleIgnorePatternSection(),
+          options,
+        )}
         {expanded ? (
           <div className="ignore-pattern-section-body">
             <div className="ignore-pattern-row ignore-pattern-row-draft">
@@ -3877,25 +3945,20 @@ export function LibrariesPage() {
     key: PatternSectionKey,
     title: string,
     placeholder: string,
+    options: PatternRecognitionSectionHeaderOptions = {},
   ) {
     const patterns = patternListValue(patternRecognitionInputs, key);
     const draftValue = patternRecognitionDrafts[key];
     const expanded = patternRecognitionSectionState[key];
-    const ToggleIcon = expanded ? ChevronDown : ChevronRight;
     return (
       <div className="ignore-pattern-section pattern-recognition-section" key={key}>
-        <button
-          type="button"
-          className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain"
-          aria-expanded={expanded}
-          onClick={() => togglePatternRecognitionSection(key)}
-        >
-          <span className="ignore-pattern-section-title">{title}</span>
-          <span className="ignore-pattern-section-meta">
-            <span className="badge">{patterns.length}</span>
-            <ToggleIcon aria-hidden="true" className="nav-icon" />
-          </span>
-        </button>
+        {renderPatternRecognitionSectionHeader(
+          title,
+          patterns.length,
+          expanded,
+          () => togglePatternRecognitionSection(key),
+          options,
+        )}
         {expanded ? (
           <div className="ignore-pattern-section-body">
             <div className="ignore-pattern-row ignore-pattern-row-draft">
@@ -6508,15 +6571,6 @@ export function LibrariesPage() {
                       ?
                     </TooltipTrigger>
                   </div>
-                  <button
-                    type="button"
-                    className="secondary small settings-panel-header-action pattern-recognition-action-button"
-                    aria-label={t("libraries.patternRecognition.restoreDuplicateDefaults")}
-                    disabled={isSavingPatternRecognition}
-                    onClick={() => void restoreDefaultDuplicateMatching()}
-                  >
-                    {t("libraries.patternRecognition.restoreDefaults")}
-                  </button>
                 </div>
                 <div className="inline-form-grid">
                   <label>
@@ -6543,6 +6597,13 @@ export function LibrariesPage() {
                     "duplicate_filename_suffix_regexes",
                     t("libraries.patternRecognition.filenameSuffixRegexes"),
                     t("libraries.patternRecognition.filenameSuffixPlaceholder"),
+                    {
+                      headerAction: renderPatternRecognitionRestoreAction(
+                        t("libraries.patternRecognition.restoreDuplicateDefaults"),
+                        isSavingPatternRecognition,
+                        restoreDefaultDuplicateMatching,
+                      ),
+                    },
                   )}
                 </div>
               </div>
@@ -6558,68 +6619,71 @@ export function LibrariesPage() {
                       ?
                     </TooltipTrigger>
                   </div>
-                  <button
-                    type="button"
-                    className="secondary small settings-panel-header-action pattern-recognition-action-button"
-                    aria-label={t("libraries.patternRecognition.restoreShowSeasonDefaults")}
-                    disabled={isSavingPatternRecognition}
-                    onClick={() => void restoreDefaultShowSeasonPatterns()}
-                  >
-                    {t("libraries.patternRecognition.restoreDefaults")}
-                  </button>
+                  {renderPatternRecognitionRestoreAction(
+                    t("libraries.patternRecognition.restoreShowSeasonDefaults"),
+                    isSavingPatternRecognition,
+                    restoreDefaultShowSeasonPatterns,
+                  )}
                 </div>
-                <div className="field pattern-recognition-mode-field">
-                  <label>
-                    <span>{t("libraries.patternRecognition.modeLabel")}</span>
-                    <select
-                      className="settings-choice-input"
-                      value={patternRecognitionInputs.show_season_patterns.recognition_mode}
-                      disabled={isSavingPatternRecognition}
-                      onChange={(event) =>
-                        void updateShowSeasonRecognitionMode(event.currentTarget.value as "folder_depth" | "regex")
-                      }
-                    >
-                      <option value="folder_depth">{t("libraries.patternRecognition.modeFolderDepth")}</option>
-                      <option value="regex">{t("libraries.patternRecognition.modeRegex")}</option>
-                    </select>
-                  </label>
-                </div>
-                {patternRecognitionInputs.show_season_patterns.recognition_mode === "folder_depth" ? (
-                  <div className="inline-form-grid">
+                <div className="pattern-recognition-settings-grid">
+                  <div className="field pattern-recognition-mode-field">
                     <label>
-                      <span>{t("libraries.patternRecognition.seriesFolderDepth")}</span>
+                      <span>{t("libraries.patternRecognition.modeLabel")}</span>
                       <select
-                        value={String(patternRecognitionInputs.show_season_patterns.series_folder_depth)}
+                        className="settings-choice-input"
+                        value={patternRecognitionInputs.show_season_patterns.recognition_mode}
                         disabled={isSavingPatternRecognition}
                         onChange={(event) =>
-                          void updateShowSeasonDepth("series_folder_depth", Number.parseInt(event.currentTarget.value, 10))
+                          void updateShowSeasonRecognitionMode(event.currentTarget.value as "folder_depth" | "regex")
                         }
                       >
-                        {Array.from({ length: 8 }, (_, index) => index + 1).map((depth) => (
-                          <option key={`series-depth-${depth}`} value={depth}>
-                            {depth}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>{t("libraries.patternRecognition.seasonFolderDepth")}</span>
-                      <select
-                        value={String(patternRecognitionInputs.show_season_patterns.season_folder_depth)}
-                        disabled={isSavingPatternRecognition}
-                        onChange={(event) =>
-                          void updateShowSeasonDepth("season_folder_depth", Number.parseInt(event.currentTarget.value, 10))
-                        }
-                      >
-                        {Array.from({ length: 8 }, (_, index) => index + 1).map((depth) => (
-                          <option key={`season-depth-${depth}`} value={depth}>
-                            {depth}
-                          </option>
-                        ))}
+                        <option value="folder_depth">{t("libraries.patternRecognition.modeFolderDepth")}</option>
+                        <option value="regex">{t("libraries.patternRecognition.modeRegex")}</option>
                       </select>
                     </label>
                   </div>
-                ) : (
+                  {patternRecognitionInputs.show_season_patterns.recognition_mode === "folder_depth" ? (
+                    <>
+                      <div className="field">
+                        <label>
+                          <span>{t("libraries.patternRecognition.seriesFolderDepth")}</span>
+                          <select
+                            value={String(patternRecognitionInputs.show_season_patterns.series_folder_depth)}
+                            disabled={isSavingPatternRecognition}
+                            onChange={(event) =>
+                              void updateShowSeasonDepth("series_folder_depth", Number.parseInt(event.currentTarget.value, 10))
+                            }
+                          >
+                            {Array.from({ length: 8 }, (_, index) => index + 1).map((depth) => (
+                              <option key={`series-depth-${depth}`} value={depth}>
+                                {depth}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="field">
+                        <label>
+                          <span>{t("libraries.patternRecognition.seasonFolderDepth")}</span>
+                          <select
+                            value={String(patternRecognitionInputs.show_season_patterns.season_folder_depth)}
+                            disabled={isSavingPatternRecognition}
+                            onChange={(event) =>
+                              void updateShowSeasonDepth("season_folder_depth", Number.parseInt(event.currentTarget.value, 10))
+                            }
+                          >
+                            {Array.from({ length: 8 }, (_, index) => index + 1).map((depth) => (
+                              <option key={`season-depth-${depth}`} value={depth}>
+                                {depth}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+                {patternRecognitionInputs.show_season_patterns.recognition_mode === "regex" ? (
                   <div className="ignore-pattern-sections">
                     {renderPatternRecognitionList(
                       "series_folder_regexes",
@@ -6632,13 +6696,15 @@ export function LibrariesPage() {
                       String.raw`^(?:Season|Staffel)\s*(?P<season>\d{1,3})(?:\s+\([^)]*\))?(?:\s+\[[^\]]+\])*$`,
                     )}
                   </div>
-                )}
+                ) : null}
               </div>
 
-              <div className="field">
-                <div className="distribution-copy">
-                  <div className="field-label-row">
-                    <strong>{t("libraries.patternRecognition.bonusTitle")}</strong>
+              {renderPatternRecognitionList(
+                "bonus_folder_patterns",
+                t("libraries.patternRecognition.bonusFolders"),
+                "*/extras/*",
+                {
+                  titleAddon: (
                     <TooltipTrigger
                       ariaLabel={t("libraries.patternRecognition.bonusTooltipAria")}
                       content={t("libraries.patternRecognition.bonusHint")}
@@ -6646,29 +6712,21 @@ export function LibrariesPage() {
                     >
                       ?
                     </TooltipTrigger>
-                  </div>
-                  <button
-                    type="button"
-                    className="secondary small settings-panel-header-action pattern-recognition-action-button"
-                    disabled={isSavingPatternRecognition}
-                    onClick={() => void restoreDefaultBonusPatterns()}
-                  >
-                    {t("libraries.patternRecognition.restoreBonusDefaults")}
-                  </button>
-                </div>
-                <div className="ignore-pattern-sections">
-                  {renderPatternRecognitionList(
-                    "bonus_folder_patterns",
-                    t("libraries.patternRecognition.bonusFolders"),
-                    "*/extras/*",
-                  )}
-                </div>
-              </div>
+                  ),
+                  headerAction: renderPatternRecognitionRestoreAction(
+                    t("libraries.patternRecognition.restoreBonusDefaults"),
+                    isSavingPatternRecognition,
+                    restoreDefaultBonusPatterns,
+                  ),
+                },
+              )}
 
-              <div className="field">
-                <div className="distribution-copy">
-                  <div className="field-label-row">
-                    <strong>{t("libraries.ignorePatternsTitle")}</strong>
+              {renderIgnorePatternSection(
+                t("libraries.ignorePatternsTitle"),
+                ignorePatternSectionState.combinedExpanded,
+                "ignore-patterns",
+                {
+                  titleAddon: (
                     <TooltipTrigger
                       ariaLabel={t("libraries.ignorePatternsTooltipAria")}
                       content={t("libraries.ignorePatternsTooltip")}
@@ -6676,24 +6734,14 @@ export function LibrariesPage() {
                     >
                       ?
                     </TooltipTrigger>
-                  </div>
-                  <button
-                    type="button"
-                    className="secondary small settings-panel-header-action pattern-recognition-action-button"
-                    disabled={isSavingIgnorePatterns}
-                    onClick={() => void restoreDefaultIgnorePatterns()}
-                  >
-                    {t("libraries.restoreIgnoreDefaults")}
-                  </button>
-                </div>
-                <div className="ignore-pattern-sections">
-                  {renderIgnorePatternSection(
-                    t("libraries.ignorePatternsTitle"),
-                    ignorePatternSectionState.combinedExpanded,
-                    "ignore-patterns",
-                  )}
-                </div>
-              </div>
+                  ),
+                  headerAction: renderPatternRecognitionRestoreAction(
+                    t("libraries.restoreIgnoreDefaults"),
+                    isSavingIgnorePatterns,
+                    restoreDefaultIgnorePatterns,
+                  ),
+                },
+              )}
               {isSavingPatternRecognition || isSavingIgnorePatterns ? (
                 <p className="field-hint">{t("libraries.patternRecognition.saving")}</p>
               ) : null}

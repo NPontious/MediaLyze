@@ -606,6 +606,42 @@ describe("LibrariesPage ignore patterns", () => {
     expect(screen.queryByDisplayValue("*/@eaDir/*")).not.toBeInTheDocument();
   });
 
+  it("places restore icon actions between pattern counts and chevrons", async () => {
+    renderPage({ activePanel: "patternRecognition" });
+
+    const assertRestoreActionPosition = async (toggleName: RegExp, restoreName: string) => {
+      const toggle = await screen.findByRole("button", { name: toggleName });
+      const row = toggle.closest<HTMLElement>(".ignore-pattern-section-toggle-row");
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("Pattern section header row is missing");
+      }
+
+      const restoreButton = within(row).getByRole("button", { name: restoreName });
+      const count = row.querySelector(".ignore-pattern-section-meta");
+      const chevron = row.querySelector(".ignore-pattern-section-chevron");
+      expect(restoreButton).toHaveClass("tooltip-trigger", "icon-only-button", "pattern-recognition-restore-button");
+      expect(restoreButton.querySelector("svg")).toBeInTheDocument();
+      expect(count).not.toBeNull();
+      expect(chevron).not.toBeNull();
+      if (!count || !chevron) {
+        throw new Error("Pattern section header controls are missing");
+      }
+      expect(count.compareDocumentPosition(restoreButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(restoreButton.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    };
+
+    await assertRestoreActionPosition(/^filename suffix regexes\d+$/i, "Restore duplicate matching defaults");
+    await assertRestoreActionPosition(/^bonus folder patterns\d+$/i, "Restore bonus defaults");
+    await assertRestoreActionPosition(/^ignore patterns\d+$/i, "Restore ignore defaults");
+    expect(screen.queryByText("Bonus content", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Ignore patterns", { exact: true })).toHaveLength(1);
+
+    const settingsGrid = screen.getByText("Recognition mode").closest(".pattern-recognition-settings-grid");
+    expect(settingsGrid).not.toBeNull();
+    expect(settingsGrid?.querySelectorAll(":scope > .field")).toHaveLength(3);
+  });
+
   it("saves combined ignore patterns through the shared section", async () => {
     const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
       createAppSettings({

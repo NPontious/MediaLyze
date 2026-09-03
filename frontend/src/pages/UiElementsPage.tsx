@@ -665,13 +665,20 @@ function SearchFilterFixture({ invalid = false }: { invalid?: boolean }) {
 function IgnorePatternFixture() {
   return (
     <div className="ignore-pattern-section">
-      <button type="button" className="secondary ignore-pattern-section-toggle">
-        <span className="ignore-pattern-section-title">User ignore patterns</span>
+      <div className="ignore-pattern-section-toggle-row">
+        <div className="ignore-pattern-section-toggle-lead">
+          <button type="button" className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain" aria-expanded="true">
+            <span className="ignore-pattern-section-title">User ignore patterns</span>
+            <span className="sr-only">2</span>
+          </button>
+        </div>
         <span className="ignore-pattern-section-meta">
           <span className="badge">2</span>
-          <ChevronDown aria-hidden="true" className="nav-icon" />
         </span>
-      </button>
+        <button type="button" className="secondary icon-only-button ignore-pattern-section-chevron" aria-label="Collapse User ignore patterns" aria-expanded="true">
+          <ChevronDown aria-hidden="true" className="nav-icon" />
+        </button>
+      </div>
       <div className="ignore-pattern-section-body">
         <div className="ignore-pattern-row ignore-pattern-row-draft">
           <div className="ignore-pattern-control">
@@ -1468,7 +1475,7 @@ export function UiElementsPage() {
                   Reconstruct history
                 </button>
               </VariantCard>
-              <VariantCard title="Pattern recognition actions" source={`${settings} > Pattern recognition`} classes={["pattern-recognition-doc-button", "pattern-recognition-action-button", "ignore-pattern-action-button"]} wide>
+              <VariantCard title="Pattern recognition actions" source={`${settings} > Pattern recognition`} classes={["pattern-recognition-doc-button", "pattern-recognition-restore-button", "ignore-pattern-section-toggle-row", "ignore-pattern-section-header-action"]} wide>
                 <div className="pattern-recognition-doc-row">
                   <div className="pattern-recognition-doc-copy">
                     <p>Configure scan-time series and bonus folder patterns plus ignored paths.</p>
@@ -1479,24 +1486,24 @@ export function UiElementsPage() {
                   </a>
                 </div>
               </VariantCard>
-              <VariantCard title="Pattern recognition mode spacing" source={`${settings} > Pattern recognition`} classes={["distribution-copy", "pattern-recognition-mode-field", "settings-choice-input"]}>
-                <div>
-                  <div className="distribution-copy">
-                    <strong>Show &amp; Seasons</strong>
-                  </div>
+              <VariantCard title="Pattern recognition mode spacing" source={`${settings} > Pattern recognition`} classes={["pattern-recognition-settings-grid", "pattern-recognition-mode-field", "settings-choice-input"]}>
+                <div className="pattern-recognition-settings-grid">
                   <div className="field pattern-recognition-mode-field">
-                    <label>Recognition mode<select className="settings-choice-input" defaultValue="folder-depth"><option value="folder-depth">Folder depth</option></select></label>
+                    <label><span>Recognition mode</span><select className="settings-choice-input" defaultValue="folder-depth"><option value="folder-depth">Folder depth</option></select></label>
+                  </div>
+                  <div className="field">
+                    <label><span>Series folder depth</span><select className="settings-choice-input" defaultValue="1"><option value="1">1</option></select></label>
+                  </div>
+                  <div className="field">
+                    <label><span>Season folder depth</span><select className="settings-choice-input" defaultValue="2"><option value="2">2</option></select></label>
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Duplicate filename matching settings" source={`${settings} > Pattern recognition`} classes={["distribution-copy", "inline-form-grid", "pattern-recognition-section", "ignore-pattern-section-toggle"]} wide>
+              <VariantCard title="Duplicate filename matching settings" source={`${settings} > Pattern recognition`} classes={["distribution-copy", "pattern-recognition-restore-button", "ignore-pattern-section-toggle-row", "ignore-pattern-section-chevron"]} wide>
                 <div className="field">
                   <div className="distribution-copy">
                     <div className="field-label-row">
                       <strong>Duplicate filename matching</strong>
-                      <button type="button" className="secondary small settings-panel-header-action pattern-recognition-action-button">
-                        Restore defaults
-                      </button>
                     </div>
                   </div>
                   <div className="inline-form-grid">
@@ -1506,10 +1513,28 @@ export function UiElementsPage() {
                     </label>
                   </div>
                   <div className="ignore-pattern-section pattern-recognition-section">
-                    <button type="button" className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain" aria-expanded="true">
-                      <span className="ignore-pattern-section-title">Filename suffix regexes</span>
-                      <span className="ignore-pattern-section-meta"><span className="badge">1</span><ChevronDown aria-hidden="true" className="nav-icon" /></span>
-                    </button>
+                    <div className="ignore-pattern-section-toggle-row">
+                      <div className="ignore-pattern-section-toggle-lead">
+                        <button type="button" className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain" aria-expanded="true">
+                          <span className="ignore-pattern-section-title">Filename suffix regexes</span>
+                          <span className="sr-only">1</span>
+                        </button>
+                      </div>
+                      <span className="ignore-pattern-section-meta"><span className="badge">1</span></span>
+                      <div className="ignore-pattern-section-header-action">
+                        <TooltipTrigger
+                          ariaLabel="Restore duplicate matching defaults"
+                          content="Restore duplicate matching defaults"
+                          className="secondary icon-only-button pattern-recognition-restore-button"
+                          pinOnClick={false}
+                        >
+                          <History aria-hidden="true" className="nav-icon" size={16} />
+                        </TooltipTrigger>
+                      </div>
+                      <button type="button" className="secondary icon-only-button ignore-pattern-section-chevron" aria-label="Collapse Filename suffix regexes" aria-expanded="true">
+                        <ChevronDown aria-hidden="true" className="nav-icon" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </VariantCard>
