@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { AsyncPanel } from "./AsyncPanel";
 import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import { SlidingTogglePill } from "./SlidingTogglePill";
+import { TooltipTrigger } from "./TooltipTrigger";
 import {
   api,
   type ConnectorConnection,
@@ -735,10 +736,17 @@ export function ConnectorSettingsPanel({ onCatalogChanged }: { onCatalogChanged?
     <>
       <AsyncPanel
         title={t("connectors.title")}
-        subtitle={t("connectors.description")}
+        titleAddon={
+          <TooltipTrigger
+            ariaLabel={t("connectors.descriptionAria")}
+            content={t("connectors.description")}
+          >
+            ?
+          </TooltipTrigger>
+        }
         loading={loading}
         error={error}
-        collapseActions={<button type="button" className="secondary small settings-panel-header-action connector-action-button" onClick={() => setAddOpen(true)}><Plus aria-hidden="true" />{t("connectors.addConnection")}</button>}
+        collapseActions={<button type="button" className="secondary small settings-panel-header-action" onClick={() => setAddOpen(true)}><Plus aria-hidden="true" className="nav-icon" /><span>{t("connectors.addConnection")}</span></button>}
       >
         {!connections.length ? <div className="notice">{t("connectors.empty")}</div> : null}
         <div className="connector-card-list">

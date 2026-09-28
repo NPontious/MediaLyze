@@ -86,18 +86,9 @@ services:
     container_name: medialyze
     ports:
       - "${HOST_PORT:-8080}:8080"
-      # Direct transcode federation protocol and optional LAN discovery.
-      - "${FEDERATION_HOST_PORT:-8091}:${MEDIALYZE_FEDERATION_PORT:-8091}/tcp"
-      - "${FEDERATION_DISCOVERY_PORT:-43211}:${MEDIALYZE_FEDERATION_DISCOVERY_PORT:-43211}/udp"
     environment:
       # change to your timezone, e.g. "Europe/Berlin" or "America/New_York"
       TZ: UTC
-      MEDIALYZE_FEDERATION_ENABLED: "true"
-      MEDIALYZE_FEDERATION_HOST: "0.0.0.0"
-      MEDIALYZE_FEDERATION_PORT: "8091"
-      MEDIALYZE_FEDERATION_DISCOVERY_PORT: "43211"
-      # Set a directly reachable base URL when LAN discovery is unavailable.
-      # MEDIALYZE_FEDERATION_ADVERTISE_URLS: http://worker-01.example.lan:8091
     volumes:
       - ./config:/config
       # use .env or change "./media" to the path of your media directory
@@ -240,7 +231,7 @@ For packaged `.app`, `.dmg`, `.exe`, and `AppImage` builds, see [docs/build_desk
 ## Docker configuration
 
 The complete environment-variable reference, including application settings,
-Federation, Docker Compose interpolation, entrypoint permissions, defaults,
+Docker Compose interpolation, entrypoint permissions, defaults,
 and security notes is in [docs/environment.md](docs/environment.md).
 
 The most commonly used variables are:
@@ -250,8 +241,6 @@ The most commonly used variables are:
 - `MEDIA_ROOT`: media mount root for server mode, default `/media`
 - `APP_HOST`: bind host for the backend, default `0.0.0.0` in server mode and `127.0.0.1` in desktop mode
 - `HOST_PORT`: HTTP port exposed on the host by the provided Docker Compose files, default `8080`; access the app via `http://<host>:<HOST_PORT>`
-- `FEDERATION_HOST_PORT` / `FEDERATION_DISCOVERY_PORT`: host ports for the direct transcode federation protocol and LAN discovery, default `8091` / `43211`
-- `MEDIALYZE_FEDERATION_ENABLED`, `MEDIALYZE_FEDERATION_HOST`, `MEDIALYZE_FEDERATION_PORT`, `MEDIALYZE_FEDERATION_DISCOVERY_PORT`, and `MEDIALYZE_FEDERATION_ADVERTISE_URLS`: listener, discovery, and directly reachable peer endpoint settings; see [transcoding federation](docs/transcoding.md#direct-transcode-federation)
 - `FRONTEND_DIST_PATH`: optional explicit frontend bundle path, mainly used by packaged desktop builds
 - `TZ`: process/container timezone, default `UTC`
 - `DISABLE_DEFAULT_IGNORE_PATTERNS`: optional; when set to `true`, built-in default ignore patterns are not preloaded

@@ -17,9 +17,11 @@ import {
   type TranscodeMatrixBenchmark,
   type TranscodeMatrixBenchmarkLevel,
   type TranscodeMatrixCell,
+  type TranscodeMatrixTestProgress,
   type TranscodingSettings,
 } from "../lib/api";
 import { formatCodecLabel } from "../lib/format";
+import { releaseVisibility } from "../lib/release-visibility";
 import {
   buildTranscodingMatrixEntryKey,
   buildTranscodingMatrixAnchorId,
@@ -222,6 +224,21 @@ function matrixDeviceKind(matrix: TranscodeDeviceMatrix): "cpu" | "gpu" {
     : "gpu";
 }
 
+function matrixTestDeviceCount(
+  capabilities: TranscodeCapabilities | null,
+  matrix: TranscodeCapabilityMatrix | null,
+): number {
+  if (capabilities?.devices) {
+    const deviceGroups = new Set(
+      capabilities.devices
+        .filter((device) => device.status === "available")
+        .map((device) => device.render_node ? `render:${device.render_node}` : `device:${device.id}`),
+    );
+    return Math.max(deviceGroups.size, 1);
+  }
+  return Math.max(matrix?.matrices.length ?? 0, 1);
+}
+
 export function TranscodingSettingsPanel({
   settings,
   appSettingsLoaded,
@@ -236,6 +253,7 @@ export function TranscodingSettingsPanel({
   const [federation, setFederation] = useState<TranscodeFederation | null>(null);
   const [loadingCapabilities, setLoadingCapabilities] = useState(true);
   const [testingMatrix, setTestingMatrix] = useState(false);
+  const [matrixTestProgress, setMatrixTestProgress] = useState({ completed: 0, total: 1 });
   const [testingNetwork, setTestingNetwork] = useState(false);
   const [automationRulesCollapsed, setAutomationRulesCollapsed] = useState(true);
   const [acceleratorsCollapsed, setAcceleratorsCollapsed] = useState(true);
@@ -277,39 +295,103 @@ export function TranscodingSettingsPanel({
 
   async function runMatrixTest() {
     setTestingMatrix(true);
+    setMatrixTestProgress({ completed: 0, total: 1 });
     setNetworkTestMessage(null);
     setError(null);
     const testErrors: string[] = [];
+
+    let currentFederation = releaseVisibility.federation ? federation : null;
+    if (releaseVisibility.federation && !currentFederation) {
+      try {
+        currentFederation = await api.transcodeFederation();
+        setFederation(currentFederation);
+      } catch (reason) {
+        testErrors.push(errorMessage(reason));
+      }
+    }
+    const connectedMembers = currentFederation?.settings.enabled
+      ? currentFederation.members.filter((member) => (
+          member.status === "active"
+          && member.connection_status === "connected"
+        ))
+      : [];
+    const localTestUnits = matrixTestDeviceCount(capabilities, matrix);
+    const connectedMemberTasks = connectedMembers.map((member) => ({
+      member,
+      units: matrixTestDeviceCount(member.capabilities, member.capability_matrix),
+    }));
+    const totalTargets = localTestUnits + connectedMemberTasks.reduce((total, task) => total + task.units, 0);
+    let completedTargets = 0;
+    setMatrixTestProgress({ completed: completedTargets, total: totalTargets });
+
+    const trackTargetProgress = async <T,>(
+      units: number,
+      readProgress: () => Promise<TranscodeMatrixTestProgress>,
+      runTest: () => Promise<T>,
+    ): Promise<T> => {
+      let tracking = true;
+      let progressRequestActive = false;
+      let interval: number | null = null;
+      const stopTracking = () => {
+        tracking = false;
+        if (interval !== null) window.clearInterval(interval);
+      };
+      const pollProgress = async () => {
+        if (!tracking || progressRequestActive) return;
+        progressRequestActive = true;
+        try {
+          const progress = await readProgress();
+          if (tracking && progress.running && progress.total > 0) {
+            const fraction = Math.max(0, Math.min(progress.completed / progress.total, 1));
+            setMatrixTestProgress({
+              completed: Math.min(totalTargets, completedTargets + units * fraction),
+              total: totalTargets,
+            });
+          }
+        } catch {
+          stopTracking();
+        } finally {
+          progressRequestActive = false;
+        }
+      };
+
+      interval = window.setInterval(() => void pollProgress(), 350);
+      try {
+        return await runTest();
+      } finally {
+        stopTracking();
+        completedTargets = Math.min(totalTargets, completedTargets + units);
+        setMatrixTestProgress({ completed: completedTargets, total: totalTargets });
+      }
+    };
+
     try {
-      const result = await api.testTranscodeCapabilityMatrix();
+      const result = await trackTargetProgress(
+        localTestUnits,
+        () => api.transcodeCapabilityMatrixTestProgress(),
+        () => api.testTranscodeCapabilityMatrix(),
+      );
       setMatrix(result);
       await refreshCapabilities();
     } catch (reason) {
       testErrors.push(errorMessage(reason));
     }
 
-    try {
-      const currentFederation = federation ?? await api.transcodeFederation();
-      if (!federation) setFederation(currentFederation);
-      const connectedMembers = currentFederation.settings.enabled
-        ? currentFederation.members.filter((member) => (
-            member.status === "active"
-            && member.connection_status === "connected"
-          ))
-        : [];
-      for (const member of connectedMembers) {
-        try {
-          setFederation(await api.testTranscodeFederationMemberCapabilityMatrix(member.installation_id));
-        } catch (reason) {
-          testErrors.push(`${member.display_name}: ${errorMessage(reason)}`);
-        }
+    for (const { member, units } of connectedMemberTasks) {
+      try {
+        setFederation(await trackTargetProgress(
+          units,
+          () => api.transcodeFederationMemberCapabilityMatrixTestProgress(member.installation_id),
+          () => api.testTranscodeFederationMemberCapabilityMatrix(member.installation_id),
+        ));
+      } catch (reason) {
+        testErrors.push(`${member.display_name}: ${errorMessage(reason)}`);
       }
-    } catch (reason) {
-      testErrors.push(errorMessage(reason));
     }
 
     if (testErrors.length) setError(testErrors.join(" · "));
     setTestingMatrix(false);
+    setMatrixTestProgress({ completed: totalTargets, total: totalTargets });
   }
 
   async function runNetworkTest() {
@@ -375,7 +457,7 @@ export function TranscodingSettingsPanel({
   const matrixDevices = matrix?.matrices ?? [];
   const matrixEntries = [
     ...matrixDevices.map((deviceMatrix) => ({ deviceMatrix, memberName: null as string | null, memberInstallationId: null as string | null })),
-    ...(federation?.members ?? []).flatMap((member) => (
+    ...(releaseVisibility.federation ? federation?.members ?? [] : []).flatMap((member) => (
       member.capability_matrix?.status === "completed"
         ? member.capability_matrix.matrices.map((deviceMatrix) => ({
             deviceMatrix,
@@ -395,7 +477,7 @@ export function TranscodingSettingsPanel({
   const matrixFocusEntryKey = matrixFocus
     ? buildTranscodingMatrixEntryKey(matrixFocus.memberInstallationId, matrixFocus.deviceId)
     : null;
-  const canTestFederationNetwork = Boolean(
+  const canTestFederationNetwork = releaseVisibility.federation && Boolean(
     federation?.settings.enabled
       && federation.members.some((member) => (
         member.status === "active"
@@ -429,7 +511,7 @@ export function TranscodingSettingsPanel({
     <section className="transcode-automation-tab-content transcode-capability-section transcode-capability-content">
       <div className="compatibility-profile-list transcode-capability-list">
           {tabControls}
-          {testingMatrix ? <div className="notice">{t("transcoding.matrixTestNotice")}</div> : null}
+          {testingMatrix && releaseVisibility.federation ? <div className="notice">{t("transcoding.matrixTestNotice")}</div> : null}
           {matrix?.status === "failed" ? <div className="notice error">{matrix.error ?? t("transcoding.matrixFailed")}</div> : null}
           {!testingMatrix && matrix?.status === "not_run" && !matrixEntries.length ? <PanelEmptyState message={t("transcoding.matrixNotRun")} /> : null}
           {!testingMatrix && matrix?.status === "completed" && !matrixEntries.length ? <div className="notice">{t("transcoding.noHardware")}</div> : null}
@@ -532,12 +614,30 @@ export function TranscodingSettingsPanel({
   const matrixTestAction = (
     <button
       type="button"
-      className="secondary small settings-panel-header-action"
+      className="secondary small settings-panel-header-action transcode-matrix-test-button"
       onClick={() => void runMatrixTest()}
       disabled={loadingCapabilities || testingMatrix || testingNetwork}
+      aria-busy={testingMatrix}
     >
       <FlaskConical className={testingMatrix ? "spin" : undefined} aria-hidden="true" size={16} />
-      {testingMatrix ? t("transcoding.matrixTesting") : t("transcoding.matrixStartTest")}
+      {testingMatrix
+        ? t("transcoding.matrixTestingProgress", {
+            progress: Math.round((matrixTestProgress.completed / Math.max(matrixTestProgress.total, 1)) * 100),
+          })
+        : t("transcoding.matrixStartTest")}
+      {testingMatrix ? (
+        <span
+          className="transcode-matrix-test-progress"
+          role="progressbar"
+          aria-label={t("transcoding.matrixTestProgressAria")}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round((matrixTestProgress.completed / Math.max(matrixTestProgress.total, 1)) * 100)}
+          style={{ "--matrix-test-progress": `${(matrixTestProgress.completed / Math.max(matrixTestProgress.total, 1)) * 100}%` } as React.CSSProperties}
+        >
+          <span />
+        </span>
+      ) : null}
     </button>
   );
 
@@ -716,20 +816,20 @@ export function TranscodingSettingsPanel({
           standaloneCollapsed={acceleratorsCollapsed}
           onStandaloneToggle={() => setAcceleratorsCollapsed((current) => !current)}
           standaloneHeaderAction={matrixTestAction}
-          federation={federation}
+          federation={releaseVisibility.federation ? federation : null}
           onFederationData={setFederation}
           onAcceleratorMatrixFocus={setMatrixFocus}
           searchFocus={searchFocus}
         />
-        <TranscodePresetsRulesPanel
+        {releaseVisibility.automationRules ? <TranscodePresetsRulesPanel
           capabilityMatrix={() => null}
           acceleratorsTooltip={null}
           standaloneTab="rules"
           standaloneCollapsed={automationRulesCollapsed}
           onStandaloneToggle={() => setAutomationRulesCollapsed((current) => !current)}
           searchFocus={searchFocus}
-        />
-        <TranscodeFederationPanel onData={setFederation} />
+        /> : null}
+        {releaseVisibility.federation ? <TranscodeFederationPanel onData={setFederation} /> : null}
       </div>
     </AsyncPanel>
   );

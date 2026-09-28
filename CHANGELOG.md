@@ -4,19 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+## v0.19.0
+
+>2026-09-28
+
 ### ✨ New
 
 - **Video transcoding** — build validated FFmpeg plans with stream controls, tested hardware acceleration, explicit CPU-only mode, configurable output, and linked variants for comparison.
 - **Transcoding overview** — queue files, track progress, cancel or retry jobs, and review completed work.
-- **Remote transcoding** — pair trusted MediaLyze installations and send jobs to another machine based on its tested capabilities.
-- **Transcoding presets and automation** — save reusable stream rules and optionally apply them to library files.
+- **Transcoding presets** — save reusable stream settings for later use.
 - **Filename and folder formatting** — configure each separately, rearrange or remove metadata tokens, include connector metadata, and save presets with language-code options.
 - **Synchronized video comparison** — play two versions in sync and drag the divider across the image to compare them directly.
 
 ### ✨ Enhancements
 
+- **Compact header navigation** — group libraries under a hover and touch accessible Library icon, show page names after two seconds of icon hover, and show the MediaLyze icon instead of its name on phones.
 - **More compact Storage Map** — remove redundant summary cards and subtitle, match the Transcoding page's icon heading, bring filters closer to the title, and keep the treemap evenly inset from the panel edges.
-- **Consistent settings controls** — keep formatting-preset search and list spacing visible when catalogs are empty, match Accelerators and Automation Rules to Federation-style panels while keeping their header actions, and style telemetry payload views like the historical-range selector.
+- **Connector setup guidance** — move the explanatory text into a tooltip beside the Connectors heading and match its Add connection button to Libraries.
+- **Compact history retention tables** — tighten row spacing and shorten storage forecast headings.
+- **Hardware test progress** — scale live progress to codec work and benchmark frame volume so longer parallel tests keep moving the Test Hardware indicator proportionally.
 
 ### 🔒 Security
 

@@ -66,9 +66,13 @@ from backend.app.schemas.transcoding import (
     TranscodeFederationRead,
     TranscodeFederationSettingsRead,
     TranscodeFederationSettingsUpdate,
+    TranscodeMatrixTestProgressRead,
     TranscodePlan,
 )
-from backend.app.services.transcode_matrix import load_transcode_matrix
+from backend.app.services.transcode_matrix import (
+    load_transcode_matrix,
+    transcode_matrix_test_progress,
+)
 from backend.app.services.transcoding import (
     HARDWARE_ENCODER_MARKERS,
     _encoder_codec,
@@ -2179,6 +2183,33 @@ def test_remote_member_capability_matrix(
     member.last_error = None
     db.commit()
     return result
+
+
+def get_remote_member_capability_matrix_test_progress(
+    db: Session,
+    settings: Settings,
+    installation_id: str,
+) -> TranscodeMatrixTestProgressRead:
+    """Read live matrix-test progress from one connected federation member."""
+
+    if not federation_enabled(db, settings):
+        raise FederationError("Federation is not enabled on this installation", status_code=409)
+    member = _remote_member(db, installation_id)
+    response = _post_secure_member(
+        db,
+        settings,
+        member,
+        "capability-matrix/test/progress",
+        {"kind": "capability_matrix_test_progress"},
+        timeout_seconds=3.0,
+    )
+    try:
+        return TranscodeMatrixTestProgressRead.model_validate(response.get("progress"))
+    except (TypeError, ValueError) as exc:
+        raise FederationError(
+            "Peer returned invalid capability-matrix test progress",
+            status_code=502,
+        ) from exc
 
 
 def _transfer_descriptor(transfer: TranscodeTransfer, db: Session) -> dict[str, Any]:

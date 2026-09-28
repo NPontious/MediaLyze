@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 
 import { AsyncPanel } from "../components/AsyncPanel";
+import { releaseVisibility } from "../lib/release-visibility";
 import { CheckIcon } from "../components/CheckIcon";
 import { CompatibilityProfilesPanel } from "../components/CompatibilityProfilesPanel";
 import { ConnectorSettingsPanel } from "../components/ConnectorSettingsPanel";
@@ -1229,7 +1230,10 @@ export function LibrariesPage() {
     const pageLabels = new Map(
       SETTINGS_NAV_ITEMS.map((item) => [item.id, t(item.labelKey)]),
     );
-    return SETTINGS_SEARCH_TARGET_DEFINITIONS.map((definition) => ({
+    return SETTINGS_SEARCH_TARGET_DEFINITIONS.filter((definition) => (
+      (releaseVisibility.federation || !["transcoding-tab-members", "transcoding-federation"].includes(definition.id))
+      && (releaseVisibility.automationRules || definition.id !== "transcoding-tab-rules")
+    )).map((definition) => ({
       id: definition.id,
       panel: definition.panel,
       label: t(definition.labelKey),

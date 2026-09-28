@@ -10,6 +10,7 @@ import {
   type TranscodePresetDefinition,
 } from "../lib/api";
 import { TranscodePresetsRulesPanel } from "./TranscodePresetsRulesPanel";
+import { releaseVisibility } from "../lib/release-visibility";
 
 const definition: TranscodePresetDefinition = {
   version: 1,
@@ -129,6 +130,8 @@ describe("TranscodePresetsRulesPanel", () => {
   });
 
   beforeEach(() => {
+    releaseVisibility.federation = true;
+    releaseVisibility.automationRules = true;
     vi.spyOn(api, "transcodePresets").mockResolvedValue([builtin, custom]);
     vi.spyOn(api, "transcodeRules").mockResolvedValue([]);
     vi.spyOn(api, "libraries").mockResolvedValue([]);
@@ -137,8 +140,20 @@ describe("TranscodePresetsRulesPanel", () => {
   });
 
   afterEach(() => {
+    releaseVisibility.federation = false;
+    releaseVisibility.automationRules = false;
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("hides unfinished rule and member tabs in the release view", async () => {
+    releaseVisibility.automationRules = false;
+    releaseVisibility.federation = false;
+    render(<TranscodePresetsRulesPanel capabilityMatrix={() => null} acceleratorsTooltip={null} />);
+    expect(await screen.findByRole("tab", { name: "Presets" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Rules" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Members" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Used by automatic rules")).not.toBeInTheDocument();
   });
 
   it("exposes editable custom presets and makes built-in templates customizable without deleting them", async () => {

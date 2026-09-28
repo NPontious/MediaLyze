@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Ban, Clock3, Gauge, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Star, Trash2, Unplug, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { releaseVisibility } from "../lib/release-visibility";
 
 import {
   api,
@@ -45,14 +46,21 @@ type AutomationTab = "presets" | "rules" | "accelerators" | "members";
 
 const AUTOMATION_TABS: AutomationTab[] = ["presets", "rules", "accelerators", "members"];
 
+function visibleAutomationTabs(): AutomationTab[] {
+  return AUTOMATION_TABS.filter((tab) => (
+    (releaseVisibility.automationRules || tab !== "rules")
+    && (releaseVisibility.federation || tab !== "members")
+  ));
+}
+
 function automationTabFromSearchFocus(searchFocus: string | null | undefined): AutomationTab | null {
   if (searchFocus?.startsWith("transcoding-tab-")) {
     const value = searchFocus.slice("transcoding-tab-".length);
-    return AUTOMATION_TABS.includes(value as AutomationTab) ? value as AutomationTab : null;
+    return visibleAutomationTabs().includes(value as AutomationTab) ? value as AutomationTab : null;
   }
-  if (searchFocus === "transcoding-automation-rules") return "rules";
+  if (releaseVisibility.automationRules && searchFocus === "transcoding-automation-rules") return "rules";
   if (searchFocus === "transcoding-accelerators") return "accelerators";
-  if (searchFocus === "transcoding-federation-members") return "members";
+  if (releaseVisibility.federation && searchFocus === "transcoding-federation-members") return "members";
   return null;
 }
 
@@ -1033,7 +1041,7 @@ export function TranscodePresetsRulesPanel({
             <option value="inherit">{t("transcoding.automation.inheritGlobal")}</option><option value="hardware_required">{t("transcoding.hardwareRequired")}</option><option value="cpu_only">{t("transcoding.cpuOnly")}</option>
           </select></label>
           <label><span>{t("transcoding.dynamicRange")}</span><select className="settings-choice-input" disabled value={definition.dynamic_range} onChange={() => undefined}>{(["preserve", "sdr", "hdr10", "hlg", "dolby_vision"] as const).map((value) => <option key={value} value={value}>{t(`transcoding.dynamicRanges.${value}`)}</option>)}</select></label>
-          <label><span>{t("transcoding.automation.usedByRules")}</span><input className="settings-choice-input" readOnly value={preset.used_by_rule_count} /></label>
+          {releaseVisibility.automationRules ? <label><span>{t("transcoding.automation.usedByRules")}</span><input className="settings-choice-input" readOnly value={preset.used_by_rule_count} /></label> : null}
         </div>
         <div className="compatibility-capability-sections transcode-automation-rule-sections">
           {ruleSections.map(({ key, label, rules }) => (
@@ -1141,7 +1149,7 @@ export function TranscodePresetsRulesPanel({
         type="button"
         className="secondary icon-only-button compatibility-profile-quick-action"
         aria-label={`${t("transcoding.automation.delete")} ${preset.name}`}
-        title={preset.is_builtin ? t("transcoding.automation.builtInCannotDelete") : preset.used_by_rule_count ? t("transcoding.automation.presetInUse") : t("transcoding.automation.delete")}
+        title={preset.is_builtin ? t("transcoding.automation.builtInCannotDelete") : preset.used_by_rule_count ? t(releaseVisibility.automationRules ? "transcoding.automation.presetInUse" : "transcoding.unavailable") : t("transcoding.automation.delete")}
         disabled={preset.is_builtin || Boolean(preset.used_by_rule_count) || busy}
         onClick={() => void removePreset(preset)}
       >
@@ -1589,7 +1597,7 @@ export function TranscodePresetsRulesPanel({
   const automationTooltip = tab === "presets" ? (
     <div className="transcode-automation-description-tooltip">
       <p>{t("transcoding.automation.presetsDescription")}</p>
-      <p>{t("transcoding.automation.securityHint")}</p>
+      {releaseVisibility.automationRules ? <p>{t("transcoding.automation.securityHint")}</p> : null}
     </div>
   ) : tab === "rules" ? (
     <div className="transcode-automation-description-tooltip">
@@ -1670,8 +1678,8 @@ export function TranscodePresetsRulesPanel({
 
   const renderTabControls = () => (
     <div className="transcode-automation-tab-controls">
-      <div className="transcode-automation-tab-list" role="tablist" aria-label={t("transcoding.automation.managementTitle")} aria-orientation="horizontal">
-        {AUTOMATION_TABS.map((key, index) => (
+      <div className="transcode-automation-tab-list" role="tablist" aria-label={t(releaseVisibility.automationRules ? "transcoding.automation.managementTitle" : "transcoding.presetsSettingsTitle")} aria-orientation="horizontal">
+        {visibleAutomationTabs().map((key, index, tabs) => (
           <button
             key={key}
             type="button"
@@ -1684,13 +1692,13 @@ export function TranscodePresetsRulesPanel({
             onClick={() => selectTab(key)}
             onKeyDown={(event) => {
               let nextIndex: number | null = null;
-              if (event.key === "ArrowRight") nextIndex = (index + 1) % AUTOMATION_TABS.length;
-              if (event.key === "ArrowLeft") nextIndex = (index - 1 + AUTOMATION_TABS.length) % AUTOMATION_TABS.length;
+              if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+              if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
               if (event.key === "Home") nextIndex = 0;
-              if (event.key === "End") nextIndex = AUTOMATION_TABS.length - 1;
+              if (event.key === "End") nextIndex = tabs.length - 1;
               if (nextIndex === null) return;
               event.preventDefault();
-              const nextTab = AUTOMATION_TABS[nextIndex];
+              const nextTab = tabs[nextIndex];
               selectTab(nextTab);
               window.requestAnimationFrame(() => document.getElementById(`transcode-automation-tab-${nextTab}`)?.focus());
             }}

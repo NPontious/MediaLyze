@@ -659,6 +659,48 @@ export function StorageMapPage() {
             <div className="storage-map-title-row">
               <MapIcon aria-hidden="true" className="storage-map-title-icon" />
               <h2>{t("storageMap.title")}</h2>
+              {supportsJellyfinNames ? (
+                <div
+                  className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle"
+                  role="group"
+                  aria-label={t("libraryDetail.fileNameSource.label")}
+                >
+                  <SlidingTogglePill
+                    activeKey={nameSource}
+                    className="nav-active-pill distribution-chart-mode-pill"
+                  />
+                  <button
+                    type="button"
+                    data-toggle-key="file"
+                    className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                      nameSource === "file" ? " active" : ""
+                    }`}
+                    aria-label={t("libraryDetail.fileNameSource.file")}
+                    title={t("libraryDetail.fileNameSource.file")}
+                    aria-pressed={nameSource === "file"}
+                    onClick={() => updateQuery({ names: null })}
+                  >
+                    <span className="distribution-chart-mode-button-content">
+                      <FileText aria-hidden="true" className="distribution-chart-mode-icon" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    data-toggle-key="jellyfin"
+                    className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                      nameSource === "jellyfin" ? " active" : ""
+                    }`}
+                    aria-label={t("libraryDetail.fileNameSource.jellyfin")}
+                    title={t("libraryDetail.fileNameSource.jellyfin")}
+                    aria-pressed={nameSource === "jellyfin"}
+                    onClick={() => updateQuery({ names: "jellyfin" })}
+                  >
+                    <span className="distribution-chart-mode-button-content">
+                      <JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" />
+                    </span>
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         </header>
@@ -736,52 +778,6 @@ export function StorageMapPage() {
                     ))}
                   </select>
                 </label>
-                {supportsJellyfinNames ? (
-                  <div
-                    className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle"
-                    role="group"
-                    aria-label={t("libraryDetail.fileNameSource.label")}
-                  >
-                    <SlidingTogglePill
-                      activeKey={nameSource}
-                      className="nav-active-pill distribution-chart-mode-pill"
-                    />
-                    <button
-                      type="button"
-                      data-toggle-key="file"
-                      className={`distribution-chart-mode-button analyzed-file-name-source-button${
-                        nameSource === "file" ? " active" : ""
-                      }`}
-                      aria-label={t("libraryDetail.fileNameSource.file")}
-                      title={t("libraryDetail.fileNameSource.file")}
-                      aria-pressed={nameSource === "file"}
-                      onClick={() => updateQuery({ names: null })}
-                    >
-                      <span className="distribution-chart-mode-button-content">
-                        <FileText aria-hidden="true" className="distribution-chart-mode-icon" />
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      data-toggle-key="jellyfin"
-                      className={`distribution-chart-mode-button analyzed-file-name-source-button${
-                        nameSource === "jellyfin" ? " active" : ""
-                      }`}
-                      aria-label={t("libraryDetail.fileNameSource.jellyfin")}
-                      title={t("libraryDetail.fileNameSource.jellyfin")}
-                      aria-pressed={nameSource === "jellyfin"}
-                      onClick={() => updateQuery({ names: "jellyfin" })}
-                    >
-                      <span className="distribution-chart-mode-button-content">
-                        <JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" />
-                      </span>
-                    </button>
-                  </div>
-                ) : null}
-                <span className="storage-map-area-hint">
-                  <Info aria-hidden="true" />
-                  {t("storageMap.areaHint")}
-                </span>
               </div>
 
               <div className={`storage-map-stage${currentPath ? " has-up-overlay" : ""}`}>

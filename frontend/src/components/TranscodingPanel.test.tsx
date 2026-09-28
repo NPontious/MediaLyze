@@ -18,6 +18,7 @@ import {
   type TranscodeValidation,
 } from "../lib/api";
 import { FileTranscodeHistory, TranscodingPanel } from "./TranscodingPanel";
+import { releaseVisibility } from "../lib/release-visibility";
 
 const compatibilityPlan: TranscodePlan = {
   version: 1,
@@ -236,6 +237,7 @@ const savedPreset: TranscodePresetPlan = {
 
 describe("TranscodingPanel", () => {
   beforeEach(() => {
+    releaseVisibility.federation = true;
     vi.spyOn(api, "fileTranscode").mockResolvedValue(payload);
     vi.spyOn(api, "transcodeCapabilities").mockResolvedValue(capabilities);
     vi.spyOn(api, "transcodeFormattingPresets").mockResolvedValue([]);
@@ -246,9 +248,19 @@ describe("TranscodingPanel", () => {
   });
 
   afterEach(() => {
+    releaseVisibility.federation = false;
     cleanup();
     document.querySelectorAll<HTMLElement>("[data-transcode-preset-target]").forEach((target) => target.remove());
     vi.restoreAllMocks();
+  });
+
+  it("keeps the release plan local without showing execution targets", async () => {
+    releaseVisibility.federation = false;
+    const federationRequest = vi.spyOn(api, "transcodeFederation");
+    renderTranscodingPanel();
+    expect(await screen.findByRole("region", { name: "Source summary" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Execution target" })).not.toBeInTheDocument();
+    expect(federationRequest).not.toHaveBeenCalled();
   });
 
   it("edits structured stream fields without rendering a separate variant section", async () => {
@@ -601,10 +613,13 @@ describe("TranscodingPanel", () => {
     expect(screen.queryByRole("textbox", { name: "Filename formatting" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Folder name template" })).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Filename formatting" }));
+    expect(screen.getByRole("textbox", { name: "Filename formatting" })).toBeInTheDocument();
     fireEvent.click(filenameSwitch);
     expect(screen.getByRole("textbox", { name: "Filename formatting" })).toBeInTheDocument();
     fireEvent.click(folderSwitch);
-    expect(screen.queryByRole("textbox", { name: "Folder name template" })).not.toBeInTheDocument();
+    expect(folderSwitch).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Folder name template" })).toBeInTheDocument();
   });
 
   it("moves or removes the original filename token in the preview", async () => {
@@ -642,14 +657,14 @@ describe("TranscodingPanel", () => {
     renderTranscodingPanel();
     await screen.findByRole("region", { name: "Source summary" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Save current Filename presets settings as preset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save current Filename formatting settings as preset" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent.change(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Preset name" }), { target: { value: "Movie name" } });
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Filename formatting preset" })).toHaveValue("1"));
     expect(created[0].definition.template).toContain("{resolution}");
 
-    fireEvent.click(screen.getByRole("button", { name: "Save current Foldername presets settings as preset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save current Folder name formatting settings as preset" }));
     fireEvent.change(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Preset name" }), { target: { value: "Folder name" } });
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Folder name formatting preset" })).toHaveValue("2"));

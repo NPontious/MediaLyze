@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 from pathlib import Path
@@ -21,6 +22,7 @@ from backend.app.schemas.transcoding import (
     TranscodeMatrixBenchmarkRead,
     TranscodeMatrixBenchmarkRunRead,
     TranscodeMatrixCellRead,
+    TranscodeMatrixTestProgressRead,
 )
 from backend.app.services.transcoding import (
     _encoder_quality_spec,
@@ -34,6 +36,8 @@ from backend.app.utils.time import utc_now
 
 
 MATRIX_LOCK = Lock()
+MATRIX_PROGRESS_LOCK = Lock()
+MATRIX_PROGRESS = {"running": False, "completed": 0, "total": 0}
 MATRIX_DIRECTORY = "transcoding-tests"
 MATRIX_RESULT_FILE = "capability-matrix.json"
 VIDEO_CODEC_ORDER = ("h264", "hevc", "av1", "vp9", "vp8", "mpeg2video", "mjpeg")
@@ -57,11 +61,26 @@ PARALLEL_PROBE_HEIGHT = 256
 PARALLEL_PROBE_FRAME_RATE = 30
 PARALLEL_PROBE_FRAMES = 240
 PARALLEL_PROBE_STREAM_LOOPS = 7
+MATRIX_CELL_FRAMES = 30
 MATRIX_FINGERPRINT_VERSION = 1
 
 
 class TranscodeMatrixBusyError(RuntimeError):
     pass
+
+
+def _set_transcode_matrix_progress(*, running: bool, completed: int, total: int) -> None:
+    with MATRIX_PROGRESS_LOCK:
+        MATRIX_PROGRESS.update(
+            running=running,
+            completed=max(0, completed),
+            total=max(0, total),
+        )
+
+
+def transcode_matrix_test_progress() -> TranscodeMatrixTestProgressRead:
+    with MATRIX_PROGRESS_LOCK:
+        return TranscodeMatrixTestProgressRead(**MATRIX_PROGRESS)
 
 
 def _matrix_root(settings: Settings) -> Path:
@@ -181,6 +200,60 @@ def _timed_run_command(arguments: list[str], *, timeout: int = 25) -> tuple[bool
     started = perf_counter()
     succeeded, error = _run_command(arguments, timeout=timeout)
     return succeeded, max(perf_counter() - started, 0.000001), error
+
+
+def _parallel_capacity_levels_for_limit(maximum_supported: int) -> list[int]:
+    """Return the concurrency levels tested for a given stable capacity."""
+
+    levels: list[int] = []
+    maximum = 1
+    first_failure: int | None = None
+    level = 2
+    while level <= MAX_PARALLEL_PROBE_JOBS:
+        levels.append(level)
+        if level > maximum_supported:
+            first_failure = level
+            break
+        maximum = level
+        if level == MAX_PARALLEL_PROBE_JOBS:
+            break
+        level = min(level * 2, MAX_PARALLEL_PROBE_JOBS)
+
+    if first_failure is not None:
+        for candidate in range(maximum + 1, first_failure):
+            levels.append(candidate)
+            if candidate > maximum_supported:
+                break
+    return levels
+
+
+def _parallel_capacity_work_units_for_limit(maximum_supported: int) -> int:
+    frame_weight = max(PARALLEL_PROBE_FRAMES // MATRIX_CELL_FRAMES, 1)
+    probe_jobs = PARALLEL_PROBE_REPETITIONS * (
+        1 + sum(_parallel_capacity_levels_for_limit(maximum_supported))
+    )
+    return probe_jobs * frame_weight
+
+
+def _parallel_capacity_max_work_units() -> int:
+    """Reserve enough work for the most expensive possible boundary search."""
+
+    return max(
+        (
+            _parallel_capacity_work_units_for_limit(maximum_supported)
+            for maximum_supported in range(1, MAX_PARALLEL_PROBE_JOBS + 1)
+        ),
+        default=PARALLEL_PROBE_REPETITIONS
+        * max(PARALLEL_PROBE_FRAMES // MATRIX_CELL_FRAMES, 1),
+    )
+
+
+def _benchmark_work_units(benchmark: TranscodeMatrixBenchmarkRead) -> int:
+    frame_weight = max(PARALLEL_PROBE_FRAMES // MATRIX_CELL_FRAMES, 1)
+    return sum(
+        level.concurrency * len(level.runs) * frame_weight
+        for level in benchmark.levels
+    )
 
 
 def _fixture_options(encoder: str) -> list[str]:
@@ -387,7 +460,11 @@ def _software_pair_command(ffmpeg_path: str, fixture: Path, encoder: str) -> lis
     ]
 
 
-def _parallel_capacity(command: list[str]) -> tuple[int, bool, TranscodeMatrixBenchmarkRead]:
+def _parallel_capacity(
+    command: list[str],
+    *,
+    on_work_completed: Callable[[int], None] | None = None,
+) -> tuple[int, bool, TranscodeMatrixBenchmarkRead]:
     benchmark = TranscodeMatrixBenchmarkRead(
         tolerance_percent=PARALLEL_PERFORMANCE_TOLERANCE * 100,
         test_ceiling=MAX_PARALLEL_PROBE_JOBS,
@@ -408,10 +485,12 @@ def _parallel_capacity(command: list[str]) -> tuple[int, bool, TranscodeMatrixBe
             error=error if not succeeded else None,
         )
 
-    baseline_runs = [
-        run_record(run, _timed_run_command(command, timeout=45))
-        for run in range(1, PARALLEL_PROBE_REPETITIONS + 1)
-    ]
+    frame_weight = max(PARALLEL_PROBE_FRAMES // MATRIX_CELL_FRAMES, 1)
+    baseline_runs = []
+    for run in range(1, PARALLEL_PROBE_REPETITIONS + 1):
+        baseline_runs.append(run_record(run, _timed_run_command(command, timeout=45)))
+        if on_work_completed is not None:
+            on_work_completed(frame_weight)
     baseline_durations = [
         run.duration_seconds
         for run in baseline_runs
@@ -442,12 +521,15 @@ def _parallel_capacity(command: list[str]) -> tuple[int, bool, TranscodeMatrixBe
         runs: list[TranscodeMatrixBenchmarkRunRead] = []
         for run in range(1, PARALLEL_PROBE_REPETITIONS + 1):
             with ThreadPoolExecutor(max_workers=count, thread_name_prefix="transcode-matrix") as executor:
-                outcomes = list(
-                    executor.map(
-                        lambda _index: _timed_run_command(command, timeout=45),
-                        range(count),
-                    )
-                )
+                futures = [
+                    executor.submit(_timed_run_command, command, timeout=45)
+                    for _index in range(count)
+                ]
+                outcomes = []
+                for future in as_completed(futures):
+                    outcomes.append(future.result())
+                    if on_work_completed is not None:
+                        on_work_completed(frame_weight)
             successful_durations = [outcome[1] for outcome in outcomes if outcome[0]]
             runs.append(
                 TranscodeMatrixBenchmarkRunRead(
@@ -539,26 +621,68 @@ def _device_group_class(devices: list[TranscodeHardwareDevice]) -> str:
     return next(iter(classes)) if len(classes) == 1 else "unknown"
 
 
+def _matrix_device_groups(
+    capabilities: TranscodeCapabilitiesRead,
+) -> dict[str, list[TranscodeHardwareDevice]]:
+    device_groups: dict[str, list[TranscodeHardwareDevice]] = {}
+    for device in capabilities.devices:
+        if device.status == "available":
+            device_groups.setdefault(_device_group_key(device), []).append(device)
+    return device_groups
+
+
+def _matrix_test_work_plan(
+    capabilities: TranscodeCapabilitiesRead,
+) -> tuple[int, dict[tuple[str, str, str], int]]:
+    if not capabilities.ffmpeg_available or not capabilities.devices:
+        return 1, {}
+    decode_codecs, encode_codecs = _codec_axes(capabilities)
+    cell_count = len(decode_codecs) * len(encode_codecs)
+    device_group_count = len(_matrix_device_groups(capabilities))
+    benchmark_work_estimates: dict[tuple[str, str, str], int] = {}
+    benchmark_work_reserve = _parallel_capacity_max_work_units()
+    for device_key, devices in _matrix_device_groups(capabilities).items():
+        for decode_codec in decode_codecs:
+            for encode_codec in encode_codecs:
+                if any(
+                    _device_hardware_encoder(capabilities, device, encode_codec) is not None
+                    for device in devices
+                ):
+                    benchmark_work_estimates[(device_key, decode_codec, encode_codec)] = (
+                        benchmark_work_reserve
+                    )
+    matrix_work = len(decode_codecs) + device_group_count * cell_count
+    return max(matrix_work + sum(benchmark_work_estimates.values()), 1), benchmark_work_estimates
+
+
+def _matrix_test_work_total(capabilities: TranscodeCapabilitiesRead) -> int:
+    return _matrix_test_work_plan(capabilities)[0]
+
+
 def _build_matrices(
     settings: Settings,
     capabilities: TranscodeCapabilitiesRead,
+    *,
+    on_work_completed: Callable[[int], None] | None = None,
+    on_work_total_changed: Callable[[int], None] | None = None,
+    benchmark_work_estimates: dict[tuple[str, str, str], int] | None = None,
 ) -> TranscodeCapabilityMatrixRead:
     tested_at = utc_now()
     decode_codecs, encode_codecs = _codec_axes(capabilities)
+    if benchmark_work_estimates is None:
+        benchmark_work_estimates = _matrix_test_work_plan(capabilities)[1]
     root = _matrix_root(settings)
     with tempfile.TemporaryDirectory(prefix="run-", dir=root) as temporary_directory:
         temporary_path = Path(temporary_directory)
-        fixtures = {
-            codec: _create_fixture(settings.ffmpeg_path, codec, temporary_path)
-            for codec in decode_codecs
-        }
+        fixtures = {}
+        for codec in decode_codecs:
+            fixtures[codec] = _create_fixture(settings.ffmpeg_path, codec, temporary_path)
+            if on_work_completed is not None:
+                on_work_completed(1)
         software_results: dict[tuple[str, str], tuple[bool, str | None]] = {}
         hardware_decode_results: dict[tuple[str, str], tuple[bool, str | None]] = {}
         matrices: list[TranscodeDeviceMatrixRead] = []
-        device_groups: dict[str, list[TranscodeHardwareDevice]] = {}
-        for device in capabilities.devices:
-            if device.status == "available":
-                device_groups.setdefault(_device_group_key(device), []).append(device)
+        device_groups = _matrix_device_groups(capabilities)
         for device_key, devices in device_groups.items():
             cells: list[TranscodeMatrixCellRead] = []
             hardware_commands: dict[tuple[str, str], list[str]] = {}
@@ -574,6 +698,13 @@ def _build_matrices(
                                 detail="The synthetic source codec could not be created with this FFmpeg build.",
                             )
                         )
+                        if on_work_completed is not None:
+                            on_work_completed(1)
+                        skipped_benchmark_work = benchmark_work_estimates.get(
+                            (device_key, decode_codec, encode_codec), 0
+                        )
+                        if skipped_benchmark_work and on_work_total_changed is not None:
+                            on_work_total_changed(-skipped_benchmark_work)
                         continue
                     hardware_cell: TranscodeMatrixCellRead | None = None
                     for device in devices:
@@ -616,6 +747,8 @@ def _build_matrices(
                             break
                     if hardware_cell is not None:
                         cells.append(hardware_cell)
+                        if on_work_completed is not None:
+                            on_work_completed(1)
                         continue
                     software_encoder = _software_encoder(capabilities, encode_codec)
                     software_key = (decode_codec, encode_codec)
@@ -639,13 +772,39 @@ def _build_matrices(
                             ),
                         )
                     )
+                    if on_work_completed is not None:
+                        on_work_completed(1)
+                    skipped_benchmark_work = benchmark_work_estimates.get(
+                        (device_key, decode_codec, encode_codec), 0
+                    )
+                    if skipped_benchmark_work and on_work_total_changed is not None:
+                        on_work_total_changed(-skipped_benchmark_work)
             for (decode_codec, encode_codec), base_command in hardware_commands.items():
                 representative = list(base_command)
                 frames_index = representative.index("-frames:v") + 1
                 representative[frames_index] = str(PARALLEL_PROBE_FRAMES)
                 input_index = representative.index("-i")
                 representative[input_index:input_index] = ["-stream_loop", str(PARALLEL_PROBE_STREAM_LOOPS)]
-                maximum, lower_bound, benchmark = _parallel_capacity(representative)
+                benchmark_key = (device_key, decode_codec, encode_codec)
+                expected_benchmark_work = benchmark_work_estimates.get(
+                    benchmark_key,
+                    _parallel_capacity_max_work_units(),
+                )
+                actual_benchmark_work = 0
+
+                def mark_benchmark_work(work_units: int) -> None:
+                    nonlocal actual_benchmark_work
+                    actual_benchmark_work += work_units
+                    if on_work_completed is not None:
+                        on_work_completed(work_units)
+
+                maximum, lower_bound, benchmark = _parallel_capacity(
+                    representative,
+                    on_work_completed=mark_benchmark_work,
+                )
+                actual_benchmark_work = _benchmark_work_units(benchmark)
+                if on_work_total_changed is not None:
+                    on_work_total_changed(actual_benchmark_work - expected_benchmark_work)
                 for cell in cells:
                     if (
                         cell.status == "hardware"
@@ -679,6 +838,10 @@ def _matrix_result(
     settings: Settings,
     capabilities: TranscodeCapabilitiesRead,
     capability_fingerprint: str,
+    *,
+    on_work_completed: Callable[[int], None] | None = None,
+    on_work_total_changed: Callable[[int], None] | None = None,
+    benchmark_work_estimates: dict[tuple[str, str, str], int] | None = None,
 ) -> TranscodeCapabilityMatrixRead:
     if not capabilities.ffmpeg_available:
         result = TranscodeCapabilityMatrixRead(
@@ -695,7 +858,13 @@ def _matrix_result(
             matrices=[],
         )
     else:
-        result = _build_matrices(settings, capabilities)
+        result = _build_matrices(
+            settings,
+            capabilities,
+            on_work_completed=on_work_completed,
+            on_work_total_changed=on_work_total_changed,
+            benchmark_work_estimates=benchmark_work_estimates,
+        )
     return result.model_copy(update={"capability_fingerprint": capability_fingerprint})
 
 
@@ -706,19 +875,69 @@ def _run_transcode_matrix_test(
 ) -> TranscodeCapabilityMatrixRead:
     if not MATRIX_LOCK.acquire(blocking=False):
         raise TranscodeMatrixBusyError("A transcoding capability test is already running")
+    completed_work = 0
+    total_work = 1
+    _set_transcode_matrix_progress(running=True, completed=completed_work, total=total_work)
     try:
         capabilities = get_transcode_capabilities(settings, refresh=True)
         fingerprint = transcode_capability_fingerprint(capabilities)
+        total_work, benchmark_work_estimates = _matrix_test_work_plan(capabilities)
+        _set_transcode_matrix_progress(running=True, completed=completed_work, total=total_work)
         if only_if_changed:
             existing = load_transcode_matrix(settings)
             if (
                 existing.status == "completed"
                 and existing.capability_fingerprint == fingerprint
             ):
+                completed_work = total_work
+                _set_transcode_matrix_progress(
+                    running=False,
+                    completed=completed_work,
+                    total=total_work,
+                )
                 return existing
-        result = _matrix_result(settings, capabilities, fingerprint)
+
+        def mark_work_completed(work_units: int = 1) -> None:
+            nonlocal completed_work
+            completed_work += max(0, work_units)
+            _set_transcode_matrix_progress(
+                running=True,
+                completed=completed_work,
+                total=total_work,
+            )
+
+        def adjust_work_total(work_units: int) -> None:
+            nonlocal total_work
+            total_work = max(completed_work, total_work + work_units)
+            _set_transcode_matrix_progress(
+                running=True,
+                completed=completed_work,
+                total=total_work,
+            )
+
+        result = _matrix_result(
+            settings,
+            capabilities,
+            fingerprint,
+            on_work_completed=mark_work_completed,
+            on_work_total_changed=adjust_work_total,
+            benchmark_work_estimates=benchmark_work_estimates,
+        )
         _store_transcode_matrix(settings, result)
+        completed_work = total_work
+        _set_transcode_matrix_progress(
+            running=False,
+            completed=completed_work,
+            total=total_work,
+        )
         return result
+    except Exception:
+        _set_transcode_matrix_progress(
+            running=False,
+            completed=completed_work,
+            total=total_work,
+        )
+        raise
     finally:
         MATRIX_LOCK.release()
 

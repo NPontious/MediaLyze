@@ -118,6 +118,7 @@ from backend.app.schemas.transcoding import (
     TranscodeCapabilitiesRead,
     TranscodeJobPageRead,
     TranscodeJobRead,
+    TranscodeMatrixTestProgressRead,
     TranscodePlan,
     TranscodePresetCreate,
     TranscodePresetDuplicate,
@@ -299,6 +300,7 @@ from backend.app.services.transcode_matrix import (
     TranscodeMatrixBusyError,
     load_transcode_matrix,
     run_transcode_matrix_test,
+    transcode_matrix_test_progress,
 )
 from backend.app.services.path_access import inspect_desktop_path
 from backend.app.services.quality_profiles import (
@@ -2904,6 +2906,14 @@ def transcoding_capability_matrix(
     settings: Settings = Depends(get_app_settings),
 ) -> TranscodeCapabilityMatrixRead:
     return load_transcode_matrix(settings)
+
+
+@router.get(
+    "/transcoding/capability-matrix/test/progress",
+    response_model=TranscodeMatrixTestProgressRead,
+)
+def transcoding_capability_matrix_test_progress() -> TranscodeMatrixTestProgressRead:
+    return transcode_matrix_test_progress()
 
 
 @router.post("/transcoding/capability-matrix/test", response_model=TranscodeCapabilityMatrixRead)

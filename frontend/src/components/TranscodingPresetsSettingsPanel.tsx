@@ -88,7 +88,13 @@ export function TranscodingPresetsSettingsPanel({ searchFocus = null }: Transcod
             standalonePresetTabs={renderPresetTabs()}
             searchFocus={searchFocus}
           />
-        ) : <TranscodeFormattingPresetsPanel kind={tab} tabs={renderPresetTabs()} />}
+        ) : (
+          <section className="app-settings-section transcode-automation-section">
+            <div className="compatibility-profile-panel transcode-automation-content">
+              <TranscodeFormattingPresetsPanel kind={tab} tabs={renderPresetTabs()} />
+            </div>
+          </section>
+        )}
       </div>
     </AsyncPanel>
   );

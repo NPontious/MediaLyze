@@ -2149,13 +2149,13 @@ describe("LibrariesPage settings panels", () => {
 
     expect(await screen.findByRole("heading", { name: "Transcoding Presets" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Transcoding Presets" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Filename presets" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByRole("tab", { name: "Foldername presets" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Filename Presets" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Foldername Presets" })).toHaveAttribute("aria-selected", "false");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Filename presets" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Filename Presets" }));
     expect(await screen.findByText("No filename presets are configured yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New preset" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Foldername presets" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Foldername Presets" }));
     expect(await screen.findByText("No foldername presets are configured yet.")).toBeInTheDocument();
   });
 

@@ -205,6 +205,65 @@ def test_remote_member_capability_matrix_persists_remote_test_result(
         assert member.last_error is None
 
 
+def test_remote_member_capability_matrix_progress_uses_secure_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    SessionLocal = _session_factory()
+    settings = _settings(tmp_path)
+
+    with SessionLocal() as db:
+        state = federation.get_federation_state(db, settings)
+        state["enabled"] = True
+        db.get(AppSetting, federation.FEDERATION_STATE_KEY).value = state
+        db.commit()
+        member = TranscodeFederationMember(
+            installation_id="remote-progress-member",
+            federation_id="federation-1",
+            display_name="Remote progress member",
+            endpoint_urls=["http://remote-progress-member:8091"],
+            protocol_version=1,
+            status="active",
+            connection_status="connected",
+            reachable=True,
+            accept_jobs=True,
+            resources={},
+            capabilities={},
+            capability_matrix={},
+            active_jobs=0,
+            network_mbps=100.0,
+            shared_secret="s" * 32,
+        )
+        db.add(member)
+        db.commit()
+
+        def fake_post_secure_member(
+            _db: Session,
+            _settings: Settings,
+            _member: TranscodeFederationMember,
+            route: str,
+            payload: dict[str, object],
+            *,
+            timeout_seconds: float | None = None,
+        ) -> dict[str, object]:
+            assert route == "capability-matrix/test/progress"
+            assert payload == {"kind": "capability_matrix_test_progress"}
+            assert timeout_seconds == 3.0
+            return {"progress": {"running": True, "completed": 42, "total": 105}}
+
+        monkeypatch.setattr(federation, "_post_secure_member", fake_post_secure_member)
+
+        progress = federation.get_remote_member_capability_matrix_test_progress(
+            db,
+            settings,
+            member.installation_id,
+        )
+
+        assert progress.running is True
+        assert progress.completed == 42
+        assert progress.total == 105
+
+
 def test_federation_protocol_capability_matrix_test_runs_target_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

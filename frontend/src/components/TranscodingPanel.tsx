@@ -24,11 +24,14 @@ import {
   type TranscodeValidation,
 } from "../lib/api";
 import { formatBytes, formatCodecLabel, formatDuration, formatSpatialAudioProfileLabel } from "../lib/format";
+import { releaseVisibility } from "../lib/release-visibility";
 import { formatFilenameLanguageCode, formatLanguageLabel, languageOptions, normalizeLanguageTag, type FilenameLanguageCodeFormat } from "../lib/language";
 import { classifyResolutionCategory } from "../lib/resolution-categories";
 import { applyFormattingPreset, formattingDefinitionFromPlan, matchingFormattingPresetId, type FormattingKind } from "../lib/transcode-formatting-presets";
+import { FILENAME_METADATA_TOKEN_PATTERN, FILENAME_METADATA_TOKENS, type FilenameMetadataToken } from "../lib/transcode-formatting-metadata";
 import { parseTranscodeSpeed, TranscodeProgressSummary } from "./TranscodeProgressSummary";
 import { SparklesIcon } from "./SparklesIcon";
+import { TranscodeFormattingMetadataMenu } from "./TranscodeFormattingMetadataMenu";
 import { TooltipTrigger } from "./TooltipTrigger";
 
 const PRESET_KEYS = ["compatibility", "storage", "modern"] as const;
@@ -51,37 +54,9 @@ const FILENAME_CLEANUP_PATTERNS: Partial<Record<Exclude<FilenameCleanupPreset, "
   square_and_round_brackets: "\\[[^\\[\\]]*\\]|\\([^()]*\\)",
   all_brackets: "\\[[^\\[\\]]*\\]|\\([^()]*\\)|\\{[^{}]*\\}",
 };
-const FILENAME_METADATA_TOKENS = [
-  { token: "sourceName", labelKey: "sourceName" },
-  { token: "movieTitle", labelKey: "movieTitle" },
-  { token: "releaseYear", labelKey: "releaseYear" },
-  { token: "resolution", labelKey: "resolution" },
-  { token: "resolutionCategory", labelKey: "resolutionCategory" },
-  { token: "dynRange", labelKey: "dynRange" },
-  { token: "codec", labelKey: "codec" },
-  { token: "audioLanguages", labelKey: "audioLanguages" },
-  { token: "audioCodecs", labelKey: "audioCodecs" },
-  { token: "audioProfiles", labelKey: "audioProfiles" },
-  { token: "audioChannels", labelKey: "audioChannels" },
-  { token: "frameRate", labelKey: "frameRate" },
-  { token: "bitDepth", labelKey: "bitDepth" },
-  { token: "subtitleLanguages", labelKey: "subtitleLanguages" },
-  { token: "subtitleFormats", labelKey: "subtitleFormats" },
-  { token: "seriesName", labelKey: "seriesName" },
-  { token: "seasonNumber", labelKey: "seasonNumber" },
-  { token: "episodeNumber", labelKey: "episodeNumber" },
-  { token: "episodeTitle", labelKey: "episodeTitle" },
-  { token: "contentCategory", labelKey: "contentCategory" },
-  { token: "container", labelKey: "container" },
-  { token: "videoBitrate", labelKey: "videoBitrate" },
-  { token: "folderName", labelKey: "folderName" },
-] as const;
-type FilenameMetadataToken = typeof FILENAME_METADATA_TOKENS[number]["token"];
 type FilenameTemplatePart =
   | { type: "text"; value: string }
   | { type: "token"; token: FilenameMetadataToken };
-
-const FILENAME_METADATA_TOKEN_PATTERN = /\{(sourceName|movieTitle|releaseYear|resolution|resolutionCategory|dynRange|codec|audioLanguages|audioCodecs|audioProfiles|audioChannels|frameRate|bitDepth|subtitleLanguages|subtitleFormats|seriesName|seasonNumber|episodeNumber|episodeTitle|contentCategory|container|videoBitrate|folderName)\}/g;
 
 function connectorReleaseYear(sources: FileConnectorSource[]): string {
   const source = sources.find((entry) => entry.preferred && (entry.production_year !== null || entry.premiere_date))
@@ -517,6 +492,12 @@ function cleanFilenameStem(stem: string, plan: TranscodePlan): string {
   return stem.replace(new RegExp(pattern, "g"), "").replace(/\s+/g, " ").trim().replace(/^[ ._-]+|[ ._-]+$/g, "");
 }
 
+function cleanFolderNameStem(stem: string, plan: TranscodePlan): string {
+  const pattern = folderCleanupPattern(plan);
+  if (!pattern || folderCleanupError(plan)) return stem;
+  return stem.replace(new RegExp(pattern, "g"), "").replace(/\s+/g, " ").trim().replace(/^[ ._-]+|[ ._-]+$/g, "");
+}
+
 function filenamePreviewValues(
   file: MediaFileDetail,
   data: FileTranscode,
@@ -543,7 +524,9 @@ function filenamePreviewValues(
     })
     .filter(Boolean);
   const allSubtitleLanguages = [...new Set([...subtitleLanguages, ...externalLanguages])].sort();
-  const metadataSeparator = plan.filename_metadata_separator ?? ", ";
+  const metadataSeparator = kind === "folder"
+    ? plan.folder_metadata_separator ?? ", "
+    : plan.filename_metadata_separator ?? ", ";
   const bitrate = primaryPlan?.bitrate ?? sourceVideo?.bit_rate;
   const audioByIndex = new Map(file.audio_streams.map((stream) => [stream.stream_index, stream]));
   const selectedAudio = plan.audio_streams.flatMap((decision) => {
@@ -604,6 +587,7 @@ function filenamePreviewValues(
   const bitDepth = sourceVideo?.bit_depth;
   const resolutionCategory = classifyResolutionCategory(width, height, resolutionCategories);
   const pathParts = data.original.relative_path.replaceAll("\\", "/").split("/").filter(Boolean);
+  const directFolderName = pathParts.length > 1 ? pathParts[pathParts.length - 2] : "";
   return {
     sourceName: cleanFilenameStem(file.filename.replace(/\.[^./\\]+$/, ""), plan),
     movieTitle,
@@ -631,7 +615,7 @@ function filenamePreviewValues(
     contentCategory: file.content_category ?? "main",
     container: plan.container.toUpperCase(),
     videoBitrate: bitrate ? `${(bitrate / 1_000_000).toFixed(1).replace(/\.0$/, "")}Mbps` : "",
-    folderName: pathParts.length > 1 ? pathParts[pathParts.length - 2] : "",
+    folderName: kind === "folder" ? cleanFolderNameStem(directFolderName, plan) : directFolderName,
   };
 }
 
@@ -664,6 +648,37 @@ function renderFilenamePreview(
     rendered = `${values.sourceName} ${rendered}`.trim();
   }
   return `${rendered || "transcoded"}.${plan.container}`;
+}
+
+function renderFolderPreview(
+  file: MediaFileDetail,
+  data: FileTranscode,
+  plan: TranscodePlan,
+  connectorSources: FileConnectorSource[],
+  resolutionCategories: ResolutionCategory[] | null | undefined,
+): string | null {
+  const template = plan.folder_template_override === false
+    ? DEFAULT_FOLDER_TEMPLATE
+    : plan.folder_template ?? DEFAULT_FOLDER_TEMPLATE;
+  const pathParts = data.original.relative_path.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (pathParts.length < 2) return null;
+  const values = filenamePreviewValues(file, data, plan, connectorSources, resolutionCategories, "folder");
+  let rendered = template;
+  for (const [token, value] of Object.entries(values)) {
+    rendered = rendered.replaceAll(`{${token}}`, value);
+  }
+  rendered = rendered
+    .replace(/\[\s*[,;|+\-]*\s*\]/g, "")
+    .replace(/([\[,;|+])\s*([,;|+])/g, "$1")
+    .replace(/\s*,\s*(?=\])/g, "")
+    .replace(/\[\s*,\s*/g, "[")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[. ]+|[. ]+$/g, "");
+  return rendered || "—";
 }
 
 function encoderQualitySpec(encoder: TranscodeEncoderCapability | undefined): QualitySpec {
@@ -1381,6 +1396,15 @@ function targetLabel(plan: TranscodePlan, federation: TranscodeFederation | null
   return plan.target_mode === "automatic" ? "automatic" : "local";
 }
 
+function releasePlan(plan: TranscodePlan): TranscodePlan {
+  return releaseVisibility.federation ? plan : {
+    ...plan,
+    target_mode: "local",
+    target_member_id: null,
+    target_device_id: null,
+  };
+}
+
 function jobIsActive(job: TranscodeJob | null): boolean {
   return job?.status === "queued" || job?.status === "running";
 }
@@ -1539,7 +1563,7 @@ export function TranscodingPanel({
         (current, preset) => applyFormattingPreset(current, preset),
         defaultUnchangedPlan(nextData.presets?.compatibility ?? nextData.profiles.compatibility, file),
       );
-      setPlan((current) => current ?? nextPlan);
+      setPlan((current) => current ?? releasePlan(nextPlan));
       setSelectedFormattingIds({
         filename: defaults.find((preset) => preset.kind === "filename")?.id ?? null,
         folder: defaults.find((preset) => preset.kind === "folder")?.id ?? null,
@@ -1550,6 +1574,7 @@ export function TranscodingPanel({
   }, [file]);
 
   useEffect(() => {
+    if (!releaseVisibility.federation) return;
     let disposed = false;
     api.transcodeFederation()
       .then((payload) => { if (!disposed) setFederation(payload); })
@@ -1597,7 +1622,7 @@ export function TranscodingPanel({
   }, [data, plan]);
 
   useEffect(() => {
-    if (!federation?.settings.enabled || !plan || federationAutoAppliedRef.current || plan.target_mode !== "local") return;
+    if (!releaseVisibility.federation || !federation?.settings.enabled || !plan || federationAutoAppliedRef.current || plan.target_mode !== "local") return;
     federationAutoAppliedRef.current = true;
     setPlan({ ...automaticEncoderPlan(plan), target_mode: "automatic" });
   }, [federation?.settings.enabled, plan]);
@@ -1653,9 +1678,9 @@ export function TranscodingPanel({
     const normalizedPlan = normalizePlanStreamOrder(nextPlan, file);
     setPlan((current) => ({
       ...normalizedPlan,
-      target_mode: current?.target_mode ?? normalizedPlan.target_mode ?? "local",
-      target_member_id: current?.target_member_id ?? normalizedPlan.target_member_id ?? null,
-      target_device_id: current?.target_device_id ?? normalizedPlan.target_device_id ?? null,
+      target_mode: releaseVisibility.federation ? (current?.target_mode ?? normalizedPlan.target_mode ?? "local") : "local",
+      target_member_id: releaseVisibility.federation ? (current?.target_member_id ?? normalizedPlan.target_member_id ?? null) : null,
+      target_device_id: releaseVisibility.federation ? (current?.target_device_id ?? normalizedPlan.target_device_id ?? null) : null,
     }));
   }, [file]);
 
@@ -1670,7 +1695,7 @@ export function TranscodingPanel({
   const setExpertPlan = useCallback((next: TranscodePlan) => {
     setSelectedSavedPresetId(null);
     setSelectedPresetKey("expert");
-    setPlan(next);
+    setPlan(releasePlan(next));
   }, []);
 
   const chooseFormattingPreset = (kind: FormattingKind, id: number | null) => {
@@ -1852,9 +1877,9 @@ export function TranscodingPanel({
     setValidating(true);
     setError(null);
     try {
-      const result = await api.validateFileTranscode(file.id, automaticEncoderPlan(plan));
+      const result = await api.validateFileTranscode(file.id, releasePlan(automaticEncoderPlan(plan)));
       setValidation(result);
-      setPlan(result.normalized_plan);
+      setPlan(releasePlan(result.normalized_plan));
       return result;
     } catch (reason) {
       setError((reason as Error).message);
@@ -1869,7 +1894,7 @@ export function TranscodingPanel({
     if (!result?.valid || !plan) return;
     setStarting(true);
     try {
-      const nextJob = await api.startFileTranscode(file.id, result.normalized_plan);
+      const nextJob = await api.startFileTranscode(file.id, releasePlan(result.normalized_plan));
       setJob(nextJob);
       setValidation(result);
       setError(null);
@@ -1915,12 +1940,13 @@ export function TranscodingPanel({
     const options = formattingPresets.filter((preset) => preset.kind === kind);
     const selectedId = matchingFormattingPresetId(plan, formattingPresets, kind, selectedFormattingIds[kind]);
     const selectLabel = t(kind === "filename" ? "transcoding.filenameFormattingPreset" : "transcoding.folderFormattingPreset");
+    const formattingKindLabel = t(kind === "filename" ? "transcoding.filenameFormatting" : "transcoding.folderFormatting");
     return <div className="transcode-formatting-preset-controls">
       <button
         type="button"
         className="secondary icon-only-button transcode-formatting-preset-add"
-        aria-label={t("transcoding.formattingPresets.saveCurrent", { kind: t(kind === "filename" ? "transcoding.presetSettingsTabs.filename" : "transcoding.presetSettingsTabs.folder") })}
-        title={t("transcoding.formattingPresets.saveCurrent", { kind: t(kind === "filename" ? "transcoding.presetSettingsTabs.filename" : "transcoding.presetSettingsTabs.folder") })}
+        aria-label={t("transcoding.formattingPresets.saveCurrent", { kind: formattingKindLabel })}
+        title={t("transcoding.formattingPresets.saveCurrent", { kind: formattingKindLabel })}
         onClick={() => { setSaveFormattingKind(kind); setFormattingName(""); setFormattingError(null); }}
       ><Plus size={17} aria-hidden="true" /></button>
       <select
@@ -1929,7 +1955,7 @@ export function TranscodingPanel({
         value={selectedId === null ? "" : String(selectedId)}
         onChange={(event) => chooseFormattingPreset(kind, event.target.value ? Number(event.target.value) : null)}
       >
-        <option value="">{t(options.length ? "transcoding.formattingPresets.custom" : kind === "filename" ? "transcoding.filenameFormattingPresetEmpty" : "transcoding.folderFormattingPresetEmpty")}</option>
+        <option value="">{t(options.length ? "transcoding.selectPreset" : "transcoding.formattingPresets.create")}</option>
         {options.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}{preset.is_default ? ` ★` : ""}</option>)}
       </select>
     </div>;
@@ -2135,7 +2161,7 @@ export function TranscodingPanel({
             <option value="replace_original">{t("transcoding.replaceOriginal")}</option>
           </select>
         </label>
-        <label>
+        {releaseVisibility.federation ? <label>
           <span>{t("transcoding.federation.target")}</span>
           <select
             className={transcodeControlClass}
@@ -2159,8 +2185,8 @@ export function TranscodingPanel({
             <option value="automatic" disabled={!federation?.settings.enabled}>{t("transcoding.federation.targetAutomatic")}</option>
             {federation?.members.map((member) => <option key={member.installation_id} value={`member:${member.installation_id}`} disabled={!member.reachable}>{member.display_name}</option>)}
           </select>
-        </label>
-        {plan.target_mode === "member" && plan.target_member_id ? (() => {
+        </label> : null}
+        {releaseVisibility.federation && plan.target_mode === "member" && plan.target_member_id ? (() => {
           const member = federation?.members.find((candidate) => candidate.installation_id === plan.target_member_id);
           const devices = member?.capabilities?.devices?.filter((device) => device.status === "available") ?? [];
           return devices.length ? (
@@ -2491,7 +2517,7 @@ export function TranscodingPanel({
       {(() => {
         const displayedTemplate = displayedFilenameTemplate;
         const filenameFormattingEnabled = plan.filename_format_enabled ?? data.original.library_type !== "series";
-        const filenameSectionExpanded = openFilenameSection && filenameFormattingEnabled;
+        const filenameSectionExpanded = openFilenameSection;
         const filenameCleanupPreset = plan.filename_cleanup_preset ?? "none";
         const cleanupError = filenameCleanupError(plan);
         const preview = renderFilenamePreview(file, data, plan, connectorSources, resolutionCategories);
@@ -2544,7 +2570,7 @@ export function TranscodingPanel({
               />
               {renderFormattingPresetControls("filename")}
             </header>
-            {openFilenameSection && filenameFormattingEnabled ? (
+            {openFilenameSection ? (
               <div className="transcode-filename-body" id={`transcode-filename-${file.id}`}>
                 <div
                   ref={filenameTemplateInputRef}
@@ -2580,29 +2606,14 @@ export function TranscodingPanel({
                   }}
                   dangerouslySetInnerHTML={{ __html: filenameTemplateEditorMarkup(displayedTemplate) }}
                 />
-                <div className="transcode-filename-metadata-tools">
-                  <button
-                    type="button"
-                    className="secondary small settings-panel-header-action transcode-filename-metadata-toggle"
-                    aria-expanded={metadataTokensOpen}
-                    aria-controls={`transcode-filename-metadata-${file.id}`}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setMetadataTokensOpen((current) => !current)}
-                  >
-                    {metadataTokensOpen ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}
-                    {t("transcoding.filenameAddMetadata")}
-                  </button>
-                  {metadataTokensOpen ? (
-                    <div
-                      className="transcode-filename-token-list"
-                      id={`transcode-filename-metadata-${file.id}`}
-                      role="group"
-                      aria-label={t("transcoding.filenameMetadataTokens")}
-                    >
-                      {renderMetadataTokenGroups(availableFilenameMetadataTokens, filenameMetadataValues, insertFilenameToken)}
-                    </div>
-                  ) : null}
-                </div>
+                <TranscodeFormattingMetadataMenu
+                  kind="filename"
+                  id={`transcode-filename-metadata-${file.id}`}
+                  open={metadataTokensOpen}
+                  onToggle={() => setMetadataTokensOpen((current) => !current)}
+                >
+                  {renderMetadataTokenGroups(availableFilenameMetadataTokens, filenameMetadataValues, insertFilenameToken)}
+                </TranscodeFormattingMetadataMenu>
                 <div className="transcode-filename-options-row">
                   <label className="transcode-filename-field transcode-filename-divider-field">
                     <span className="transcode-field-label">
@@ -2692,10 +2703,11 @@ export function TranscodingPanel({
 
       {(() => {
         const folderFormattingEnabled = plan.folder_format_enabled ?? data.original.library_type === "series";
-        const folderSectionExpanded = openFolderSection && folderFormattingEnabled;
+        const folderSectionExpanded = openFolderSection;
         const folderCleanupPreset = plan.folder_cleanup_preset ?? "none";
         const cleanupError = folderCleanupError(plan);
         const folderMetadataValues = filenamePreviewValues(file, data, plan, connectorSources, resolutionCategories, "folder");
+        const folderPreview = renderFolderPreview(file, data, plan, connectorSources, resolutionCategories);
         const availableFolderMetadataTokens = FILENAME_METADATA_TOKENS;
         return (
           <section className={`media-card library-settings-card transcode-filename-section transcode-folder-section${folderSectionExpanded ? " is-expanded" : " is-collapsed"}${folderFormattingEnabled ? "" : " is-disabled"}`}>
@@ -2748,7 +2760,7 @@ export function TranscodingPanel({
               />
               {renderFormattingPresetControls("folder")}
             </header>
-            {openFolderSection && folderFormattingEnabled ? (
+            {openFolderSection ? (
               <div className="transcode-filename-body" id={`transcode-folder-${file.id}`}>
                 <div
                   ref={folderTemplateInputRef}
@@ -2784,29 +2796,14 @@ export function TranscodingPanel({
                   }}
                   dangerouslySetInnerHTML={{ __html: filenameTemplateEditorMarkup(displayedFolderTemplate) }}
                 />
-                <div className="transcode-filename-metadata-tools">
-                  <button
-                    type="button"
-                    className="secondary small settings-panel-header-action transcode-filename-metadata-toggle"
-                    aria-expanded={folderMetadataTokensOpen}
-                    aria-controls={`transcode-folder-metadata-${file.id}`}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setFolderMetadataTokensOpen((current) => !current)}
-                  >
-                    {folderMetadataTokensOpen ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}
-                    {t("transcoding.folderAddMetadata")}
-                  </button>
-                  {folderMetadataTokensOpen ? (
-                    <div
-                      className="transcode-filename-token-list"
-                      id={`transcode-folder-metadata-${file.id}`}
-                      role="group"
-                      aria-label={t("transcoding.folderMetadataTokens")}
-                    >
-                      {renderMetadataTokenGroups(availableFolderMetadataTokens, folderMetadataValues, insertFolderToken)}
-                    </div>
-                  ) : null}
-                </div>
+                <TranscodeFormattingMetadataMenu
+                  kind="folder"
+                  id={`transcode-folder-metadata-${file.id}`}
+                  open={folderMetadataTokensOpen}
+                  onToggle={() => setFolderMetadataTokensOpen((current) => !current)}
+                >
+                  {renderMetadataTokenGroups(availableFolderMetadataTokens, folderMetadataValues, insertFolderToken)}
+                </TranscodeFormattingMetadataMenu>
                 <div className="transcode-filename-options-row">
                   <label className="transcode-filename-field transcode-filename-divider-field">
                     <span className="transcode-field-label">
@@ -2871,7 +2868,10 @@ export function TranscodingPanel({
                   </div>
                   {renderLanguageCodeFormatControl("folder")}
                 </div>
-                <p className="field-hint transcode-folder-scope-hint">{t("transcoding.folderFormattingScope")}</p>
+                <div className="transcode-filename-preview is-prominent">
+                  <span>{t("transcoding.folderFormattingPreview")}</span>
+                  <code aria-live="polite">{folderPreview ?? t("transcoding.folderPreviewNoParent")}</code>
+                </div>
               </div>
             ) : null}
           </section>

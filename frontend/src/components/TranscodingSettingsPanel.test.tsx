@@ -18,6 +18,7 @@ import {
   TRANSCODING_MATRIX_EXPANSION_STORAGE_KEY,
 } from "../lib/transcoding-matrix-state";
 import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
+import { releaseVisibility } from "../lib/release-visibility";
 
 const transcodingSettings: TranscodingSettings = {
   execution_mode: "hardware_required",
@@ -298,10 +299,13 @@ const federationWithPendingMembers: TranscodeFederation = {
 
 describe("TranscodingSettingsPanel", () => {
   beforeEach(async () => {
+    releaseVisibility.federation = true;
+    releaseVisibility.automationRules = true;
     await i18n.changeLanguage("en");
     window.localStorage.clear();
     vi.spyOn(api, "transcodeCapabilities").mockResolvedValue(capabilities);
     vi.spyOn(api, "transcodeCapabilityMatrix").mockResolvedValue(notRunMatrix);
+    vi.spyOn(api, "transcodeCapabilityMatrixTestProgress").mockResolvedValue({ running: false, completed: 0, total: 0 });
     vi.spyOn(api, "testTranscodeCapabilityMatrix").mockResolvedValue(completedMatrix);
     vi.spyOn(api, "transcodeFederation").mockResolvedValue(federation);
     vi.spyOn(api, "transcodePresets").mockResolvedValue([]);
@@ -313,12 +317,26 @@ describe("TranscodingSettingsPanel", () => {
     vi.spyOn(api, "pairTranscodeFederation").mockResolvedValue(federation);
     vi.spyOn(api, "testTranscodeFederationNetwork").mockResolvedValue(federation);
     vi.spyOn(api, "testTranscodeFederationMemberCapabilityMatrix").mockResolvedValue(federation);
+    vi.spyOn(api, "transcodeFederationMemberCapabilityMatrixTestProgress").mockResolvedValue({ running: false, completed: 0, total: 0 });
   });
 
   afterEach(() => {
+    releaseVisibility.federation = false;
+    releaseVisibility.automationRules = false;
     cleanup();
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
     vi.restoreAllMocks();
+  });
+
+  it("hides federation controls for this release", async () => {
+    releaseVisibility.federation = false;
+    releaseVisibility.automationRules = false;
+    render(<TranscodingSettingsPanel settings={appSettings} appSettingsLoaded onUpdated={vi.fn()} />);
+    expect(await screen.findByRole("heading", { name: "Transcoding" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Federation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Automation Rules" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Test network" })).not.toBeInTheDocument();
+    expect(api.transcodeFederation).not.toHaveBeenCalled();
   });
 
   it("does not expose a global hardware-device selector", async () => {
@@ -626,6 +644,58 @@ describe("TranscodingSettingsPanel", () => {
     expect(tooltip).toHaveTextContent("Run 1: 0.250 s");
     expect(tooltip).toHaveTextContent("4 sessions");
     expect(tooltip).toHaveTextContent("+12.0 %");
+  });
+
+  it("updates the hardware-test percentage while the local matrix call is still running", async () => {
+    let finishMatrixTest!: (matrix: TranscodeCapabilityMatrix) => void;
+    vi.mocked(api.testTranscodeCapabilityMatrix).mockReturnValue(new Promise((resolve) => {
+      finishMatrixTest = resolve;
+    }));
+    vi.mocked(api.transcodeCapabilityMatrixTestProgress).mockResolvedValue({
+      running: true,
+      completed: 42,
+      total: 105,
+    });
+
+    render(<TranscodingSettingsPanel settings={appSettings} appSettingsLoaded onUpdated={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Expand Accelerators" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Test Hardware" }));
+
+    const progress = await screen.findByRole("progressbar", { name: "Hardware test progress" });
+    await waitFor(() => expect(progress).toHaveAttribute("aria-valuenow", "40"));
+    expect(screen.getByRole("button", { name: /Testing 40%/ })).toHaveAttribute("aria-busy", "true");
+
+    finishMatrixTest(completedMatrix);
+    await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Hardware test progress" })).not.toBeInTheDocument());
+  });
+
+  it("includes live progress from a connected federation member", async () => {
+    vi.mocked(api.transcodeFederation).mockResolvedValue({
+      ...federationWithMemberCapabilities,
+      settings: { ...federationWithMemberCapabilities.settings, enabled: true },
+    });
+    let finishRemoteTest!: (result: TranscodeFederation) => void;
+    vi.mocked(api.testTranscodeFederationMemberCapabilityMatrix).mockReturnValue(new Promise((resolve) => {
+      finishRemoteTest = resolve;
+    }));
+    vi.mocked(api.transcodeFederationMemberCapabilityMatrixTestProgress).mockResolvedValue({
+      running: true,
+      completed: 75,
+      total: 100,
+    });
+
+    render(<TranscodingSettingsPanel settings={appSettings} appSettingsLoaded onUpdated={vi.fn()} />);
+
+    await waitFor(() => expect(api.transcodeFederation).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "Test Hardware" }));
+
+    const progress = await screen.findByRole("progressbar", { name: "Hardware test progress" });
+    await waitFor(() => expect(progress).toHaveAttribute("aria-valuenow", "92"));
+    expect(api.transcodeFederationMemberCapabilityMatrixTestProgress).toHaveBeenCalledWith("member-installation");
+
+    finishRemoteTest(federationWithMemberCapabilities);
+    await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Hardware test progress" })).not.toBeInTheDocument());
   });
 
   it("asks every active connected federation member to refresh its matrix when needed", async () => {

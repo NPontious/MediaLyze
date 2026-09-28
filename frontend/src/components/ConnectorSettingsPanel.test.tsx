@@ -75,9 +75,11 @@ describe("ConnectorSettingsPanel", () => {
     render(<ConnectorSettingsPanel />);
 
     const addConnection = await screen.findByRole("button", { name: "Add connection" });
-    expect(addConnection).toHaveClass("settings-panel-header-action", "connector-action-button");
+    expect(addConnection).toHaveClass("secondary", "small", "settings-panel-header-action");
+    expect(addConnection).not.toHaveClass("connector-action-button");
     expect(addConnection.closest(".panel-title-row")).toBeInTheDocument();
-    expect(screen.getByText("Connect MediaLyze to one or more media servers and map each external library location to a stable MediaLyze root.")).toHaveClass("subtitle");
+    expect(screen.getByRole("button", { name: "Explain connector setup" })).toBeInTheDocument();
+    expect(screen.queryByText("Connect MediaLyze to one or more media servers and map each external library location to a stable MediaLyze root.")).not.toBeInTheDocument();
     fireEvent.click(addConnection);
 
     expect(screen.getByRole("heading", { name: "Add connector" })).toBeInTheDocument();

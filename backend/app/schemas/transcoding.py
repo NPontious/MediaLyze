@@ -641,6 +641,12 @@ class TranscodeCapabilityMatrixRead(BaseModel):
     error: str | None = None
 
 
+class TranscodeMatrixTestProgressRead(BaseModel):
+    running: bool = False
+    completed: int = Field(default=0, ge=0)
+    total: int = Field(default=0, ge=0)
+
+
 class TranscodeValidationRead(BaseModel):
     valid: bool
     output_path: str

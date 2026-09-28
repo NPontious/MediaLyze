@@ -72,11 +72,13 @@ def test_missing_matrix_result_stays_unmeasured_until_a_test_runs(tmp_path) -> N
 def test_matrix_uses_hardware_only_after_complete_pair_passes_and_persists(tmp_path, monkeypatch) -> None:
     settings = _settings(tmp_path)
     monkeypatch.setattr(transcode_matrix, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
-    monkeypatch.setattr(
-        transcode_matrix,
-        "_create_fixture",
-        lambda _ffmpeg, codec, directory: (directory / f"source-{codec}.mkv", f"fixture-{codec}"),
-    )
+    fixture_progress = []
+
+    def create_fixture(_ffmpeg, codec, directory):
+        fixture_progress.append(transcode_matrix.transcode_matrix_test_progress())
+        return directory / f"source-{codec}.mkv", f"fixture-{codec}"
+
+    monkeypatch.setattr(transcode_matrix, "_create_fixture", create_fixture)
 
     def fake_run(arguments: list[str], *, timeout: int = 25) -> tuple[bool, str | None]:
         if "-hwaccel" in arguments:
@@ -118,6 +120,10 @@ def test_matrix_uses_hardware_only_after_complete_pair_passes_and_persists(tmp_p
     assert fallback.status == "software"
     assert result.capability_fingerprint
     assert transcode_matrix.load_transcode_matrix(settings) == result
+    assert any(progress.running and 0 < progress.completed < progress.total for progress in fixture_progress)
+    progress = transcode_matrix.transcode_matrix_test_progress()
+    assert progress.running is False
+    assert progress.completed == progress.total
 
 
 def test_matrix_refreshes_only_after_capability_fingerprint_changes(tmp_path, monkeypatch) -> None:
@@ -131,7 +137,15 @@ def test_matrix_refreshes_only_after_capability_fingerprint_changes(tmp_path, mo
         lambda *_args, **_kwargs: capabilities,
     )
 
-    def fake_build(_settings, _capabilities):
+    def fake_build(
+        _settings,
+        _capabilities,
+        *,
+        on_work_completed=None,
+        on_work_total_changed=None,
+        benchmark_work_estimates=None,
+    ):
+        del on_work_completed, on_work_total_changed, benchmark_work_estimates
         nonlocal build_calls
         build_calls += 1
         return TranscodeCapabilityMatrixRead(
@@ -166,8 +180,12 @@ def test_parallel_capacity_reports_highest_level_before_repeatable_slowdown(monk
         return True, 1.0 if calls <= 21 else 1.3, None
 
     monkeypatch.setattr(transcode_matrix, "_timed_run_command", fake_timed_run)
+    reported_work = []
 
-    maximum, lower_bound, benchmark = transcode_matrix._parallel_capacity(["ffmpeg-test"])
+    maximum, lower_bound, benchmark = transcode_matrix._parallel_capacity(
+        ["ffmpeg-test"],
+        on_work_completed=reported_work.append,
+    )
 
     assert (maximum, lower_bound) == (4, False)
     assert benchmark.baseline_median_seconds == 1.0
@@ -175,6 +193,24 @@ def test_parallel_capacity_reports_highest_level_before_repeatable_slowdown(monk
     assert [level.concurrency for level in benchmark.levels] == [1, 2, 4, 5, 8]
     assert all(len(level.runs) == 3 for level in benchmark.levels)
     assert benchmark.levels[-1].passed is False
+    frame_weight = transcode_matrix.PARALLEL_PROBE_FRAMES // transcode_matrix.MATRIX_CELL_FRAMES
+    assert len(reported_work) == calls
+    assert set(reported_work) == {frame_weight}
+    assert sum(reported_work) == transcode_matrix._benchmark_work_units(benchmark)
+
+
+def test_matrix_progress_plan_reserves_weight_for_possible_hardware_benchmarks(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(transcode_matrix, "MAX_PARALLEL_PROBE_JOBS", 4)
+
+    total, estimates = transcode_matrix._matrix_test_work_plan(_capabilities())
+
+    # Seven fixture steps + one step per matrix cell, plus one 30-run
+    # worst-case benchmark reservation for each of the fourteen hardware pairs.
+    assert len(estimates) == 14
+    assert set(estimates.values()) == {240}
+    assert total == 7 + 49 + 14 * 240
 
 
 def test_matrix_does_not_accept_zero_exit_hardware_pair_without_hardware_decode(

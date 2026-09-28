@@ -1702,6 +1702,12 @@ export type TranscodeCapabilityMatrix = {
   error: string | null;
 };
 
+export type TranscodeMatrixTestProgress = {
+  running: boolean;
+  completed: number;
+  total: number;
+};
+
 export type TranscodeFederationSettings = {
   enabled: boolean;
   federation_id: string;
@@ -2827,6 +2833,8 @@ export const api = {
     request<TranscodeCapabilities>(`/transcoding/capabilities${refresh ? "?refresh=true" : ""}`),
   transcodeCapabilityMatrix: () =>
     request<TranscodeCapabilityMatrix>("/transcoding/capability-matrix"),
+  transcodeCapabilityMatrixTestProgress: () =>
+    request<TranscodeMatrixTestProgress>("/transcoding/capability-matrix/test/progress"),
   testTranscodeCapabilityMatrix: () =>
     request<TranscodeCapabilityMatrix>("/transcoding/capability-matrix/test", { method: "POST" }),
   transcodeFederation: () => request<TranscodeFederation>("/transcoding/federation"),
@@ -2851,6 +2859,12 @@ export const api = {
     return request<TranscodeFederation>(
       `/transcoding/federation/members/${encodedInstallationId}/capability-matrix/test`,
       { method: "POST" },
+    );
+  },
+  transcodeFederationMemberCapabilityMatrixTestProgress: (installationId: string) => {
+    const encodedInstallationId = encodeURIComponent(installationId);
+    return request<TranscodeMatrixTestProgress>(
+      `/transcoding/federation/members/${encodedInstallationId}/capability-matrix/test/progress`,
     );
   },
   syncTranscodeFederationMember: (installationId: string) =>

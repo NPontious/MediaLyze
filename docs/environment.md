@@ -6,8 +6,7 @@ are the portable form to use in Docker Compose and `.env` files.
 
 The Docker image already supplies the server defaults for `APP_PORT`,
 `CONFIG_PATH`, and `MEDIA_ROOT`. Most deployments therefore only need the
-mounts, timezone, and any federation address that is not discoverable from the
-container.
+mounts and timezone.
 
 ## Minimal Docker Compose configuration
 
@@ -24,8 +23,6 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-      - "8091:8091/tcp"
-      - "43211:43211/udp"
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -33,7 +30,6 @@ services:
       - "44"
     environment:
       TZ: Europe/Berlin
-      MEDIALYZE_FEDERATION_ADVERTISE_URLS: http://192.0.2.10:8091
       MEDIALYZE_TRANSCODE_OUTPUT_ROOT: /transcode-output
       # Optional: keep only when the container uses these permissions/GPU paths.
       PUID: "1000"
@@ -44,13 +40,6 @@ services:
       - /path/to/media:/media:ro
       - ./Transcode_Output:/transcode-output:rw
 ```
-
-`192.0.2.10` is only an example address. Replace it with an address reachable
-by the other MediaLyze installation, or omit `MEDIALYZE_FEDERATION_ADVERTISE_URLS`
-when LAN discovery and the automatically detected addresses are sufficient.
-The application defaults are intentionally not repeated in this example:
-`CONFIG_PATH=/config`, `MEDIA_ROOT=/media`, federation enabled, federation
-listener `0.0.0.0:8091`, and discovery port `43211` are already the defaults.
 
 ## Application and runtime settings
 
@@ -85,36 +74,6 @@ listener `0.0.0.0:8091`, and discovery port `43211` are already the defaults.
 `CONFIG_PATH` contains production state. Do not point it at a temporary or
 shared directory, and do not change it during an upgrade unless the database
 and all persisted configuration have been deliberately migrated.
-
-## Federation settings
-
-Federation also requires the installation to be enabled in the Transcoding
-settings. `MEDIALYZE_FEDERATION_ENABLED` is the process-level safety gate; the
-persisted Federation setting in the database must also be enabled.
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `MEDIALYZE_FEDERATION_ENABLED` | `true` | Process-level enable/disable gate for direct Federation. Set to `false` to disable it without deleting paired members. |
-| `MEDIALYZE_FEDERATION_HOST` | `0.0.0.0` | Bind address for the separate Federation HTTP listener. |
-| `MEDIALYZE_FEDERATION_PORT` | `8091` | Internal TCP port for Federation protocol requests. Expose the same container port in Compose. |
-| `MEDIALYZE_FEDERATION_DISCOVERY_PORT` | `43211` | UDP port used for LAN discovery. |
-| `MEDIALYZE_FEDERATION_PASSCODE` | unset | Optional secret seed for the rotating six-digit pairing code. Treat it as a secret; existing persisted pairing state is retained when it is unset. |
-| `MEDIALYZE_FEDERATION_ADVERTISE_URLS` | unset | Comma-separated HTTP/HTTPS base URLs that peers can actually reach, for example `http://nas.example.lan:8091,http://192.0.2.10:8091`. |
-| `MEDIALYZE_FEDERATION_CHUNK_SIZE_BYTES` | `1048576` | Resumable transfer chunk size. Valid range: 64 KiB to 16 MiB. |
-| `MEDIALYZE_FEDERATION_TEMP_BUDGET_BYTES` | `0` | Maximum Federation workspace budget in bytes. `0` means no explicit budget. |
-| `MEDIALYZE_FEDERATION_RESULT_RETENTION_HOURS` | `24` | Retention period for completed remote result workspaces, from 1 to 168 hours. |
-| `MEDIALYZE_FEDERATION_REQUEST_TIMEOUT_SECONDS` | `15` | HTTP request timeout used for peer operations, from greater than 0.5 to 120 seconds. |
-
-Host-side Compose port variables are different from the container settings:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `FEDERATION_HOST_PORT` | `8091` | Host TCP port mapped to `MEDIALYZE_FEDERATION_PORT`. |
-| `FEDERATION_DISCOVERY_PORT` | `43211` | Host UDP port mapped to `MEDIALYZE_FEDERATION_DISCOVERY_PORT`. |
-
-If a host port or container port is changed, update the mapping and the
-advertised URL together. A port that is merely published by Docker is not
-enough; the application listener must bind the corresponding container port.
 
 ## Telemetry
 
@@ -156,8 +115,7 @@ directory if an explicit `CONFIG_PATH` is not supplied.
 
 ## Security and upgrade notes
 
-- Never commit `MEDIALYZE_FEDERATION_PASSCODE`, Jellyfin keys, or a writable
-  production `.env` file.
+- Never commit Jellyfin keys or a writable production `.env` file.
 - Keep `/media` read-only unless a workflow explicitly requires writes.
 - Keep `/config` and `/transcode-output` on persistent storage with sufficient
   free space.

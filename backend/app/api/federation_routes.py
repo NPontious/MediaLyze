@@ -24,6 +24,7 @@ from backend.app.schemas.transcoding import (
     TranscodeFederationRead,
     TranscodeFederationSettingsRead,
     TranscodeFederationSettingsUpdate,
+    TranscodeMatrixTestProgressRead,
 )
 from backend.app.services.transcode_federation import (
     FederationAuthenticationError,
@@ -40,6 +41,7 @@ from backend.app.services.transcode_federation import (
     federation_read,
     federation_settings_read,
     get_federation_state,
+    get_remote_member_capability_matrix_test_progress,
     local_descriptor,
     member_heartbeat,
     network_probe_response,
@@ -57,6 +59,7 @@ from backend.app.services.transcode_federation import (
 from backend.app.services.transcode_matrix import (
     TranscodeMatrixBusyError,
     run_transcode_matrix_test_if_changed,
+    transcode_matrix_test_progress,
 )
 from backend.app.utils.time import utc_now
 
@@ -231,6 +234,21 @@ def federation_member_capability_matrix_test(
     return federation_read(db, settings, runtime=runtime)
 
 
+@federation_router.get(
+    "/members/{installation_id}/capability-matrix/test/progress",
+    response_model=TranscodeMatrixTestProgressRead,
+)
+def federation_member_capability_matrix_test_progress(
+    installation_id: str,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeMatrixTestProgressRead:
+    try:
+        return get_remote_member_capability_matrix_test_progress(db, settings, installation_id)
+    except FederationError as exc:
+        raise _raise_federation_error(exc) from exc
+
+
 @federation_router.delete("/members/{installation_id}", status_code=204)
 def federation_member_exclude(
     installation_id: str,
@@ -314,6 +332,25 @@ def federation_protocol_capability_matrix_test(
         )
     except TranscodeMatrixBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (FederationAuthenticationError, FederationError) as exc:
+        raise _raise_federation_error(exc) from exc
+
+
+@federation_protocol_router.post("/capability-matrix/test/progress")
+def federation_protocol_capability_matrix_test_progress(
+    envelope: TranscodeFederationProtocolSecureEnvelope,
+    installation_id: str = Header(alias="X-MediaLyze-Installation-ID"),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    try:
+        member, payload = decrypt_member_request(db, installation_id, envelope)
+        if payload.get("kind") != "capability_matrix_test_progress":
+            raise FederationError("Unsupported federation capability progress request")
+        if not federation_enabled(db, settings):
+            raise FederationError("Federation is not enabled on this installation", status_code=409)
+        progress = transcode_matrix_test_progress()
+        return encrypt_member_response(member, {"progress": progress.model_dump(mode="json")})
     except (FederationAuthenticationError, FederationError) as exc:
         raise _raise_federation_error(exc) from exc
 

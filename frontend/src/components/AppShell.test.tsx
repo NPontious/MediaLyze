@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
-import { api, type AppSettings } from "../lib/api";
+import { api, type AppSettings, type LibrarySummary } from "../lib/api";
 import { ScanJobsProvider } from "../lib/scan-jobs";
 import { AppShell } from "./AppShell";
 
@@ -71,6 +71,7 @@ function renderShell(initialEntries = ["/"]) {
               <Route path="/" element={<div>Dashboard</div>} />
               <Route path="/settings" element={<div>Settings page</div>} />
               <Route path="/storage-map" element={<div>Storage map page</div>} />
+              <Route path="/libraries/:libraryId" element={<div>Library page</div>} />
               <Route path="/ui-elements" element={<div>UI elements page</div>} />
             </Route>
           </Routes>
@@ -104,6 +105,30 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
+  it("opens the library list on hover or click and navigates to the selected library", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.mocked(api.libraries).mockResolvedValue([
+      { id: 1, name: "Movies" } as LibrarySummary,
+      { id: 2, name: "Music" } as LibrarySummary,
+    ]);
+    renderShell();
+
+    const trigger = await screen.findByRole("button", { name: "Libraries" });
+    await waitFor(() => expect(api.libraries).toHaveBeenCalled());
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveAttribute("data-tooltip", "Libraries");
+    fireEvent.mouseEnter(trigger.parentElement!);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Music" })).toHaveAttribute("href", "/libraries/2");
+    fireEvent.mouseLeave(trigger.parentElement!);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("link", { name: "Movies" }));
+    expect(await screen.findByText("Library page")).toBeInTheDocument();
+    expect(trigger).toHaveClass("active");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("shows the storage map and transcoding center in the primary navigation", async () => {
     window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
 
@@ -117,6 +142,13 @@ describe("AppShell", () => {
       "/settings",
       "/storage-map",
       "/transcoding",
+    ]);
+    expect(primaryLinks.map((link) => link.getAttribute("data-tooltip"))).toEqual([
+      "Dashboard",
+      "Compare files",
+      "Settings",
+      "Storage map",
+      "Transcoding",
     ]);
 
     fireEvent.click(screen.getByRole("link", { name: "Storage map" }));
@@ -684,7 +716,27 @@ describe("AppShell", () => {
         telemetry: { mode: "enabled" },
       }),
     );
-    await waitFor(() => expect(enabledButton).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Help the dev" })).not.toBeInTheDocument());
+  });
+
+  it.each(["minimal", "enabled"] as const)("hides the release notes telemetry selector when the mode is %s", async (mode) => {
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings({
+      telemetry: {
+        mode,
+        environment_disabled: false,
+        installation_id_suffix: null,
+        last_sent_at: null,
+        last_user_visible_payload: null,
+      },
+    }));
+
+    renderShell();
+
+    expect(await screen.findByRole("dialog", { name: "Release history" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Telemetry off" })).not.toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "Report an issue" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Support MediaLyze" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open GitHub repository" })).toBeInTheDocument();
   });
 
   it("applies the full-width shell class when the feature flag is enabled", async () => {

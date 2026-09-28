@@ -4,7 +4,6 @@ MediaLyze is evolving toward a clearer, faster way to understand and maintain la
 
 ## Working On
 
-- **Hardware-aware transcoding** — convert videos with validated CPU or hardware paths, clear progress, flexible output options, and linked comparisons.
 - **Transcoding across trusted installations** — pair MediaLyze installations and use available workers for larger conversion jobs.
 - **Better device and player compatibility profiles** — expand the catalog and make compatibility decisions easier to understand.
 

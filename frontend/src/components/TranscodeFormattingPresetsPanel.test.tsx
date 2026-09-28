@@ -21,7 +21,7 @@ describe("TranscodeFormattingPresetsPanel", () => {
       return saved;
     });
 
-    render(<TranscodeFormattingPresetsPanel kind="filename" tabs={<span>Filename presets</span>} />);
+    render(<TranscodeFormattingPresetsPanel kind="filename" tabs={<span>Filename Presets</span>} />);
     fireEvent.click(screen.getByRole("button", { name: "New preset" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Preset name" }), { target: { value: "My name" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Filename formatting" }), { target: { value: "[{codec}]" } });
