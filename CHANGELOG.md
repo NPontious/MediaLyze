@@ -4,86 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
-The next release focuses on hardware-aware transcoding, trusted worker federation, and clearer media-management workflows. Details may change before release.
-
 ### ✨ New
 
-- **Hardware-aware video transcoding** — create validated FFmpeg plans with CPU or tested hardware execution, stream controls, output policies, progress, cancellation, linked variants, and side-by-side comparison.
-- **A dedicated transcoding job center** — queue multiple files, monitor progress, see hardware usage, cancel or retry jobs, and review completed work.
-- **Trusted transcode federation** — pair MediaLyze installations, discover workers on the local network, exchange capabilities, and send jobs to a selected or automatically chosen worker.
-- **Per-device capability testing** — see which decode and encode paths are available and how much practical parallel hardware capacity each device provides.
-- **Reusable transcoding presets and automation** — save stream rules for repeatable conversions and prepare optional library-specific automation.
-- **Clearer transcoding and file-detail workflows** — use compact stream editing, filename templates, metadata tokens, source-name cleanup, and responsive synchronized preview comparison.
-- **More portable hardware support** — discover platform-specific media engines and wire supported Docker devices while keeping hardware-required execution explicit.
+- **Video transcoding** — build validated FFmpeg plans with stream controls, tested hardware acceleration, explicit CPU-only mode, configurable output, and linked variants for comparison.
+- **Transcoding overview** — queue files, track progress, cancel or retry jobs, and review completed work.
+- **Remote transcoding** — pair trusted MediaLyze installations and send jobs to another machine based on its tested capabilities.
+- **Transcoding presets and automation** — save reusable stream rules and optionally apply them to library files.
+- **Filename and folder formatting** — configure each separately, rearrange or remove metadata tokens, include connector metadata, and save presets with language-code options.
+- **Synchronized video comparison** — play two versions in sync and drag the divider across the image to compare them directly.
 
 ### ✨ Enhancements
 
-- **LAN access for local development** — the combined startup scripts bind the backend and Vite to all IPv4 interfaces, print app URLs for IP addresses and hostnames once ready, and honor custom ports.
-- **Clearer favorite controls** — favorite and default actions fill their icons when active, and the Settings navigation toggle matches the other navigation icon sizes.
-- **Compact library creation** — name and media type sit side by side, path guidance moves to the title tooltip, the create action waits for a folder selection, and dialog close icons use a flat, larger symbol.
-- **Shorter federation guidance** — remove the redundant relay sentence from the Members tooltip.
-- **More compact Storage Map framing** — remove the redundant summary cards and subtitle, match the Transcoding page's icon heading, move the filters closer to the title, and keep the treemap evenly inset from the panel edges.
-- **Filename and foldername formatting presets** — save the current transcode formatting from each section, manage both categories beside the Transcoding Presets tab in Settings, and choose a default for each category.
-- **Flexible filename tokens** — place or remove the original filename through `{sourceName}`, use connector movie titles through `{movieTitle}`, and group available metadata by MediaLyze and connector; unavailable values remain visible but cannot be inserted. Existing saved templates keep their original-name behavior until edited.
-- **Formatting-specific language codes** — choose the language code format beside filename and foldername cleanup independently.
-- **Language-aware stream and filename metadata controls** — show audio/subtitle languages first, support ISO 639-1 and ISO 639-2/B filename language codes, and explain metadata preservation options in a list.
-
-- **Connector-aware filename metadata** — replace the filename metadata add icon with a disclosure chevron and offer a `{releaseYear}` token when matched connector metadata provides a production or premiere year.
-- **Resolution category filename metadata** — add `{resolutionCategory}` for filenames and folders, using the configured resolution category label instead of the full pixel dimensions.
-- **Expanded filename metadata tokens** — add audio codecs/profiles/channels, frame rate, bit depth, subtitle formats, series and episode metadata, and main/bonus content category values; align the cleanup label and tooltip with the metadata-divider field.
-- **Explained filename metadata tokens** — show every available token with a consistent tooltip, its filename substitution rule, and an example based on the current asset.
-- **Independent filename and folder formatting** — format or disable the output filename and its direct parent folder separately, with series defaulting to folder formatting and films and other media defaulting to filename formatting; formatting disclosures now place the toggle between the chevron and panel title like Settings.
-- **Balanced stream action spacing** — keep collapsed and expanded stream-action controls evenly inset from the row edges.
-- **Clearer stream controls** — keep the default-stream action visually active and center copy-mode guidance beside its language control.
-- **Searchable stream catalogs** — search each video, audio, or subtitle list by source metadata such as language, codec, profile, bitrate, channel layout, resolution, and subtitle type while retaining the per-tab stream counts; switching from copy/remove to encode now seeds the controls from the source stream.
-- **Connected stream catalog layout** — keep the stream tabs, search row, and stream list in one Settings-style container without a gap between the tabs and search.
-- **Fixed stream catalog row height** — keep the Video/Audio/Subtitles tabs at the same 40px height as the Settings profile row across the transcoding UI.
-- **Refined stream plan editing** — rename the validation result, keep metadata settings collapsed initially, expand only encoded streams, move removed streams to the end, and choose the active default stream with a neutral filled, borderless profile-style control.
-- **Clearer file-detail transcoding controls** — label the feature as beta, move preset selection into the heading, condense source details to five key values, and group metadata options below the filename template.
-- **Compact formatting preset slots** — place filename and folder-name help tooltips beside their headings and reserve the right side for compact, future filename/foldername preset selectors.
-- **Consistent preset terminology** — rename the transcoding profile manager, creation action, and file-detail selector to presets.
-- **Clearer transcode output destinations** — rename the separate output option to “Central Output Folder” across all shipped languages.
-- **Refined settings and compatibility profiles** — provide consistent responsive controls, searchable profile catalogs, and clearer capability and member views.
-- **Decomposed transcoding settings** — move Transcoding Presets into its own settings submenu, expose Automation Rules and Accelerators as dedicated panels, and place Federation members directly below the reachable addresses.
-- **Reordered transcoding diagnostics** — place Accelerators above Automation Rules, move Test Hardware into the accelerator panel, and keep both automation panels collapsed by default with Federation-style disclosures.
-- **Aligned transcoding preset catalogs** — use the Hard/Software Profiles tab, search, list, and action layout for saved transcoding presets while keeping filename and foldername presets ready as empty tabs.
-- **Left-aligned connector headers** — keep provider names and server URLs anchored to the start of the accordion toggle.
-- **Preview completed transcodes in context** — keep the original preview visible above the synchronized variant comparison and link completed jobs from the transcoding center directly to that comparison.
-- **Audio mixing in synchronized video comparison** — play both comparison audio tracks together and shift the balance from 0/100 to 100/0 with an independent mix slider.
-- **Explained duplicate views** — show where to enable duplicate detection when the library panel is unavailable, retain the normal panel-heading size for the disabled title, and explain which hash or filename view requires the corresponding detection mode.
-- **Visible duplicate empty state** — keep the Duplications panel expandable when detection is enabled and show a no-results message when no duplicate groups are found.
-- **Predictable Federation endpoint routing** — keep a favored connection as the default, expose per-address test metrics, and fall back only when it is unreachable and another address is reachable; blocked addresses are excluded from routing.
-- **Refined library detail controls** — use borderless title actions, smaller rectangular chart toggles, and separate history controls with clear spacing.
-- **Library quickactions** — keep the full scan action available beside “Add library” and in the Settings Quickactions, alongside the shortcut to synchronize all enabled connectors.
-- **Refined transcode stream controls** — use compact count pills, consistent row hover surfaces, square centered icon actions, and enough room for longer action labels.
-- **Square icon toggle options** — keep symbol-only segmented controls square across dashboard, library, comparison, storage, and playback views.
-- **Connected rectangular comparison controls** — keep both metric selectors, axis swap, and renderer menu compactly grouped with clear focus states.
-- **Compact metadata search rows** — match field-specific search bars to the main file search control while preserving their field icons and clear actions.
-- **Compact analyzed-files count** — keep the indexed-entry badge closer to the header version pill in size without removing its quick count cue.
-- **Consistent connector test icon** — use the established network symbol for connector connection tests.
-- **Grouped resolution category actions** — keep restore defaults and add category together on the right side of the panel heading.
-- **Stabilized the transcoding job list** — keep the default order based on start time, allow explicit column sorting, and leave job details collapsed until selected.
-- **Refined quality profile cards** — start each media type with collapsed profile details and highlight the complete profile area on hover.
-- **Refined library path settings** — move path editing into the Media source heading, remove the redundant path label and save action, auto-save editable root aliases, and make the folder-selection dialog denser and scroll-safe.
-- **Compact expanded library settings** — show connector assignments as inline rows, move scanning help into a heading tooltip, and align source and analysis controls with the tighter Pattern recognition field spacing.
-- **Consistent file-detail disclosures and exports** — align detail chevrons with Settings, move chapter export into its heading, add a quality-breakdown CSV report, square the audio-stream toggle, and separate overview rows subtly.
-- **Refined file-detail navigation and streaming details** — prioritize stream and chapter sections, group connector sources and matched catalog metadata under Streaming, move preview guidance into its tooltip, and show chapter timecode ranges with their durations.
+- **More compact Storage Map** — remove redundant summary cards and subtitle, match the Transcoding page's icon heading, bring filters closer to the title, and keep the treemap evenly inset from the panel edges.
+- **Consistent settings controls** — keep formatting-preset search and list spacing visible when catalogs are empty, match Accelerators and Automation Rules to Federation-style panels while keeping their header actions, and style telemetry payload views like the historical-range selector.
 
 ### 🔒 Security
 
-- refresh dependencies and desktop packaging safeguards for current security advisories
+- Updated dependencies, including AnyIO 4.14.2 for security fixes, and strengthened desktop packaging safeguards.
 
 ### 🐛 Bug fixes
 
-- start the separate Federation listener without re-running SQLite initialization in a second in-process Uvicorn lifespan, avoiding startup timeouts on production databases
-- surface unavailable Federation listeners and mismatched peer endpoints with actionable connection errors instead of leaving stale peers marked connected
-- confirm Federation member disconnects and make still-visible installations available for explicit re-pairing under discovered installations
-- improve the reliability of federation pairing, worker lifecycle, capability testing, and transcode execution
-- remove unassigned stale cross-media default profile copies during startup while preserving assigned custom profiles
-
-### New Contributors
-
-[@MadsThy](https://github.com/MadsThy) in [#180](https://github.com/frederikemmer/MediaLyze/pull/180)
+- remove stale, unassigned default profiles copied across media types at startup, while preserving profiles assigned to libraries.
 
 ## v0.18.1
 

@@ -1,72 +1,48 @@
-# Storage Map adaptive labels and rich tooltip design QA
+# Design QA: current reference
 
-- Source visual truth: `prototypes/storage-map-streamlined-chrome-desktop.png` for the existing Storage Map composition and `prototypes/storage-map-overlay-ui-catalog.png` for the previous small-tile label behavior.
-- Browser-rendered implementation: `prototypes/storage-map-adaptive-labels-desktop.png`.
-- Adaptive-label implementation fixture: `prototypes/storage-map-adaptive-faded-labels-ui-catalog.png`.
-- Rich-tooltip implementation fixture: `prototypes/storage-map-rich-tooltip-ui-catalog.png`.
-- Dark-theme color-regression implementation: `prototypes/storage-map-color-regression-fixed-desktop.png`.
-- Full comparison: `prototypes/storage-map-adaptive-labels-qa-comparison.png`.
-- Focused label comparison: `prototypes/storage-map-adaptive-labels-qa-focus-comparison.png`.
-- Focused tooltip comparison: `prototypes/storage-map-rich-tooltip-qa-comparison.png`.
-- Source and implementation: 1306 × 1204 pixels at a 1306 × 1204 CSS viewport, device pixel ratio 1.
-- Density normalization: none required.
-- State: dark theme; Storage Map root for the full view; representative compact tile and open hover card in the canonical `/ui-elements` fixture for focused interaction evidence.
+This page consolidates the former root `design-qa.md` and this file. It describes the current implementation rather than preserving a sequence of completed visual reviews. The hidden `/ui-elements` route is the canonical visual inventory; the frontend source and tests are authoritative for behavior. The design decisions in `AGENTS.md` record the wider migration history.
 
-## Full-view comparison evidence
+The earlier QA reports referred to local browser captures, `prototypes/` images, and machine-specific ImageGen paths that are not available in this repository. Their historical pass counts and "no findings" conclusions are not claims about the current build. The sections below retain the useful design and interaction checks, reconciled with the current source.
 
-The combined full-view comparison confirms that the adaptive labels and custom hover card do not change the established MediaLyze composition, toolbar density, treemap proportions, tile colors, or viewport-filling behavior. The file tiles remain directly clickable and preserve the existing size-proportional layout.
+## Storage Map
 
-## Focused comparison evidence
+**Current implementation:** `frontend/src/pages/StorageMapPage.tsx`, the `.storage-map-*` rules in `frontend/src/medialyze.css`, `frontend/src/pages/StorageMapPage.test.tsx`, and the `Storage map explorer` entry in `/ui-elements`.
 
-The focused label comparison shows the former all-or-nothing behavior beside the revised compact tile: the long asset name is now retained, wraps when space allows, and fades at the right edge instead of leaving the tile blank. Metadata remains visible while a line fits; the least-important size label is removed first.
+- The treemap assigns each tile an area based on storage use. The selected color metric supplies `--storage-map-tile-color`. Folder tiles with multiple represented colors can add a blurred, clipped color field; single-color folders and files use their solid metric color. Tile copy stays above the decorative field.
+- The tile button has an accessible name while its visual copy is decorative. File tiles open file details; folder tiles descend into that folder. Hover and keyboard focus keep a visible outline and preserve the tile's metric color, including in dark theme.
+- Container queries progressively remove size and metric text as a tile shrinks. The name remains while it fits; all visible copy is hidden below 42 px width or 28 px height. Long names wrap where space permits and fade at the right edge.
+- The shared `TooltipTrigger` displays a structured metadata card after an 80 ms hover delay. It is not pinned on click and uses automatic viewport placement. The card gives the full name, active metric, and available technical details without changing tile navigation.
+- The `/ui-elements` example includes mixed-color folder, compact file, and tooltip states. When this pattern changes, compare those states in light and dark themes and at a narrow viewport; also check folder/file navigation and keyboard focus.
 
-The focused tooltip comparison shows the same tile at rest and with its custom hover card open. The card appears next to the tile, uses the MediaLyze panel surface, border, radius, shadow, typography, and semantic metric badge, and exposes the full name plus storage, file count, codec, resolution, HDR, and quality information without navigating away.
+The old reports document two resolved implementation traps: an all-or-nothing label measurement hid usable names, and a generic dark-theme tooltip background overrode tile colors. The current container-query rules and scoped `.storage-map-treemap .storage-map-tile.tooltip-trigger` background rule address them. Do not reintroduce either behavior while simplifying styles.
 
-## Required fidelity surfaces
+## Transcoding workspace and job views
 
-- Fonts and typography: existing tile weights, sizes, and line heights are preserved. Names can wrap, compact tiles progressively reduce secondary lines, and the edge mask avoids a hard ellipsis while retaining readable leading text.
-- Spacing and layout rhythm: tile geometry and zero-gap treemap packing are unchanged. The hover card uses compact internal spacing and definition-list alignment consistent with existing MediaLyze panels.
-- Colors and visual tokens: tile colors continue to come from the active metric. The hover card uses the existing panel, border, muted-text, foreground, and accent tokens and remains legible on every tested tile color.
-- Image and asset fidelity: existing Lucide file/folder icons are reused; no raster or approximate replacement assets were introduced.
-- Copy and content: the card reuses existing localized labels and displays the full asset/folder name, active metric, storage, count where applicable, codec, resolution, HDR, and quality data. No new untranslated copy was added.
+**Current implementation:** `frontend/src/components/TranscodingPanel.tsx`, `frontend/src/components/TranscodingSettingsPanel.tsx`, `frontend/src/components/TranscodeProfilesRulesPanel.tsx`, their related tests and styles, and the Transcoding examples in `/ui-elements`.
 
-## Interaction and runtime evidence
+- The automation workspace uses compact underline tabs for Profiles, Rules, Accelerators, and Members. Its heading help is contextual to the selected tab. The capability matrix owns accelerator details rather than duplicating them in the Members view.
+- The transcoding job view keeps status, progress, source-to-target details, and speed history readable at desktop and narrow widths. Table cells retain table layout semantics; content inside cells handles long hardware labels and filenames. Column resizing and links to file details remain available where applicable.
+- Job detail disclosures start in the state defined by the current component, not by the early September screenshots. Verify collapsed and expanded content, status changes, sparse speed samples, and long values against current fixtures before changing those views.
+- Shared controls, spacing, typography, and focus treatment come from `frontend/globals.css`, `frontend/src/medialyze.css`, neighboring pages, and `/ui-elements`. Avoid reviving the former sliding-pill treatment for the automation tabs; it remains intentional for other toggle groups.
 
-- A tile has no native `title`, so the delayed system tooltip is not used.
-- The custom hover card opens after 80 ms, closes on pointer leave, does not pin on click, and automatically flips above when there is insufficient space below.
-- File clicks still navigate to file details; folder clicks still descend into the selected folder.
-- Labels are hidden only below the final 42 × 28 px threshold, where a usable text line no longer fits.
-- At intermediate sizes, the tile changes from full name/metadata/size to name/metadata and finally name-only before hiding all copy.
-- Browser console after the final root-route reload: no errors or warnings.
-- Dark-theme color verification: the computed tile background now matches `--storage-map-tile-color`; the size mode produced four distinct computed colors for the four differently sized test files. The codec mode correctly produced one shared green because all four test files are H.265/HEVC.
-- Focused frontend tests passed: 5 of 5 across Storage Map and TooltipTrigger; the broader targeted pass passed 23 of 23 across Storage Map, TooltipTrigger, and App Shell.
-- Production frontend build passed.
-- `git diff --check` passed.
+## Federation members and pairing
 
-## Comparison history
+**Current implementation:** `frontend/src/components/TranscodeFederationPanel.tsx`, `frontend/src/components/TranscodingSettingsPanel.tsx`, the relevant styles and tests, the `Federation members tab` example in `/ui-elements`, and the Federation design decision in `AGENTS.md`.
 
-1. Earlier P2: labels were hidden as a complete block whenever all text did not fit, leaving usable medium-size tiles blank.
-   - Fix: replace JavaScript all-or-nothing measurement with CSS container-query tiers that preserve at least the name while one line fits.
-   - Post-fix evidence: `prototypes/storage-map-adaptive-labels-qa-focus-comparison.png`.
-2. Earlier P2: long names ended abruptly or forced the layout to suppress all copy.
-   - Fix: permit wrapping at usable sizes and apply a right-edge mask fade, while progressively hiding size and metadata before the name.
-   - Post-fix evidence: `prototypes/storage-map-adaptive-faded-labels-ui-catalog.png`.
-3. Earlier P2: the browser-native tooltip appeared slowly and exposed only a plain text string.
-   - Fix: use the shared tooltip primitive with an 80 ms hover delay and a structured MediaLyze metadata card.
-   - Post-fix evidence: `prototypes/storage-map-rich-tooltip-qa-comparison.png`.
-4. Earlier P2: a fixed below-tile card could be clipped near the viewport edge.
-   - Fix: add automatic above/below placement based on available viewport space.
-   - Post-fix evidence: interaction inspection and the focused tooltip comparison.
-5. Earlier P1 regression: converting each tile into the shared tooltip trigger allowed the later dark-theme `.tooltip-trigger` background rule to override every per-node color.
-   - Fix: scope the Storage Map background rule through the treemap and combined tile/tooltip classes so its specificity remains above the global dark-theme tooltip rule.
-   - Post-fix evidence: `prototypes/storage-map-color-regression-fixed-desktop.png` and computed-style checks across codec and size modes.
+- Trusted members live in the Members tab. The Federation panel holds connection, discovery, local address, and pairing controls. Member rows use the same compact expandable-list language as profiles and rules, with status and quick actions kept visible.
+- Discovered peers ask for a pairing code next to Connect. Manual pairing adds an address field before the code and Connect action. The address and code fields share a compact segmented treatment; the manual plus marker sits outside the group. Missing-code feedback stays on the code segment, including its rounded first-position corners.
+- Local addresses use a flat list with copy actions. Member details show available accelerators with links into the matrix; endpoint and connection-status fields are intentionally absent from that detail view.
+- Recheck focus, `aria-expanded`/`aria-invalid`, empty-code validation, long names/addresses, narrow stacking, and light/dark contrast whenever the pairing controls or rows change. Historical pixel measurements from one browser capture are not a current layout contract.
 
-## Findings
+## Quality and compatibility profiles
 
-No actionable P0, P1, or P2 findings remain.
+**Current implementation:** `renderQualityProfilesPanel()` in `frontend/src/pages/LibrariesPage.tsx`, `frontend/src/components/CompatibilityProfilesPanel.tsx`, their tests and styles, and the profile-list examples in `/ui-elements`.
 
-## Follow-up polish
+- Quality profiles use compact media-type tabs and an expandable profile list. Profile metadata sits beside the name when space permits. Metric sections expand inside the profile surface without a second bordered panel.
+- Hardware, software, and combination profiles use the same compact underline navigation and one searchable, expandable list surface. Their existing profile actions and editors remain available.
+- Development guidance for compatibility profiles is available from the heading's shared tooltip instead of occupying permanent page space. Check the tooltip through keyboard focus as well as pointer hover.
+- Keep profile rows compact, preserve readable names and metadata when they wrap, and compare expanded/collapsed, empty, disabled, hover, focus, light/dark, and narrow states in `/ui-elements` when editing these patterns.
 
-No P3 follow-up is required for this refinement.
+## Verification for future visual changes
 
-final result: passed
+The reports merged here were snapshots of earlier work, not a substitute for fresh QA. For a visual change, inspect the affected route and matching `/ui-elements` entry, run the relevant frontend checks and build, and record any unavailable visual or runtime verification in that change's report. Update the catalog entry in the same change set as the component or style.

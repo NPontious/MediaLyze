@@ -1,39 +1,36 @@
 """Benchmark Jellyfin's native staging UPSERT and atomic promote with 100k+ items.
 
 Run from the repository root:
-    .venv/bin/python benchmarks/benchmark_jellyfin_bulk_promote.py
+    .venv/bin/python docs/benchmarks/benchmark_jellyfin_bulk_promote.py
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 import tempfile
 from pathlib import Path
 from time import perf_counter
 
+from _support import environment_metadata
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY_ROOT))
-
-from backend.app.db.base import Base  # noqa: E402
-from backend.app.models.entities import (  # noqa: E402
+from backend.app.db.base import Base
+from backend.app.models.entities import (
     JellyfinItem,
     JellyfinSyncStageItem,
     JellyfinSyncStageLibrary,
 )
-from backend.app.services.jellyfin_staging import (  # noqa: E402
+from backend.app.services.jellyfin_staging import (
     cleanup_staging,
     commit_stage_page,
     promote_staging,
 )
-from backend.app.utils.time import utc_now  # noqa: E402
+from backend.app.utils.time import utc_now
 
 
-def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
+def run_benchmark(item_count: int, batch_size: int) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="medialyze-jellyfin-benchmark-") as directory:
         engine = create_engine(f"sqlite:///{Path(directory) / 'benchmark.db'}")
         Base.metadata.create_all(engine)
@@ -44,40 +41,45 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
             commit_stage_page(
                 db,
                 JellyfinSyncStageLibrary,
-                [{
-                    "sync_run_id": run_id,
-                    "remote_item_id": "movies",
-                    "name": "Movies",
-                    "collection_type": "movies",
-                    "locations": ["/media/movies"],
-                    "mapped_locations": [],
-                    "mapped_status": "path_unmapped",
-                    "linked_library_id": None,
-                    "link_method": None,
-                    "last_synced_at": now,
-                }],
+                [
+                    {
+                        "sync_run_id": run_id,
+                        "remote_item_id": "movies",
+                        "name": "Movies",
+                        "collection_type": "movies",
+                        "locations": ["/media/movies"],
+                        "mapped_locations": [],
+                        "mapped_status": "path_unmapped",
+                        "linked_library_id": None,
+                        "link_method": None,
+                        "last_synced_at": now,
+                    }
+                ],
                 conflict_columns=("sync_run_id", "remote_item_id"),
             )
 
             stage_started = perf_counter()
             for offset in range(0, item_count, batch_size):
                 upper = min(offset + batch_size, item_count)
-                rows = [{
-                    "sync_run_id": run_id,
-                    "jellyfin_item_id": f"item-{index}",
-                    "library_remote_item_id": "movies",
-                    "library_name": "Movies",
-                    "item_type": "Movie",
-                    "path": f"/media/movies/Movie-{index}.mkv",
-                    "title": f"Movie {index}",
-                    "provider_ids": {},
-                    "image_tags": {},
-                    "backdrop_image_tags": [],
-                    "raw_limited_payload": {"Size": index + 1, "RunTimeTicks": 600_000_000},
-                    "size_bytes": index + 1,
-                    "duration_seconds": 60.0,
-                    "last_synced_at": now,
-                } for index in range(offset, upper)]
+                rows = [
+                    {
+                        "sync_run_id": run_id,
+                        "jellyfin_item_id": f"item-{index}",
+                        "library_remote_item_id": "movies",
+                        "library_name": "Movies",
+                        "item_type": "Movie",
+                        "path": f"/media/movies/Movie-{index}.mkv",
+                        "title": f"Movie {index}",
+                        "provider_ids": {},
+                        "image_tags": {},
+                        "backdrop_image_tags": [],
+                        "raw_limited_payload": {"Size": index + 1, "RunTimeTicks": 600_000_000},
+                        "size_bytes": index + 1,
+                        "duration_seconds": 60.0,
+                        "last_synced_at": now,
+                    }
+                    for index in range(offset, upper)
+                ]
                 commit_stage_page(
                     db,
                     JellyfinSyncStageItem,
@@ -94,6 +96,7 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
         engine.dispose()
 
     return {
+        "benchmark": "jellyfin_bulk_promote",
         "items": item_count,
         "batch_size": batch_size,
         "visible_items": visible_items,
@@ -101,6 +104,7 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
         "stage_items_per_second": round(item_count / stage_seconds, 1),
         "promote_seconds": round(promote_seconds, 3),
         "total_seconds": round(stage_seconds + promote_seconds, 3),
+        "environment": environment_metadata(),
     }
 
 

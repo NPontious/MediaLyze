@@ -207,4 +207,6 @@ Catalog promotion, inferred or manual binding replacement, connection deletion, 
 
 ## Required test matrix
 
-Every connector change should cover a new database and an upgraded Jellyfin database; single- and multi-root libraries; multiple locations and connections; conservative inference thresholds and conflicting candidates; automatic/manual mode changes; atomic binding/link batches; sync cancellation/recovery; connection deletion isolation; secret redaction; preferred metadata; legacy Jellyfin read compatibility; and focused frontend tests. Large catalog changes must also run `benchmark_jellyfin_bulk_promote.py`, `benchmark_connector_bulk_promote.py`, and `benchmark_connector_matching.py` with 100,000 items and compare three representative runs.
+Every connector change should cover a new database and an upgraded Jellyfin database; single- and multi-root libraries; multiple locations and connections; conservative inference thresholds and conflicting candidates; automatic/manual mode changes; atomic binding/link batches; sync cancellation/recovery; connection deletion isolation; secret redaction; preferred metadata; legacy Jellyfin read compatibility; and focused frontend tests.
+
+For large catalogs, also run the Jellyfin staging/promotion, provider-neutral staging/promotion, and path-matching benchmarks with 100,000 items. Compare three runs on the same machine. See the [performance benchmark guide](benchmarks.md) for commands and limitations.

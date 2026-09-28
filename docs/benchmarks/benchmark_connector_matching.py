@@ -4,19 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import tempfile
 from pathlib import Path
 from time import perf_counter
 
+from _support import environment_metadata
 from sqlalchemy import create_engine, func, insert, select
 from sqlalchemy.orm import sessionmaker
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY_ROOT))
-
-from backend.app.db.base import Base  # noqa: E402
-from backend.app.models.entities import (  # noqa: E402
+from backend.app.db.base import Base
+from backend.app.models.entities import (
     ConnectorConnection,
     ConnectorItem,
     ConnectorLibrary,
@@ -30,10 +27,10 @@ from backend.app.models.entities import (  # noqa: E402
     ScanMode,
     ScanStatus,
 )
-from backend.app.services.connector_matching import recompute_connector_matches  # noqa: E402
+from backend.app.services.connector_matching import recompute_connector_matches
 
 
-def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
+def run_benchmark(item_count: int, batch_size: int) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="medialyze-connector-matcher-") as directory:
         root_path = Path(directory) / "media"
         root_path.mkdir()
@@ -122,12 +119,11 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
             match_started = perf_counter()
             summary = recompute_connector_matches(db, connection_id=connection.id)
             match_seconds = perf_counter() - match_started
-            match_count = int(
-                db.scalar(select(func.count()).select_from(ConnectorMediaMatch)) or 0
-            )
+            match_count = int(db.scalar(select(func.count()).select_from(ConnectorMediaMatch)) or 0)
         engine.dispose()
 
     return {
+        "benchmark": "connector_matching",
         "items": item_count,
         "batch_size": batch_size,
         "matches": match_count,
@@ -135,6 +131,7 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
         "seed_seconds": round(seed_seconds, 3),
         "match_seconds": round(match_seconds, 3),
         "match_items_per_second": round(item_count / match_seconds, 1),
+        "environment": environment_metadata(),
     }
 
 

@@ -13,7 +13,10 @@ $BackendLog = if ($env:BACKEND_LOG) { $env:BACKEND_LOG } else { Join-Path $Confi
 $FrontendLog = if ($env:FRONTEND_LOG) { $env:FRONTEND_LOG } else { Join-Path $ConfigPath "dev-vite.log" }
 $FrontendErrorLog = if ($env:FRONTEND_ERROR_LOG) { $env:FRONTEND_ERROR_LOG } else { Join-Path $ConfigPath "dev-vite-error.log" }
 $BackendPidFile = if ($env:BACKEND_PID_FILE) { $env:BACKEND_PID_FILE } else { Join-Path $ConfigPath "dev-api.pid" }
+$FrontendPidFile = if ($env:FRONTEND_PID_FILE) { $env:FRONTEND_PID_FILE } else { Join-Path $ConfigPath "dev-vite.pid" }
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
+$ViteScript = Join-Path $RootDir "frontend\node_modules\vite\bin\vite.js"
+$NodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
 $ShellExe = (Get-Process -Id $PID).Path
 
 New-Item -ItemType Directory -Force -Path $ConfigPath | Out-Null
@@ -63,32 +66,52 @@ $HealthHost = if ($BackendHost -eq "0.0.0.0") { "127.0.0.1" } else { $BackendHos
 $FrontendHealthHost = if ($FrontendHost -eq "0.0.0.0") { "127.0.0.1" } else { $FrontendHost }
 $frontendProcess = $null
 
+function Stop-ManagedProcessTree([int]$RootProcessId, [string]$CommandMarker, [string]$RequiredCommandFragment = "") {
+    $processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $root = $processTable | Where-Object { $_.ProcessId -eq $RootProcessId } | Select-Object -First 1
+    if (-not $root -or -not $root.CommandLine -or $root.CommandLine.IndexOf($CommandMarker, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        return
+    }
+    if ($RequiredCommandFragment -and $root.CommandLine.IndexOf($RequiredCommandFragment, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        return
+    }
+
+    $descendants = @()
+    $seenProcessIds = @{}
+    $seenProcessIds[$RootProcessId] = $true
+    $pendingParents = @($RootProcessId)
+    while ($pendingParents.Count -gt 0) {
+        $parentId = $pendingParents[0]
+        $pendingParents = @($pendingParents | Select-Object -Skip 1)
+        $children = @($processTable | Where-Object {
+            $_.ParentProcessId -eq $parentId -and -not $seenProcessIds.ContainsKey([int]$_.ProcessId)
+        })
+        foreach ($child in $children) {
+            $seenProcessIds[[int]$child.ProcessId] = $true
+        }
+        $descendants += $children
+        $pendingParents += @($children | Select-Object -ExpandProperty ProcessId)
+    }
+
+    Stop-Process -Id $RootProcessId -ErrorAction SilentlyContinue
+    for ($index = $descendants.Count - 1; $index -ge 0; $index--) {
+        Stop-Process -Id $descendants[$index].ProcessId -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 500
+}
+
+if (-not $NodeExe) {
+    Write-Host "Node.js was not found in PATH."
+    exit 1
+}
+
 function Stop-Backend([switch]$ClearPreviousListener) {
     if (Test-Path $BackendPidFile -PathType Leaf) {
         $existingPid = Get-Content $BackendPidFile -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($existingPid) {
             $existingPid = $existingPid.Trim()
-        }
-        if ($existingPid) {
-            try {
-                $descendants = @()
-                # The reload parent may have exited while its worker still owns sockets.
-                $pendingParents = @([int]$existingPid)
-                $processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-                while ($pendingParents.Count -gt 0) {
-                    $parentId = $pendingParents[0]
-                    $pendingParents = @($pendingParents | Select-Object -Skip 1)
-                    $children = @($processTable | Where-Object { $_.ParentProcessId -eq $parentId })
-                    $descendants += $children
-                    $pendingParents += @($children | Select-Object -ExpandProperty ProcessId)
-                }
-                Stop-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
-                foreach ($child in $descendants) {
-                    Stop-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
-                }
-                Start-Sleep -Milliseconds 500
-            }
-            catch {
+            if ($existingPid -match '^\d+$') {
+                Stop-ManagedProcessTree -RootProcessId ([int]$existingPid) -CommandMarker "uvicorn backend.app.main:app" -RequiredCommandFragment $PythonExe
             }
         }
         Remove-Item $BackendPidFile -Force -ErrorAction SilentlyContinue
@@ -115,12 +138,25 @@ function Stop-Backend([switch]$ClearPreviousListener) {
                 $_.Name -match '^python(w)?\.exe$' -and
                 $_.CommandLine -like "*spawn_main(parent_pid=$listenerPid,*"
             })
-            if ($owner -and $owner.CommandLine -notlike '*uvicorn backend.app.main:app*') {
+            $isManagedBackend = $owner -and (
+                ($owner.ExecutablePath -eq $PythonExe -and $owner.CommandLine -like '*uvicorn backend.app.main:app*') -or
+                ($owner.ExecutablePath -eq $PythonExe -and $owner.CommandLine -like '*spawn_main(parent_pid=*')
+            )
+            if ($owner -and -not $isManagedBackend) {
                 throw "Backend port $BackendPort is occupied by process $listenerPid. Stop it or set BACKEND_PORT."
             }
-            Stop-Process -Id $listenerPid -ErrorAction SilentlyContinue
-            foreach ($worker in $workers) {
-                Stop-Process -Id $worker.ProcessId -ErrorAction SilentlyContinue
+            if ($isManagedBackend) {
+                $commandMarker = if ($owner.CommandLine -like '*uvicorn backend.app.main:app*') {
+                    'uvicorn backend.app.main:app'
+                }
+                else {
+                    'spawn_main(parent_pid='
+                }
+                $requiredCommandFragment = if ($commandMarker -eq 'uvicorn backend.app.main:app') { $PythonExe } else { "" }
+                Stop-ManagedProcessTree -RootProcessId $listenerPid -CommandMarker $commandMarker -RequiredCommandFragment $requiredCommandFragment
+                foreach ($worker in $workers) {
+                    Stop-ManagedProcessTree -RootProcessId $worker.ProcessId -CommandMarker 'spawn_main(parent_pid='
+                }
             }
         }
     }
@@ -133,7 +169,43 @@ function Stop-Backend([switch]$ClearPreviousListener) {
     }
 }
 
+function Stop-Frontend([switch]$ClearPreviousListener) {
+    if (Test-Path $FrontendPidFile -PathType Leaf) {
+        $existingPid = Get-Content $FrontendPidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($existingPid -and $existingPid.Trim() -match '^\d+$') {
+            Stop-ManagedProcessTree -RootProcessId ([int]$existingPid.Trim()) -CommandMarker $ViteScript
+        }
+        Remove-Item $FrontendPidFile -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not $ClearPreviousListener) { return }
+
+    try {
+        $listenerPids = Get-NetTCPConnection -LocalPort $FrontendPort -State Listen -ErrorAction Stop |
+            Select-Object -ExpandProperty OwningProcess -Unique
+    }
+    catch {
+        $listenerPids = @()
+    }
+
+    foreach ($listenerPid in $listenerPids) {
+        $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerPid" -ErrorAction SilentlyContinue
+        if ($owner -and $owner.CommandLine -and $owner.CommandLine.IndexOf($ViteScript, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            Stop-ManagedProcessTree -RootProcessId $listenerPid -CommandMarker $ViteScript
+        }
+        elseif ($owner) {
+            throw "Frontend port $FrontendPort is occupied by process $listenerPid. Stop it or set FRONTEND_PORT."
+        }
+    }
+
+    Start-Sleep -Milliseconds 500
+    if (Get-NetTCPConnection -LocalPort $FrontendPort -State Listen -ErrorAction SilentlyContinue) {
+        throw "Frontend port $FrontendPort is still occupied. No new frontend was started."
+    }
+}
+
 try {
+    Stop-Frontend -ClearPreviousListener
     Stop-Backend -ClearPreviousListener
 
     $quotedRootDir = $RootDir.Replace("'", "''")
@@ -183,16 +255,16 @@ Set-Location -LiteralPath '$quotedRootDir'
         exit 1
     }
 
-    $viteScript = Join-Path $RootDir "frontend\node_modules\vite\bin\vite.js"
-    $viteArguments = @("`"$viteScript`"", "--host", $FrontendHost, "--port", [string]$FrontendPort, "--strictPort", "--logLevel", "error")
+    $viteArguments = @("`"$ViteScript`"", "--host", $FrontendHost, "--port", [string]$FrontendPort, "--strictPort", "--logLevel", "error")
     $frontendProcess = Start-Process `
-        -FilePath (Get-Command node.exe).Source `
+        -FilePath $NodeExe `
         -ArgumentList $viteArguments `
         -WorkingDirectory (Join-Path $RootDir "frontend") `
         -RedirectStandardOutput $FrontendLog `
         -RedirectStandardError $FrontendErrorLog `
         -WindowStyle Hidden `
         -PassThru
+    Set-Content -Path $FrontendPidFile -Value $frontendProcess.Id
 
     $frontendReady = $false
     for ($attempt = 0; $attempt -lt 80; $attempt++) {
@@ -248,8 +320,6 @@ Set-Location -LiteralPath '$quotedRootDir'
     }
 }
 finally {
-    if ($frontendProcess -and -not $frontendProcess.HasExited) {
-        Stop-Process -Id $frontendProcess.Id -ErrorAction SilentlyContinue
-    }
+    Stop-Frontend
     Stop-Backend
 }

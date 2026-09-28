@@ -3991,7 +3991,8 @@
   min-width: 0;
 }
 
-.library-history-range-toggle {
+.library-history-range-toggle,
+.telemetry-preview-actions {
   position: relative;
   display: inline-flex;
   justify-self: start;
@@ -4010,7 +4011,8 @@
 }
 
 .library-history-range-button,
-.history-range-picker-nav {
+.history-range-picker-nav,
+.telemetry-preview-view-button {
   position: relative;
   overflow: visible;
   display: inline-flex;
@@ -4029,14 +4031,17 @@
 .library-history-range-button:hover,
 .library-history-range-button:focus-visible,
 .history-range-picker-nav:hover,
-.history-range-picker-nav:focus-visible {
+.history-range-picker-nav:focus-visible,
+.telemetry-preview-view-button:hover,
+.telemetry-preview-view-button:focus-visible {
   transform: none;
   color: var(--ink);
   background: rgba(31, 28, 22, 0.05);
   box-shadow: none;
 }
 
-.library-history-range-button.active {
+.library-history-range-button.active,
+.telemetry-preview-view-button.active {
   color: var(--ink);
 }
 
@@ -8468,24 +8473,6 @@ select.settings-choice-input[multiple] {
   }
 }
 
-.telemetry-preview-actions {
-  position: relative;
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-self: start;
-  gap: 4px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 6px;
-  border-radius: 999px;
-  border: 1px solid rgba(31, 28, 22, 0.09);
-  background: rgba(255, 255, 255, 0.64);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 1px 2px rgba(31, 28, 22, 0.03);
-}
-
 .telemetry-stats-info {
   display: flex;
   align-items: center;
@@ -8543,51 +8530,8 @@ select.settings-choice-input[multiple] {
   box-shadow: none;
 }
 
-.telemetry-preview-view-button {
-  position: relative;
-  overflow: visible;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 38px;
-  padding: 8px 16px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  box-shadow: none;
-  font-weight: 700;
-  white-space: nowrap;
-  transition: color 0.16s ease, background 0.16s ease;
-}
-
-.telemetry-preview-view-button:hover,
-.telemetry-preview-view-button:focus-visible {
-  transform: none;
-  color: var(--ink);
-  background: rgba(31, 28, 22, 0.04);
-  box-shadow: none;
-}
-
-.telemetry-preview-view-button.active {
-  color: var(--ink);
-  background: transparent;
-}
-
 .telemetry-preview-view-button.is-loading {
   cursor: progress;
-}
-
-.telemetry-preview-view-pill {
-  inset: auto;
-  top: 0;
-  left: 0;
-  transition: transform 0.22s ease, width 0.22s ease, height 0.22s ease;
-}
-
-.telemetry-preview-view-button > span {
-  position: relative;
-  z-index: 1;
 }
 
 .telemetry-mode-toggle {
@@ -11463,7 +11407,8 @@ body.is-column-resizing {
     justify-content: flex-start;
   }
 
-  .library-history-range-toggle {
+  .library-history-range-toggle,
+  .telemetry-preview-actions {
     flex: 0 1 auto;
     width: fit-content;
     max-width: 100%;
@@ -11471,7 +11416,12 @@ body.is-column-resizing {
     scrollbar-width: none;
   }
 
-  .library-history-range-toggle::-webkit-scrollbar {
+  .telemetry-preview-view-button {
+    flex: 0 0 auto;
+  }
+
+  .library-history-range-toggle::-webkit-scrollbar,
+  .telemetry-preview-actions::-webkit-scrollbar {
     display: none;
   }
 
@@ -12343,7 +12293,6 @@ html[data-theme="dark"] {
   }
 
   .distribution-chart-mode-toggle,
-  .telemetry-preview-actions,
   .telemetry-mode-toggle {
     background: rgba(38, 35, 31, 0.64);
     border-color: rgba(240, 236, 228, 0.09);
@@ -12392,20 +12341,6 @@ html[data-theme="dark"] {
     color: rgba(255, 250, 243, 0.98);
   }
 
-  .telemetry-preview-view-button.active {
-    color: rgba(255, 250, 243, 0.98);
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .telemetry-preview-view-pill {
-    border-color: rgba(240, 236, 228, 0.08);
-    background: rgba(240, 236, 228, 0.08);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      0 10px 22px rgba(0, 0, 0, 0.24);
-  }
-
   .telemetry-copy-id-button.secondary.icon-only-button {
     color: rgba(240, 236, 228, 0.7);
   }
@@ -12440,7 +12375,8 @@ html[data-theme="dark"] {
     background: linear-gradient(145deg, rgba(26, 72, 54, 0.56), rgba(38, 35, 31, 0.66));
   }
 
-  .library-history-range-toggle {
+  .library-history-range-toggle,
+  .telemetry-preview-actions {
     background: rgba(38, 35, 31, 0.64);
     border-color: rgba(240, 236, 228, 0.09);
     box-shadow:
@@ -13804,6 +13740,10 @@ html[data-theme="dark"] {
 
 .transcode-automation-section {
   margin-top: 4px;
+}
+
+.transcode-automation-section.transcode-federation-panel {
+  margin-top: 0;
 }
 
 .settings-profile-toggle-actions {

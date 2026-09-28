@@ -552,6 +552,7 @@ export function TranscodePresetsRulesPanel({
 }: TranscodePresetsRulesPanelProps) {
   const { t } = useTranslation();
   const standaloneBodyId = useId();
+  const standalonePanelTitleId = useId();
   const [presets, setPresets] = useState<TranscodePreset[]>([]);
   const [rules, setRules] = useState<TranscodeRule[]>([]);
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
@@ -1628,23 +1629,29 @@ export function TranscodePresetsRulesPanel({
           ? "transcoding-accelerators"
           : "transcoding-federation-members";
     const title = t(titleKey);
+    const headerClassName = hasStandaloneCollapse
+      ? "transcode-federation-heading"
+      : "settings-profile-toggle-row transcode-automation-toggle-row transcode-automation-standalone-header";
+
     return (
-      <div className="settings-profile-toggle-row transcode-automation-toggle-row transcode-automation-standalone-header" data-settings-search-target={focusTarget}>
-        {hasStandaloneCollapse ? (
-          <button
-            type="button"
-            className="transcode-automation-section-chevron"
-            aria-label={t(standaloneCollapsed ? "panel.expandAria" : "panel.collapseAria", { title })}
-            title={t(standaloneCollapsed ? "panel.expandAria" : "panel.collapseAria", { title })}
-            aria-expanded={!standaloneCollapsed}
-            aria-controls={standaloneBodyId}
-            onClick={onStandaloneToggle}
-          >
-            {standaloneCollapsed ? <ChevronRight aria-hidden="true" className="nav-icon" /> : <ChevronDown aria-hidden="true" className="nav-icon" />}
-          </button>
-        ) : null}
-        <div className="transcode-automation-standalone-heading">
-          <strong>{title}</strong>
+      <div className={headerClassName} data-settings-search-target={focusTarget}>
+        <div className={hasStandaloneCollapse ? "transcode-federation-heading-main" : "transcode-automation-standalone-heading"}>
+          {hasStandaloneCollapse ? (
+            <button
+              type="button"
+              className="transcode-federation-section-chevron"
+              aria-label={t(standaloneCollapsed ? "panel.expandAria" : "panel.collapseAria", { title })}
+              title={t(standaloneCollapsed ? "panel.expandAria" : "panel.collapseAria", { title })}
+              aria-expanded={!standaloneCollapsed}
+              aria-controls={standaloneBodyId}
+              onClick={onStandaloneToggle}
+            >
+              {standaloneCollapsed ? <ChevronRight aria-hidden="true" className="nav-icon" /> : <ChevronDown aria-hidden="true" className="nav-icon" />}
+            </button>
+          ) : null}
+          {hasStandaloneCollapse
+            ? <h3 id={standalonePanelTitleId}>{title}</h3>
+            : <strong>{title}</strong>}
           <TooltipTrigger
             ariaLabel={automationTooltipAriaLabel}
             tooltipClassName={automationTooltipClassName}
@@ -1656,7 +1663,7 @@ export function TranscodePresetsRulesPanel({
             ?
           </TooltipTrigger>
         </div>
-        {trailingAction ? <div className="settings-profile-toggle-actions">{trailingAction}</div> : null}
+        {trailingAction ? <div className={hasStandaloneCollapse ? "transcode-federation-heading-actions" : "settings-profile-toggle-actions"}>{trailingAction}</div> : null}
       </div>
     );
   };
@@ -1712,7 +1719,10 @@ export function TranscodePresetsRulesPanel({
   );
 
   return (
-    <section className={`app-settings-section transcode-automation-section${standaloneTab === "members" ? " transcode-federation-members" : ""}`}>
+    <section
+      className={`app-settings-section transcode-automation-section${standaloneTab === "members" ? " transcode-federation-members" : ""}${hasStandaloneCollapse ? " transcode-federation-panel" : ""}`}
+      aria-labelledby={hasStandaloneCollapse ? standalonePanelTitleId : undefined}
+    >
       {loading ? (
         <div className="panel-loader" role="status" aria-live="polite">
           <LoaderPinwheelIcon className="panel-loader-icon" size={24} />

@@ -7605,34 +7605,34 @@ export function LibrariesPage() {
                 <div className="telemetry-preview-actions">
                   <SlidingTogglePill
                     activeKey={telemetryPayloadView}
-                    className="nav-active-pill telemetry-preview-view-pill"
+                    className="nav-active-pill library-history-range-pill"
                   />
                   <button
                     type="button"
                     data-toggle-key="last"
-                    className={`telemetry-preview-view-button${telemetryPayloadView === "last" ? " active" : ""}`}
+                    className={`library-history-range-button telemetry-preview-view-button${telemetryPayloadView === "last" ? " active" : ""}`}
                     aria-pressed={telemetryPayloadView === "last"}
                     onClick={() => void selectTelemetryPayloadView("last")}
                   >
-                    <span>{t("telemetry.preview.views.last")}</span>
+                    <span className="library-history-range-button-content"><span>{t("telemetry.preview.views.last")}</span></span>
                   </button>
                   <button
                     type="button"
                     data-toggle-key="minimal"
-                    className={`telemetry-preview-view-button${telemetryPayloadView === "minimal" ? " active" : ""}${loadingTelemetryPayloadView === "minimal" ? " is-loading" : ""}`}
+                    className={`library-history-range-button telemetry-preview-view-button${telemetryPayloadView === "minimal" ? " active" : ""}${loadingTelemetryPayloadView === "minimal" ? " is-loading" : ""}`}
                     aria-pressed={telemetryPayloadView === "minimal"}
                     onClick={() => void selectTelemetryPayloadView("minimal")}
                   >
-                    <span>{t("telemetry.preview.views.minimal")}</span>
+                    <span className="library-history-range-button-content"><span>{t("telemetry.preview.views.minimal")}</span></span>
                   </button>
                   <button
                     type="button"
                     data-toggle-key="enabled"
-                    className={`telemetry-preview-view-button${telemetryPayloadView === "enabled" ? " active" : ""}${loadingTelemetryPayloadView === "enabled" ? " is-loading" : ""}`}
+                    className={`library-history-range-button telemetry-preview-view-button${telemetryPayloadView === "enabled" ? " active" : ""}${loadingTelemetryPayloadView === "enabled" ? " is-loading" : ""}`}
                     aria-pressed={telemetryPayloadView === "enabled"}
                     onClick={() => void selectTelemetryPayloadView("enabled")}
                   >
-                    <span>{t("telemetry.preview.views.enabled")}</span>
+                    <span className="library-history-range-button-content"><span>{t("telemetry.preview.views.enabled")}</span></span>
                   </button>
                 </div>
                 <pre className="telemetry-preview-json" aria-label={t("telemetry.preview.jsonLabel")}>

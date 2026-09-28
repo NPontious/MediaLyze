@@ -4,33 +4,30 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import tempfile
 from pathlib import Path
 from time import perf_counter
 
+from _support import environment_metadata
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY_ROOT))
-
-from backend.app.db.base import Base  # noqa: E402
-from backend.app.models.entities import (  # noqa: E402
+from backend.app.db.base import Base
+from backend.app.models.entities import (
     ConnectorConnection,
     ConnectorItem,
     ConnectorSyncStageLibrary,
 )
-from backend.app.services.connector_contract import RemoteItem  # noqa: E402
-from backend.app.services.connector_sync import (  # noqa: E402
+from backend.app.services.connector_contract import RemoteItem
+from backend.app.services.connector_sync import (
     _stage_item_row,
     _upsert_stage_items,
     promote_connector_staging,
 )
-from backend.app.utils.time import utc_now  # noqa: E402
+from backend.app.utils.time import utc_now
 
 
-def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
+def run_benchmark(item_count: int, batch_size: int) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="medialyze-connector-benchmark-") as directory:
         engine = create_engine(f"sqlite:///{Path(directory) / 'benchmark.db'}")
         Base.metadata.create_all(engine)
@@ -78,12 +75,11 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
             promote_started = perf_counter()
             promote_connector_staging(db, run_id, connection.id)
             promote_seconds = perf_counter() - promote_started
-            visible_items = int(
-                db.scalar(select(func.count()).select_from(ConnectorItem)) or 0
-            )
+            visible_items = int(db.scalar(select(func.count()).select_from(ConnectorItem)) or 0)
         engine.dispose()
 
     return {
+        "benchmark": "connector_bulk_promote",
         "items": item_count,
         "batch_size": batch_size,
         "visible_items": visible_items,
@@ -91,6 +87,7 @@ def run_benchmark(item_count: int, batch_size: int) -> dict[str, float | int]:
         "stage_items_per_second": round(item_count / stage_seconds, 1),
         "promote_seconds": round(promote_seconds, 3),
         "total_seconds": round(stage_seconds + promote_seconds, 3),
+        "environment": environment_metadata(),
     }
 
 
