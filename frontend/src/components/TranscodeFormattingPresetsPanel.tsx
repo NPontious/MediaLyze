@@ -229,67 +229,99 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
   ].filter((group) => group.entries.length);
   const exampleOutput = formattingExampleOutput(definition, kind);
   const editor = (
-    <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor">
+    <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor transcode-preset-editor">
       <div className="compatibility-profile-form-grid">
-        <label><span>{t("transcoding.formattingPresets.name")}</span><input className="settings-choice-input" maxLength={255} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <div className="compatibility-profile-field-wide">
-          <label htmlFor={templateInputId}>{t(kind === "filename" ? "transcoding.filenameTemplate" : "transcoding.folderTemplate")}</label>
-          <input ref={templateInputRef} id={templateInputId} className="settings-choice-input" maxLength={512} value={definition.template} onChange={(event) => setDefinition({ ...definition, template: event.target.value, source_name_explicit: kind === "filename" })} />
-          <TranscodeFormattingMetadataMenu kind={kind} id={metadataMenuId} open={metadataMenuOpen} onToggle={() => setMetadataMenuOpen((current) => !current)}>
-            {metadataGroups.map((group) => (
-              <div className="transcode-filename-token-group" key={group.name}>
-                <strong>{group.name}</strong>
-                <div className="transcode-filename-token-group-items">
-                  {group.entries.map((entry: FilenameMetadataTokenEntry) => {
-                    const label = t(`transcoding.filenameMetadataTokenOptions.${entry.labelKey}`);
-                    const description = t("transcoding.filenameMetadataTooltipDescription", { token: `{${entry.token}}`, label })
-                      .replaceAll("{token}", `{${entry.token}}`)
-                      .replaceAll("{label}", label);
-                    const exampleValue = entry.token === "audioLanguages" || entry.token === "subtitleLanguages"
-                      ? ["English", "German"].join(definition.metadata_separator || ", ")
-                      : entry.token === "sourceName" ? exampleSourceName(definition) : exampleMetadataValues[entry.token];
-                    return (
-                      <TooltipTrigger
-                        key={entry.token}
-                        className="secondary small transcode-filename-token-pill"
-                        ariaLabel={label}
-                        tooltipClassName="transcode-filename-token-tooltip-portal"
-                        align="start"
-                        placement="auto"
-                        maxWidth={360}
-                        pinOnClick={false}
-                        disabled={busy}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => insertMetadataToken(entry.token)}
-                        content={(
-                          <div className="transcode-filename-token-tooltip">
-                            <div className="transcode-filename-token-tooltip-heading"><code>{`{${entry.token}}`}</code><strong>{label}</strong></div>
-                            <p>{description}</p>
-                            <div className="transcode-filename-token-tooltip-example"><span>{t("transcoding.filenameMetadataTooltipExample")}</span><code>{`{${entry.token}} → ${exampleValue}`}</code></div>
-                          </div>
-                        )}
-                      >
-                        {`{${entry.token}}`}
-                      </TooltipTrigger>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </TranscodeFormattingMetadataMenu>
-          <div className="transcode-filename-preview is-prominent">
-            <span>{t("transcoding.formattingPresets.exampleOutput")}</span>
-            <code aria-live="polite">{exampleOutput}</code>
-          </div>
-        </div>
-        <label><span>{t(kind === "filename" ? "transcoding.filenameMetadataSeparator" : "transcoding.folderMetadataSeparator")}</span><input className="settings-choice-input" maxLength={32} value={definition.metadata_separator} onChange={(event) => setDefinition({ ...definition, metadata_separator: event.target.value })} /></label>
-        <label><span>{t(kind === "filename" ? "transcoding.filenameCleanupPreset" : "transcoding.folderCleanupPreset")}</span><select className="settings-choice-input" value={definition.cleanup_preset} onChange={(event) => setDefinition({ ...definition, cleanup_preset: event.target.value as TranscodeFormattingDefinition["cleanup_preset"] })}>{cleanupValues.map((value, index) => <option key={value} value={value}>{t(`transcoding.filenameCleanupOptions.${cleanupKeys[index]}`)}</option>)}</select></label>
-        {definition.cleanup_preset === "custom" ? <label className="compatibility-profile-field-wide"><span>{t(kind === "filename" ? "transcoding.filenameCleanupRegex" : "transcoding.folderCleanupRegex")}</span><input className="settings-choice-input" maxLength={256} value={definition.cleanup_regex ?? ""} onChange={(event) => setDefinition({ ...definition, cleanup_regex: event.target.value })} /></label> : null}
-        {kind === "filename" ? <label><span>{t("transcoding.languageCodeFormat")}</span><select className="settings-choice-input" value={definition.language_code_format} onChange={(event) => setDefinition({ ...definition, language_code_format: event.target.value as TranscodeFormattingDefinition["language_code_format"] })}><option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option><option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option></select></label> : null}
+        <label className="transcode-control-field">
+          <span className="transcode-field-label">{t("transcoding.formattingPresets.name")}</span>
+          <input className="settings-choice-input transcode-control" maxLength={255} value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
       </div>
-      <div className="transcode-global-options">
-        <label><input type="checkbox" checked={definition.enabled} onChange={(event) => setDefinition({ ...definition, enabled: event.target.checked })} /><span>{t(kind === "filename" ? "transcoding.filenameFormattingToggle" : "transcoding.folderFormattingToggle")}</span></label>
-        {kind === "filename" ? <label><input type="checkbox" checked={definition.include_subtitle_languages} onChange={(event) => setDefinition({ ...definition, include_subtitle_languages: event.target.checked })} /><span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span></label> : null}
+      <div className="transcode-filename-body transcode-formatting-preset-body">
+        <label className="transcode-control-field">
+          <span className="transcode-field-label">{t(kind === "filename" ? "transcoding.filenameTemplate" : "transcoding.folderTemplate")}</span>
+          <input ref={templateInputRef} id={templateInputId} className="settings-choice-input transcode-control transcode-filename-template-input" maxLength={512} value={definition.template} onChange={(event) => setDefinition({ ...definition, template: event.target.value, source_name_explicit: kind === "filename" })} />
+        </label>
+        <TranscodeFormattingMetadataMenu kind={kind} id={metadataMenuId} open={metadataMenuOpen} onToggle={() => setMetadataMenuOpen((current) => !current)}>
+          {metadataGroups.map((group) => (
+            <div className="transcode-filename-token-group" key={group.name}>
+              <strong>{group.name}</strong>
+              <div className="transcode-filename-token-group-items">
+                {group.entries.map((entry: FilenameMetadataTokenEntry) => {
+                  const label = t("transcoding.filenameMetadataTokenOptions." + entry.labelKey);
+                  const tokenText = "{" + entry.token + "}";
+                  const description = t("transcoding.filenameMetadataTooltipDescription", { token: tokenText, label })
+                    .replaceAll("{token}", tokenText)
+                    .replaceAll("{label}", label);
+                  const exampleValue = entry.token === "audioLanguages" || entry.token === "subtitleLanguages"
+                    ? ["English", "German"].join(definition.metadata_separator || ", ")
+                    : entry.token === "sourceName" ? exampleSourceName(definition) : exampleMetadataValues[entry.token];
+                  return (
+                    <TooltipTrigger
+                      key={entry.token}
+                      className="secondary small transcode-filename-token-pill"
+                      ariaLabel={label}
+                      tooltipClassName="transcode-filename-token-tooltip-portal"
+                      align="start"
+                      placement="auto"
+                      maxWidth={360}
+                      pinOnClick={false}
+                      disabled={busy}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => insertMetadataToken(entry.token)}
+                      content={(
+                        <div className="transcode-filename-token-tooltip">
+                          <div className="transcode-filename-token-tooltip-heading"><code>{tokenText}</code><strong>{label}</strong></div>
+                          <p>{description}</p>
+                          <div className="transcode-filename-token-tooltip-example"><span>{t("transcoding.filenameMetadataTooltipExample")}</span><code>{tokenText} → {exampleValue}</code></div>
+                        </div>
+                      )}
+                    >
+                      {tokenText}
+                    </TooltipTrigger>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </TranscodeFormattingMetadataMenu>
+        <div className={"transcode-filename-options-row transcode-formatting-preset-options" + (kind === "folder" ? " is-folder" : "")}>
+          <label className="transcode-filename-field transcode-filename-divider-field">
+            <span className="transcode-field-label">{t(kind === "filename" ? "transcoding.filenameMetadataSeparator" : "transcoding.folderMetadataSeparator")}</span>
+            <input className="settings-choice-input transcode-control" maxLength={32} value={definition.metadata_separator} onChange={(event) => setDefinition({ ...definition, metadata_separator: event.target.value })} />
+          </label>
+          <div className="transcode-filename-cleanup">
+            <span className="transcode-field-label">{t(kind === "filename" ? "transcoding.filenameCleanup" : "transcoding.folderCleanup")}</span>
+            <label className="transcode-filename-field transcode-filename-cleanup-control">
+              <span className="sr-only">{t(kind === "filename" ? "transcoding.filenameCleanupPreset" : "transcoding.folderCleanupPreset")}</span>
+              <select className="settings-choice-input transcode-control" value={definition.cleanup_preset} onChange={(event) => setDefinition({ ...definition, cleanup_preset: event.target.value as TranscodeFormattingDefinition["cleanup_preset"] })}>
+                {cleanupValues.map((value, index) => <option key={value} value={value}>{t("transcoding.filenameCleanupOptions." + cleanupKeys[index])}</option>)}
+              </select>
+            </label>
+            {definition.cleanup_preset === "custom" ? (
+              <label className="transcode-filename-field transcode-filename-cleanup-control">
+                <span className="transcode-field-label">{t(kind === "filename" ? "transcoding.filenameCleanupRegex" : "transcoding.folderCleanupRegex")}</span>
+                <input className="settings-choice-input transcode-control" maxLength={256} value={definition.cleanup_regex ?? ""} onChange={(event) => setDefinition({ ...definition, cleanup_regex: event.target.value })} />
+              </label>
+            ) : null}
+          </div>
+          {kind === "filename" ? (
+            <label className="transcode-filename-field transcode-language-code-field">
+              <span className="transcode-field-label">{t("transcoding.languageCodeFormat")}</span>
+              <select className="settings-choice-input transcode-control" value={definition.language_code_format} onChange={(event) => setDefinition({ ...definition, language_code_format: event.target.value as TranscodeFormattingDefinition["language_code_format"] })}>
+                <option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option>
+                <option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option>
+              </select>
+            </label>
+          ) : null}
+        </div>
+        <div className="transcode-filename-preview is-prominent">
+          <span>{t("transcoding.formattingPresets.exampleOutput")}</span>
+          <code aria-live="polite">{exampleOutput}</code>
+        </div>
+      </div>
+      <div className="transcode-global-options transcode-formatting-preset-toggles">
+        <label className="transcode-filename-option"><input type="checkbox" checked={definition.enabled} onChange={(event) => setDefinition({ ...definition, enabled: event.target.checked })} /><span>{t(kind === "filename" ? "transcoding.filenameFormattingToggle" : "transcoding.folderFormattingToggle")}</span></label>
+        {kind === "filename" ? <label className="transcode-filename-option"><input type="checkbox" checked={definition.include_subtitle_languages} onChange={(event) => setDefinition({ ...definition, include_subtitle_languages: event.target.checked })} /><span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span></label> : null}
       </div>
       <div className="compatibility-profile-card-actions transcode-automation-editor-actions"><button type="button" className="transcode-action-button" disabled={busy || !name.trim() || !definition.template.trim()} onClick={() => void save()}><Save size={16} aria-hidden="true" />{t("common.save")}</button><button type="button" className="secondary transcode-action-button" disabled={busy} onClick={cancelEditing}>{t("common.cancel")}</button></div>
     </div>

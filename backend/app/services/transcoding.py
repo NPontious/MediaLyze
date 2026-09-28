@@ -3618,7 +3618,9 @@ def get_file_transcode(db: Session, settings: Settings, media_file: MediaFile) -
 
     saved_presets = []
     for preset in db.scalars(
-        select(TranscodePreset).order_by(
+        select(TranscodePreset)
+        .where(TranscodePreset.is_builtin.is_(False))
+        .order_by(
             TranscodePreset.is_builtin.desc(), TranscodePreset.name.collate("NOCASE"), TranscodePreset.id
         )
     ).all():
@@ -3667,6 +3669,7 @@ def get_file_transcode(db: Session, settings: Settings, media_file: MediaFile) -
         output_mode=app_settings.transcoding.default_output_mode,
         execution_mode=app_settings.transcoding.execution_mode,
     )
+    initial_presets = {"compatibility": initial_presets["compatibility"]}
     return FileTranscodeRead(
         original=_file_summary(original),
         presets=initial_presets,

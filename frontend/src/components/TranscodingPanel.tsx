@@ -34,7 +34,6 @@ import { SparklesIcon } from "./SparklesIcon";
 import { TranscodeFormattingMetadataMenu } from "./TranscodeFormattingMetadataMenu";
 import { TooltipTrigger } from "./TooltipTrigger";
 
-const PRESET_KEYS = ["compatibility", "storage", "modern"] as const;
 const STREAM_ACTIONS: TranscodeStreamAction[] = ["copy", "encode", "drop"];
 const STREAM_KINDS = ["video_streams", "audio_streams", "subtitle_streams"] as const;
 const TARGET_VIDEO_CODECS = ["h264", "hevc", "av1", "vp8", "vp9", "mpeg2video", "mjpeg"] as const;
@@ -1684,14 +1683,6 @@ export function TranscodingPanel({
     }));
   }, [file]);
 
-  const selectPreset = useCallback((presetKey: typeof PRESET_KEYS[number]) => {
-    if (!data) return;
-    setSelectedSavedPresetId(null);
-    setSelectedPresetKey(presetKey);
-    setPlanKeepingTarget(clonePlan(data.presets?.[presetKey] ?? data.profiles[presetKey]));
-    setValidation(null);
-  }, [data, setPlanKeepingTarget]);
-
   const setExpertPlan = useCallback((next: TranscodePlan) => {
     setSelectedSavedPresetId(null);
     setSelectedPresetKey("expert");
@@ -1819,6 +1810,10 @@ export function TranscodingPanel({
   }, [plan, setExpertPlan]);
 
   const handleFilenameTemplateKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      return;
+    }
     if (event.key !== "Backspace" && event.key !== "Delete") return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const editor = event.currentTarget;
@@ -1846,6 +1841,10 @@ export function TranscodingPanel({
   }, [updateFilenameTemplate]);
 
   const handleFolderTemplateKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      return;
+    }
     if (event.key !== "Backspace" && event.key !== "Delete") return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const editor = event.currentTarget;
@@ -1934,7 +1933,10 @@ export function TranscodingPanel({
   if (!data || !plan || !capabilities) return <p className="notice error">{error ?? t("transcoding.unavailable")}</p>;
 
   const activeJob = jobIsActive(job) ? job : null;
-  const savedPresets = data.saved_presets ?? data.saved_profiles ?? [];
+  const savedPresets = (data.saved_presets ?? data.saved_profiles ?? []).filter((entry) => {
+    const preset = entry.preset ?? entry.profile;
+    return !preset?.is_builtin;
+  });
   const transcodeControlClass = "settings-choice-input transcode-control";
   const renderFormattingPresetControls = (kind: FormattingKind) => {
     const options = formattingPresets.filter((preset) => preset.kind === kind);
@@ -1989,8 +1991,6 @@ export function TranscodingPanel({
             setPlanKeepingTarget(clonePlan(savedPreset.plan));
             setValidation(null);
           }
-        } else if (value !== "expert") {
-          selectPreset(value as typeof PRESET_KEYS[number]);
         } else {
           setExpertPlan({ ...plan, profile: "expert" });
           setValidation(null);
@@ -1998,9 +1998,6 @@ export function TranscodingPanel({
       }}
     >
       <option value="" disabled>{t("transcoding.selectPreset")}</option>
-      {PRESET_KEYS.map((presetKey) => (
-        <option key={presetKey} value={presetKey}>{t(`transcoding.presets.${presetKey}`)}</option>
-      ))}
       {savedPresets.map((entry) => {
         const preset = entry.preset ?? entry.profile;
         return preset ? (
@@ -2560,7 +2557,7 @@ export function TranscodingPanel({
                 onClick={() => setOpenFilenameSection((current) => !current)}
               >
                 <span className="transcode-filename-heading">
-                  <h3>{t("transcoding.filenameFormatting")}</h3>
+                  <h3>{t("transcoding.filenameSectionTitle")}</h3>
                 </span>
               </button>
               <TooltipTrigger
@@ -2750,7 +2747,7 @@ export function TranscodingPanel({
                 onClick={() => setOpenFolderSection((current) => !current)}
               >
                 <span className="transcode-filename-heading">
-                  <h3>{t("transcoding.folderFormatting")}</h3>
+                  <h3>{t("transcoding.folderSectionTitle")}</h3>
                 </span>
               </button>
               <TooltipTrigger

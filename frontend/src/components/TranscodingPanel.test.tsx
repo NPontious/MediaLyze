@@ -80,6 +80,12 @@ function renderTranscodingPanel(
   );
 }
 
+function filenameSection(): HTMLElement {
+  const section = screen.getByRole("button", { name: "Filename" }).closest("section");
+  if (!section) throw new Error("Filename section is unavailable");
+  return section;
+}
+
 const capabilities: TranscodeCapabilities = {
   ffmpeg_available: true,
   ffmpeg_path: "ffmpeg",
@@ -428,7 +434,7 @@ describe("TranscodingPanel", () => {
     expect(screen.getByText("Movie [3840x2160, HDR10, HEVC] [en].mp4")).toBeInTheDocument();
     expect(screen.queryByText("Type text directly or insert metadata tokens with Add metadata.")).not.toBeInTheDocument();
     expect(screen.getByText("Finished filename preview").closest(".transcode-filename-preview")).toHaveClass("is-prominent");
-    expect(screen.getByRole("textbox", { name: "Metadata divider" }).closest(".transcode-filename-options-row")).toContainElement(screen.getByRole("combobox", { name: "Removal preset" }));
+    expect(within(filenameSection()).getByRole("textbox", { name: "Metadata divider" }).closest(".transcode-filename-options-row")).toContainElement(screen.getByRole("combobox", { name: "Removal preset" }));
     expect(screen.getByText("Source filename cleanup").closest(".transcode-field-label")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Explain source filename cleanup" })).toBeInTheDocument();
     const templateInput = screen.getByRole("textbox", { name: "Filename formatting" });
@@ -448,7 +454,7 @@ describe("TranscodingPanel", () => {
     insertionSelection?.addRange(insertionCaret);
     fireEvent.select(templateInput);
 
-    const addMetadata = screen.getByRole("button", { name: "Add metadata" });
+    const addMetadata = within(filenameSection()).getByRole("button", { name: "Add metadata" });
     fireEvent.click(addMetadata);
     expect(addMetadata).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Subtitle languages" }));
@@ -461,7 +467,7 @@ describe("TranscodingPanel", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Movie\.en\.srt/ }));
     expect(screen.getByText("Movie [3840x2160, HDR10, HEVC] [en] [de, en].mp4")).toBeInTheDocument();
 
-    const dividerInput = screen.getByRole("textbox", { name: "Metadata divider" });
+    const dividerInput = within(filenameSection()).getByRole("textbox", { name: "Metadata divider" });
     fireEvent.change(dividerInput, { target: { value: "," } });
     expect(screen.getByText("Movie [3840x2160, HDR10, HEVC] [en] [de,en].mp4")).toBeInTheDocument();
 
@@ -501,7 +507,7 @@ describe("TranscodingPanel", () => {
     ]);
     await screen.findByRole("region", { name: "Source summary" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add metadata" }));
+    fireEvent.click(within(filenameSection()).getByRole("button", { name: "Add metadata" }));
     fireEvent.focus(screen.getByRole("button", { name: "Resolution" }));
     const metadataTooltip = await screen.findByRole("tooltip");
     expect(metadataTooltip).toHaveTextContent("{resolution}");
@@ -551,7 +557,7 @@ describe("TranscodingPanel", () => {
     }]);
     await screen.findByRole("region", { name: "Source summary" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add metadata" }));
+    fireEvent.click(within(filenameSection()).getByRole("button", { name: "Add metadata" }));
     expect(screen.getByRole("button", { name: "Release year" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Movie title" })).toHaveAttribute("aria-disabled", "false");
     expect(screen.getByRole("button", { name: "Episode title" })).toHaveAttribute("aria-disabled", "true");
@@ -596,8 +602,8 @@ describe("TranscodingPanel", () => {
     const folderSwitch = screen.getByRole("switch", { name: "Enable folder name formatting" });
     expect(filenameSwitch).not.toBeChecked();
     expect(folderSwitch).toBeChecked();
-    const filenameHeader = screen.getByRole("button", { name: "Filename formatting" }).closest("header");
-    const folderHeader = screen.getByRole("button", { name: "Folder name formatting" }).closest("header");
+    const filenameHeader = screen.getByRole("button", { name: "Filename" }).closest("header");
+    const folderHeader = screen.getByRole("button", { name: "Foldername" }).closest("header");
     expect(filenameHeader?.children[0]).toHaveClass("transcode-filename-chevron-toggle");
     expect(filenameHeader?.children[1]).toHaveClass("transcode-formatting-toggle");
     expect(filenameHeader?.children[2]).toHaveClass("transcode-filename-toggle");
@@ -610,10 +616,12 @@ describe("TranscodingPanel", () => {
     expect(folderHeader?.children[4]).toHaveClass("transcode-formatting-preset-controls");
     expect(screen.getByRole("combobox", { name: "Filename formatting preset" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Folder name formatting preset" })).toBeEnabled();
-    expect(screen.queryByRole("textbox", { name: "Filename formatting" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Folder name template" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Filename formatting" }));
+    const filenameToggle = screen.getByRole("button", { name: "Filename" });
+    if (filenameToggle.getAttribute("aria-expanded") === "false") {
+      fireEvent.click(filenameToggle);
+    }
     expect(screen.getByRole("textbox", { name: "Filename formatting" })).toBeInTheDocument();
     fireEvent.click(filenameSwitch);
     expect(screen.getByRole("textbox", { name: "Filename formatting" })).toBeInTheDocument();
@@ -637,7 +645,7 @@ describe("TranscodingPanel", () => {
   it("keeps unavailable tokens visible but prevents inserting them", async () => {
     renderTranscodingPanel({ ...file, series_title: null, season_number: null, episode_number: null, episode_title: null });
     await screen.findByRole("region", { name: "Source summary" });
-    fireEvent.click(screen.getByRole("button", { name: "Add metadata" }));
+    fireEvent.click(within(filenameSection()).getByRole("button", { name: "Add metadata" }));
     const movieTitle = screen.getByRole("button", { name: "Movie title" });
     const episodeTitle = screen.getByRole("button", { name: "Episode title" });
     expect(movieTitle).toHaveAttribute("aria-disabled", "true");
@@ -691,7 +699,7 @@ describe("TranscodingPanel", () => {
     await screen.findByRole("region", { name: "Source summary" });
     expect(screen.getByRole("combobox", { name: "Filename formatting preset" })).toHaveValue("17");
     expect(screen.getByRole("textbox", { name: "Filename formatting" })).toHaveTextContent("{codec}");
-    expect(screen.getByRole("textbox", { name: "Metadata divider" })).toHaveValue("; ");
+    expect(within(filenameSection()).getByRole("textbox", { name: "Metadata divider" })).toHaveValue("; ");
   });
 
   it("keeps the transcode history in the combined file history section", async () => {
@@ -723,7 +731,7 @@ describe("TranscodingPanel", () => {
     renderTranscodingPanel(filename);
     await screen.findByRole("region", { name: "Source summary" });
 
-    const toggle = screen.getByRole("button", { name: "Filename formatting" });
+    const toggle = screen.getByRole("button", { name: "Filename" });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -769,7 +777,7 @@ describe("TranscodingPanel", () => {
     const presetSelect = await screen.findByRole("combobox", { name: "Select preset" });
     expect(presetSelect).toHaveValue("");
 
-    const filenameToggle = screen.getByRole("button", { name: "Filename formatting" });
+    const filenameToggle = screen.getByRole("button", { name: "Filename" });
     const metadataToggle = screen.getByRole("button", { name: "Metadata settings" });
     const filenameCard = filenameToggle.closest("section");
     const metadataCard = metadataToggle.closest("section");

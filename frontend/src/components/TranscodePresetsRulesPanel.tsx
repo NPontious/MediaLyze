@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Ban, Clock3, Gauge, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Star, Trash2, Unplug, X } from "lucide-react";
+import { Ban, Clock3, Copy, Gauge, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Star, Trash2, Unplug, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { releaseVisibility } from "../lib/release-visibility";
 
@@ -19,6 +19,7 @@ import { type TranscodingMatrixFocus } from "../lib/transcoding-matrix-state";
 import { LoaderPinwheelIcon } from "./LoaderPinwheelIcon";
 import { AnimatedConnectIcon } from "./AnimatedConnectIcon";
 import { CopyIcon } from "./CopyIcon";
+import { PanelEmptyState } from "./PanelEmptyState";
 import { SquarePenIcon } from "./SquarePenIcon";
 import { TooltipTrigger } from "./TooltipTrigger";
 
@@ -427,59 +428,100 @@ function emptyStreamRule(kind: PresetRuleKind): TranscodePresetStreamRule {
   };
 }
 
-function numberOrNull(value: string): number | null {
-  if (value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+const presetRuleActionFields: Record<PresetRuleListKey, keyof Pick<
+  TranscodePresetDefinition,
+  "default_video_action" | "default_audio_action" | "default_subtitle_action" | "default_external_subtitle_action"
+>> = {
+  video_rules: "default_video_action",
+  audio_rules: "default_audio_action",
+  subtitle_rules: "default_subtitle_action",
+  external_subtitle_rules: "default_external_subtitle_action",
+};
+
+const presetCodecOptions: Record<PresetRuleKind, string[]> = {
+  video: ["h264", "hevc", "av1", "vp8", "vp9", "mpeg2video", "mjpeg"],
+  audio: ["aac", "opus", "vorbis", "ac3", "eac3", "flac", "mp3"],
+  subtitle: ["subrip", "ass", "webvtt", "mov_text"],
+  external: ["subrip", "ass", "webvtt", "mov_text"],
+};
+
+const presetCodecLabels: Record<string, string> = {
+  h264: "H.264", hevc: "HEVC", av1: "AV1", vp8: "VP8", vp9: "VP9", mpeg2video: "MPEG-2", mjpeg: "MJPEG",
+  aac: "AAC", opus: "Opus", vorbis: "Vorbis", ac3: "AC-3", eac3: "E-AC-3", flac: "FLAC", mp3: "MP3",
+  subrip: "SRT", ass: "ASS/SSA", webvtt: "WebVTT", mov_text: "MOV text",
+};
+
+const presetAudioBitrates: Record<string, number[]> = {
+  aac: [64_000, 96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
+  opus: [48_000, 64_000, 96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
+  vorbis: [64_000, 96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
+  ac3: [192_000, 256_000, 384_000, 448_000, 640_000],
+  eac3: [192_000, 256_000, 384_000, 448_000, 640_000],
+  flac: [0],
+  mp3: [96_000, 128_000, 160_000, 192_000, 256_000, 320_000],
+};
+
+const presetVideoResolutions = [
+  { value: "original", width: null, height: null },
+  { value: "640x360", width: 640, height: 360 },
+  { value: "854x480", width: 854, height: 480 },
+  { value: "1280x720", width: 1280, height: 720 },
+  { value: "1920x1080", width: 1920, height: 1080 },
+  { value: "2560x1440", width: 2560, height: 1440 },
+  { value: "3840x2160", width: 3840, height: 2160 },
+];
+
+function isCatchAllPresetRule(rule: TranscodePresetStreamRule): boolean {
+  return !rule.match_codecs.length && !rule.match_languages.length && rule.match_default === null;
 }
 
-function StreamRuleEditor({
-  kind,
-  rule,
-  index,
-  ruleCount,
-  onChange,
-  onRemove,
-  onMove,
-}: {
-  kind: PresetRuleKind;
-  rule: TranscodePresetStreamRule;
-  index: number;
-  ruleCount: number;
-  onChange: (patch: Partial<TranscodePresetStreamRule>) => void;
-  onRemove: () => void;
-  onMove: (direction: -1 | 1) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="transcode-preset-rule">
-      <div className="transcode-condition-row">
-        <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.matchCodec")}</span><input className="settings-choice-input transcode-control" placeholder="h264, hevc" value={rule.match_codecs.join(", ")} onChange={(event) => onChange({ match_codecs: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
-        <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.matchLanguage")}</span><input className="settings-choice-input transcode-control" placeholder="de, en" value={rule.match_languages.join(", ")} onChange={(event) => onChange({ match_languages: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
-        <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.matchDefault")}</span><select className="settings-choice-input transcode-control" value={rule.match_default === null ? "any" : String(rule.match_default)} onChange={(event) => onChange({ match_default: event.target.value === "any" ? null : event.target.value === "true" })}><option value="any">{t("transcoding.automation.anyTrack")}</option><option value="true">{t("transcoding.automation.defaultTrack")}</option><option value="false">{t("transcoding.automation.nonDefaultTrack")}</option></select></label>
-        <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.streamAction")}</span><select className="settings-choice-input transcode-control" value={rule.action} onChange={(event) => onChange({ action: event.target.value as TranscodePresetStreamRule["action"] })}><option value="copy">{t("transcoding.actions.copy")}</option><option value="convert">{t("transcoding.actions.encode")}</option><option value="remove">{t("transcoding.actions.drop")}</option></select></label>
-        <button type="button" className="secondary icon-only-button" title={t("transcoding.automation.moveUp")} disabled={index === 0} onClick={() => onMove(-1)}><ArrowUp aria-hidden="true" size={14} /></button>
-        <button type="button" className="secondary icon-only-button" title={t("transcoding.automation.moveDown")} disabled={index === ruleCount - 1} onClick={() => onMove(1)}><ArrowDown aria-hidden="true" size={14} /></button>
-        <button type="button" className="secondary icon-only-button" title={t("transcoding.automation.removeStreamRule")} onClick={onRemove}><Trash2 aria-hidden="true" size={14} /></button>
-      </div>
-      {rule.action === "convert" ? (
-        <div className="transcode-condition-row transcode-preset-rule-details">
-          <label className="field transcode-preset-rule-field"><span>{t("transcoding.encoder")}</span><input className="settings-choice-input transcode-control" placeholder={kind === "video" ? "hevc" : kind === "audio" ? "aac" : "subrip"} value={rule.codec ?? ""} onChange={(event) => onChange({ codec: event.target.value || null })} /></label>
-          <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.encoderOptional")}</span><input className="settings-choice-input transcode-control" placeholder="auto" value={rule.encoder ?? ""} onChange={(event) => onChange({ encoder: event.target.value || null })} /></label>
-          <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.bitrate")}</span><input className="settings-choice-input transcode-control" type="number" min="1" value={rule.bitrate ?? ""} onChange={(event) => onChange({ bitrate: numberOrNull(event.target.value) })} /></label>
-          {kind === "video" ? <>
-            <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.quality")}</span><input className="settings-choice-input transcode-control" type="number" min="0" max="255" value={rule.crf ?? ""} onChange={(event) => onChange({ crf: numberOrNull(event.target.value) })} /></label>
-            <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.width")}</span><input className="settings-choice-input transcode-control" type="number" min="16" value={rule.width ?? ""} onChange={(event) => onChange({ width: numberOrNull(event.target.value) })} /></label>
-            <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.height")}</span><input className="settings-choice-input transcode-control" type="number" min="16" value={rule.height ?? ""} onChange={(event) => onChange({ height: numberOrNull(event.target.value) })} /></label>
-            <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.frameRate")}</span><input className="settings-choice-input transcode-control" type="number" min="0.01" step="0.01" value={rule.frame_rate ?? ""} onChange={(event) => onChange({ frame_rate: numberOrNull(event.target.value) })} /></label>
-            <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.preset")}</span><input className="settings-choice-input transcode-control" value={rule.preset ?? ""} onChange={(event) => onChange({ preset: event.target.value || null })} /></label>
-          </> : null}
-          <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.languageOverride")}</span><input className="settings-choice-input transcode-control" value={rule.language ?? ""} onChange={(event) => onChange({ language: event.target.value || null })} /></label>
-          <label className="field transcode-preset-rule-field"><span>{t("transcoding.automation.titleOverride")}</span><input className="settings-choice-input transcode-control" value={rule.title ?? ""} onChange={(event) => onChange({ title: event.target.value || null })} /></label>
-        </div>
-      ) : null}
-    </div>
-  );
+function defaultPresetRule(
+  definition: TranscodePresetDefinition,
+  key: PresetRuleListKey,
+  kind: PresetRuleKind,
+): TranscodePresetStreamRule {
+  const catchAll = [...definition[key]].reverse().find(isCatchAllPresetRule);
+  return catchAll ?? { ...emptyStreamRule(kind), action: definition[presetRuleActionFields[key]] };
+}
+
+function replaceDefaultPresetRule(
+  definition: TranscodePresetDefinition,
+  key: PresetRuleListKey,
+  kind: PresetRuleKind,
+  patch: Partial<TranscodePresetStreamRule>,
+): TranscodePresetDefinition {
+  const rules = [...definition[key]];
+  let index = -1;
+  for (let i = rules.length - 1; i >= 0; i -= 1) {
+    if (isCatchAllPresetRule(rules[i])) {
+      index = i;
+      break;
+    }
+  }
+  const current = index >= 0 ? rules[index] : { ...emptyStreamRule(kind), action: definition[presetRuleActionFields[key]] };
+  const next = { ...current, ...patch, match_codecs: [], match_languages: [], match_default: null };
+  if (index >= 0) rules[index] = next;
+  else rules.push(next);
+  return { ...definition, [key]: rules, [presetRuleActionFields[key]]: next.action };
+}
+
+function compatiblePresetCodecs(kind: PresetRuleKind, container: TranscodePresetDefinition["container"]): string[] {
+  const allowedByContainer: Partial<Record<TranscodePresetDefinition["container"], Partial<Record<PresetRuleKind, string[]>>>> = {
+    mp4: {
+      video: ["h264", "hevc", "av1", "mjpeg"],
+      audio: ["aac", "ac3", "eac3", "mp3"],
+      subtitle: ["mov_text"],
+      external: ["mov_text"],
+    },
+    webm: {
+      video: ["vp8", "vp9", "av1"],
+      audio: ["opus", "vorbis"],
+      subtitle: ["webvtt"],
+      external: ["webvtt"],
+    },
+  };
+  const allowed = allowedByContainer[container]?.[kind];
+  return allowed ? presetCodecOptions[kind].filter((codec) => allowed.includes(codec)) : presetCodecOptions[kind];
 }
 
 function PresetDefinitionEditor({
@@ -490,57 +532,130 @@ function PresetDefinitionEditor({
   onChange: (definition: TranscodePresetDefinition) => void;
 }) {
   const { t } = useTranslation();
-  const sections: Array<{ key: PresetRuleListKey; kind: PresetRuleKind; label: string; hint?: string }> = [
-    { key: "video_rules", kind: "video", label: t("transcoding.automation.videoRules") },
-    { key: "audio_rules", kind: "audio", label: t("transcoding.automation.audioRules") },
-    { key: "subtitle_rules", kind: "subtitle", label: t("transcoding.automation.subtitleRules") },
-    { key: "external_subtitle_rules", kind: "external", label: t("transcoding.automation.externalSubtitleRules"), hint: t("transcoding.automation.externalSubtitlesHint") },
+  const sections: Array<{ key: PresetRuleListKey; kind: PresetRuleKind; label: string }> = [
+    { key: "video_rules", kind: "video", label: t("transcoding.streamTabs.video") },
+    { key: "audio_rules", kind: "audio", label: t("transcoding.streamTabs.audio") },
+    { key: "subtitle_rules", kind: "subtitle", label: t("transcoding.streamTabs.subtitles") },
   ];
-  const updateRule = (key: PresetRuleListKey, index: number, patch: Partial<TranscodePresetStreamRule>) => {
-    const next = definition[key].map((rule, ruleIndex) => ruleIndex === index ? { ...rule, ...patch } : rule);
-    onChange({ ...definition, [key]: next });
+  const updateRule = (key: PresetRuleListKey, kind: PresetRuleKind, patch: Partial<TranscodePresetStreamRule>) => onChange(replaceDefaultPresetRule(definition, key, kind, patch));
+  const actionForUi = (action: TranscodePresetStreamRule["action"]) => action === "convert" ? "encode" : action === "remove" ? "drop" : "copy";
+  const renderCodecSelect = (key: PresetRuleListKey, kind: PresetRuleKind, rule: TranscodePresetStreamRule) => {
+    const codecs = compatiblePresetCodecs(kind, definition.container);
+    const fallback = kind === "video" ? "hevc" : kind === "subtitle" || kind === "external" ? "subrip" : "aac";
+    return (
+      <select className="settings-choice-input transcode-control" value={rule.codec ?? fallback} aria-label={t("transcoding.targetCodec")} onChange={(event) => updateRule(key, kind, { codec: event.target.value })}>
+        {codecs.map((codec) => <option key={codec} value={codec}>{presetCodecLabels[codec] ?? codec}</option>)}
+      </select>
+    );
+  };
+  const renderStreamSection = ({ key, kind, label }: (typeof sections)[number]) => {
+    const rule = defaultPresetRule(definition, key, kind);
+    const action = actionForUi(rule.action);
+    const ActionIcon = rule.action === "convert" ? RefreshCw : rule.action === "remove" ? Ban : Copy;
+    const patchRule = (patch: Partial<TranscodePresetStreamRule>) => updateRule(key, kind, patch);
+    return (
+      <article className={"transcode-stream-list-item transcode-preset-stream-item" + (action === "drop" ? " is-dropped" : "")} key={key}>
+        <div className="transcode-stream-list-row">
+          <div className="transcode-stream-row-copy"><strong>{label}</strong></div>
+          <div className="transcode-stream-row-actions">
+            <div className="transcode-action-field is-expanded" data-action={action}>
+              <ActionIcon aria-hidden="true" className="transcode-stream-action-icon" size={14} />
+              <select className="settings-choice-input transcode-control transcode-action-select" value={rule.action} aria-label={t("transcoding.streamAction", { index: label })} onChange={(event) => patchRule({ action: event.target.value as TranscodePresetStreamRule["action"] })}>
+                <option value="copy">{t("transcoding.actions.copy")}</option><option value="convert">{t("transcoding.actions.encode")}</option><option value="remove">{t("transcoding.actions.drop")}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        {rule.action === "convert" ? (
+          <div className="transcode-stream-details">
+            {kind === "video" ? (
+              <div className="transcode-stream-encode-fields transcode-video-encode-fields">
+                <label className="transcode-control-field transcode-dynamic-range-field">
+                  <span className="transcode-field-label">{t("transcoding.dynamicRange")}</span>
+                  <select className="settings-choice-input transcode-control" value={definition.dynamic_range} onChange={(event) => onChange({ ...definition, dynamic_range: event.target.value as TranscodePresetDefinition["dynamic_range"] })}>
+                    {(["preserve", "sdr", "hdr10", "hlg"] as const).map((value) => <option key={value} value={value}>{t("transcoding.dynamicRanges." + value)}</option>)}
+                  </select>
+                </label>
+                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(key, kind, rule)}</label>
+                <label className="transcode-control-field transcode-range-field">
+                  <span className="transcode-field-label">{t("transcoding.quality", { mode: "CRF/CQ" })}</span>
+                  <span className="transcode-range-row">
+                    <input className="settings-choice-input transcode-control transcode-quality-range" type="range" min={0} max={rule.codec === "av1" ? 63 : 51} step={1} value={rule.crf ?? rule.cq ?? 23} aria-valuetext={String(rule.crf ?? rule.cq ?? 23)} onChange={(event) => patchRule({ crf: Number(event.target.value), cq: Number(event.target.value) })} />
+                    <input className="settings-choice-input transcode-control transcode-range-value" type="number" min={0} max={rule.codec === "av1" ? 63 : 51} step={1} value={rule.crf ?? rule.cq ?? 23} aria-label={t("transcoding.quality", { mode: "CRF/CQ" })} onChange={(event) => { if (event.target.value !== "") patchRule({ crf: Number(event.target.value), cq: Number(event.target.value) }); }} />
+                  </span>
+                </label>
+                <label className="transcode-control-field transcode-preset-field">
+                  <span className="transcode-field-label">{t("transcoding.speedPreset")}</span>
+                  <select className="settings-choice-input transcode-control" value={rule.preset ?? "medium"} onChange={(event) => patchRule({ preset: event.target.value })}>
+                    {["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label className="transcode-control-field transcode-resolution-field">
+                  <span className="transcode-field-label">{t("transcoding.resolution")}</span>
+                  <select className="settings-choice-input transcode-control" value={rule.width && rule.height ? rule.width + "x" + rule.height : "original"} onChange={(event) => {
+                    const selected = presetVideoResolutions.find((option) => option.value === event.target.value);
+                    patchRule({ width: selected?.width ?? null, height: selected?.height ?? null });
+                  }}>
+                    {presetVideoResolutions.map((option) => <option key={option.value} value={option.value}>{option.value === "original" ? t("transcoding.original") : t("transcoding.resolutionPreset", { height: option.height, width: option.width })}</option>)}
+                    {rule.width && rule.height && !presetVideoResolutions.some((option) => option.value === rule.width + "x" + rule.height) ? <option value={rule.width + "x" + rule.height}>{rule.width}×{rule.height}</option> : null}
+                  </select>
+                </label>
+              </div>
+            ) : kind === "audio" ? (
+              <div className="transcode-stream-encode-fields">
+                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(key, kind, rule)}</label>
+                <label className="transcode-control-field transcode-range-field">
+                  <span className="transcode-field-label">{t("transcoding.bitrate")}</span>
+                  <select className="settings-choice-input transcode-control" value={rule.bitrate ?? 192_000} onChange={(event) => patchRule({ bitrate: Number(event.target.value) })}>
+                    {(presetAudioBitrates[rule.codec ?? "aac"] ?? presetAudioBitrates.aac).map((value) => <option key={value} value={value}>{value === 0 ? t("transcoding.lossless") : Math.round(value / 1000) + " kb/s"}</option>)}
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <div className="transcode-stream-encode-fields">
+                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(key, kind, rule)}</label>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </article>
+    );
   };
   return (
-    <div className="settings-sidebar-stack">
-      <div className="compatibility-profile-form-grid">
-        <label><span>{t("transcoding.container")}</span><select className="settings-choice-input" value={definition.container} onChange={(event) => onChange({ ...definition, container: event.target.value as TranscodePresetDefinition["container"] })}>
+    <div className="settings-sidebar-stack transcode-preset-definition">
+      <div className="transcode-configuration-grid">
+        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.container")}</span><select className="settings-choice-input transcode-control" value={definition.container} onChange={(event) => onChange({ ...definition, container: event.target.value as TranscodePresetDefinition["container"] })}>
           {(["source", "mkv", "mp4", "webm"] as const).map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}
         </select></label>
-        <label><span>{t("transcoding.executionMode")}</span><select className="settings-choice-input" value={definition.execution_mode} onChange={(event) => onChange({ ...definition, execution_mode: event.target.value as TranscodePresetDefinition["execution_mode"] })}>
-          <option value="inherit">{t("transcoding.automation.inheritGlobal")}</option><option value="hardware_required">{t("transcoding.hardwareRequired")}</option><option value="cpu_only">{t("transcoding.cpuOnly")}</option>
-        </select></label>
-        <label><span>{t("transcoding.dynamicRange")}</span><select className="settings-choice-input" value={definition.dynamic_range} onChange={(event) => onChange({ ...definition, dynamic_range: event.target.value as TranscodePresetDefinition["dynamic_range"] })}>
-          {(["preserve", "sdr", "hdr10", "hlg", "dolby_vision"] as const).map((value) => <option key={value} value={value}>{t(`transcoding.dynamicRanges.${value}`)}</option>)}
-        </select></label>
       </div>
-      <div className="transcode-global-options">
-        <label><input type="checkbox" checked={definition.filename_template_override} onChange={(event) => onChange({ ...definition, filename_template_override: event.target.checked })} /><span>{t("transcoding.filenameTemplateOverride")}</span></label>
-        <label><input type="checkbox" checked={definition.include_subtitle_languages} onChange={(event) => onChange({ ...definition, include_subtitle_languages: event.target.checked })} /><span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span></label>
-        <label><span>{t("transcoding.languageCodeFormat")}</span><select className="settings-choice-input" value={definition.filename_language_code_format ?? "iso_639_1"} onChange={(event) => onChange({ ...definition, filename_language_code_format: event.target.value as "iso_639_1" | "iso_639_2" })}><option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option><option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option></select></label>
+      <div className="transcode-global-options transcode-preset-filename-options">
+        <label className="transcode-filename-option"><input type="checkbox" checked={definition.filename_template_override} onChange={(event) => onChange({ ...definition, filename_template_override: event.target.checked })} /><span>{t("transcoding.filenameTemplateOverride")}</span></label>
+        <label className="transcode-filename-option"><input type="checkbox" checked={definition.include_subtitle_languages} onChange={(event) => onChange({ ...definition, include_subtitle_languages: event.target.checked })} /><span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span></label>
       </div>
-      <label className="compatibility-profile-field-wide"><span>{t("transcoding.filenameTemplate")}</span><input className="settings-choice-input" disabled={!definition.filename_template_override} value={definition.filename_template} onChange={(event) => onChange({ ...definition, filename_template: event.target.value, filename_template_override: true })} /></label>
-      <div className="transcode-global-options">
+      <div className="transcode-configuration-grid transcode-preset-language-control">
+        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.languageCodeFormat")}</span><select className="settings-choice-input transcode-control" value={definition.filename_language_code_format ?? "iso_639_1"} onChange={(event) => onChange({ ...definition, filename_language_code_format: event.target.value as "iso_639_1" | "iso_639_2" })}><option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option><option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option></select></label>
+      </div>
+      <div className="transcode-filename-body">
+        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.filenameTemplate")}</span><input className="settings-choice-input transcode-control" disabled={!definition.filename_template_override} value={definition.filename_template} onChange={(event) => onChange({ ...definition, filename_template: event.target.value, filename_template_override: true })} /></label>
+      </div>
+      <div className="transcode-metadata-option-list" role="group" aria-label={t("transcoding.metadataSettings")}>
         {(["metadata", "chapters", "cover", "attachments"] as const).map((option) => (
-          <label key={option}><input type="checkbox" checked={definition[option] === "keep"} onChange={(event) => onChange({ ...definition, [option]: event.target.checked ? "keep" : "drop" })} /><span>{t(`transcoding.options.${option}`)}</span></label>
+          <label className="transcode-global-option" key={option}><input type="checkbox" checked={definition[option] === "keep"} onChange={(event) => onChange({ ...definition, [option]: event.target.checked ? "keep" : "drop" })} /><span>{t("transcoding.options." + option)}</span></label>
         ))}
       </div>
-      {sections.map(({ key, kind, label, hint }) => (
-        <details className="compatibility-capability-section transcode-preset-rule-section" key={key}>
-          <summary className="transcode-automation-section-summary"><span>{label}</span><strong className="transcode-preset-section-count">{definition[key].length}</strong></summary>
-          <div className="compatibility-capability-section-body">
-            <div className="field-label-row"><strong>{label}</strong><button type="button" className="secondary small settings-panel-header-action" onClick={() => onChange({ ...definition, [key]: [...definition[key], emptyStreamRule(kind)] })}><Plus aria-hidden="true" size={14} />{t("transcoding.automation.addStreamRule")}</button></div>
-            {definition[key].map((rule, index) => <StreamRuleEditor key={`${key}-${index}`} kind={kind} rule={rule} index={index} ruleCount={definition[key].length} onChange={(patch) => updateRule(key, index, patch)} onMove={(direction) => {
-              const target = index + direction;
-              if (target < 0 || target >= definition[key].length) return;
-              const next = [...definition[key]];
-              [next[index], next[target]] = [next[target], next[index]];
-              onChange({ ...definition, [key]: next });
-            }} onRemove={() => onChange({ ...definition, [key]: definition[key].filter((_entry, ruleIndex) => ruleIndex !== index) })} />)}
-            {hint ? <p className="field-hint">{hint}</p> : null}
-          </div>
-        </details>
-      ))}
-      <p className="field-hint">{t("transcoding.automation.unmatchedStreamsCopied")}</p>
+      <div className="transcode-stream-list transcode-preset-stream-list">
+        {sections.map(renderStreamSection)}
+      </div>
+      <label className="transcode-external-subtitle transcode-preset-external-subtitles">
+        <input type="checkbox" checked={defaultPresetRule(definition, "external_subtitle_rules", "external").action !== "remove"} onChange={(event) => {
+          const enabled = event.target.checked;
+          updateRule("external_subtitle_rules", "external", {
+            action: enabled ? "convert" : "remove",
+            codec: definition.container === "mp4" ? "mov_text" : definition.container === "webm" ? "webvtt" : "subrip",
+          });
+        }} />
+        <span>{t("transcoding.externalSubtitles")}</span>
+      </label>
     </div>
   );
 }
@@ -985,73 +1100,35 @@ export function TranscodePresetsRulesPanel({
 
   const renderPresetSummary = (preset: TranscodePreset) => {
     const definition = preset.definition;
-    const executionLabel = definition.execution_mode === "hardware_required"
-      ? t("transcoding.hardwareRequired")
-      : definition.execution_mode === "cpu_only"
-        ? t("transcoding.cpuOnly")
-        : t("transcoding.automation.inheritGlobal");
-    const dynamicRangeLabel = t(`transcoding.dynamicRanges.${definition.dynamic_range}`, { defaultValue: definition.dynamic_range });
-    const ruleSections: Array<{ key: PresetRuleListKey; label: string; rules: TranscodePresetStreamRule[] }> = [
-      { key: "video_rules", label: t("transcoding.automation.videoRules"), rules: definition.video_rules },
-      { key: "audio_rules", label: t("transcoding.automation.audioRules"), rules: definition.audio_rules },
-      { key: "subtitle_rules", label: t("transcoding.automation.subtitleRules"), rules: definition.subtitle_rules },
-      { key: "external_subtitle_rules", label: t("transcoding.automation.externalSubtitleRules"), rules: definition.external_subtitle_rules },
+    const sections: Array<{ key: PresetRuleListKey; kind: PresetRuleKind; label: string }> = [
+      { key: "video_rules", kind: "video", label: t("transcoding.streamTabs.video") },
+      { key: "audio_rules", kind: "audio", label: t("transcoding.streamTabs.audio") },
+      { key: "subtitle_rules", kind: "subtitle", label: t("transcoding.streamTabs.subtitles") },
     ];
-    const valueOrDash = (value: string | number | null | undefined) => value === null || value === undefined || value === "" ? "—" : String(value);
-    const matchDefaultLabel = (value: boolean | null) => value === null
-      ? t("transcoding.automation.anyTrack")
-      : value
-        ? t("transcoding.automation.defaultTrack")
-        : t("transcoding.automation.nonDefaultTrack");
     const actionLabel = (action: TranscodePresetStreamRule["action"]) => action === "convert"
       ? t("transcoding.actions.encode")
       : action === "remove"
         ? t("transcoding.actions.drop")
         : t("transcoding.actions.copy");
-    const renderRuleSummary = (rule: TranscodePresetStreamRule, index: number) => {
-      const values: Array<[string, string]> = [
-        [t("transcoding.automation.matchCodec"), valueOrDash(rule.match_codecs.join(", "))],
-        [t("transcoding.automation.matchLanguage"), valueOrDash(rule.match_languages.join(", "))],
-        [t("transcoding.automation.matchDefault"), matchDefaultLabel(rule.match_default)],
-        [t("transcoding.automation.streamAction"), actionLabel(rule.action)],
-      ];
-      if (rule.action === "convert") {
-        values.push(
-          [t("transcoding.encoder"), valueOrDash(rule.codec)],
-          [t("transcoding.automation.encoderOptional"), valueOrDash(rule.encoder)],
-          [t("transcoding.automation.bitrate"), valueOrDash(rule.bitrate)],
-          [t("transcoding.automation.languageOverride"), valueOrDash(rule.language)],
-          [t("transcoding.automation.titleOverride"), valueOrDash(rule.title)],
-        );
+    const summaryFor = (key: PresetRuleListKey, kind: PresetRuleKind) => {
+      const rule = defaultPresetRule(definition, key, kind);
+      if (rule.action !== "convert") return actionLabel(rule.action);
+      const codec = presetCodecLabels[rule.codec ?? ""] ?? rule.codec ?? "—";
+      if (kind === "video") {
+        const resolution = rule.width && rule.height ? rule.width + "×" + rule.height : t("transcoding.original");
+        return [actionLabel(rule.action), codec, String(rule.crf ?? rule.cq ?? "—"), rule.preset ?? "—", resolution, t("transcoding.dynamicRanges." + definition.dynamic_range)].join(" · ");
       }
-      return (
-        <div className="transcode-preset-rule transcode-preset-rule-summary" key={`${rule.action}-${index}`}>
-          <strong>{actionLabel(rule.action)}</strong>
-          <div className="transcode-preset-rule-summary-grid">
-            {values.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
-          </div>
-        </div>
-      );
+      if (kind === "audio") return [actionLabel(rule.action), codec, rule.bitrate ? Math.round(rule.bitrate / 1000) + " kb/s" : "—"].join(" · ");
+      return [actionLabel(rule.action), codec].join(" · ");
     };
+    const externalRule = defaultPresetRule(definition, "external_subtitle_rules", "external");
     return (
       <div className="compatibility-profile-details transcode-automation-details">
         <div className="compatibility-profile-form-grid transcode-automation-summary-form-grid">
-          <label><span>{t("transcoding.container")}</span><select className="settings-choice-input" disabled value={definition.container} onChange={() => undefined}>{(["source", "mkv", "mp4", "webm"] as const).map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>
-          <label><span>{t("transcoding.executionMode")}</span><select className="settings-choice-input" disabled value={definition.execution_mode} onChange={() => undefined}>
-            <option value="inherit">{t("transcoding.automation.inheritGlobal")}</option><option value="hardware_required">{t("transcoding.hardwareRequired")}</option><option value="cpu_only">{t("transcoding.cpuOnly")}</option>
-          </select></label>
-          <label><span>{t("transcoding.dynamicRange")}</span><select className="settings-choice-input" disabled value={definition.dynamic_range} onChange={() => undefined}>{(["preserve", "sdr", "hdr10", "hlg", "dolby_vision"] as const).map((value) => <option key={value} value={value}>{t(`transcoding.dynamicRanges.${value}`)}</option>)}</select></label>
-          {releaseVisibility.automationRules ? <label><span>{t("transcoding.automation.usedByRules")}</span><input className="settings-choice-input" readOnly value={preset.used_by_rule_count} /></label> : null}
-        </div>
-        <div className="compatibility-capability-sections transcode-automation-rule-sections">
-          {ruleSections.map(({ key, label, rules }) => (
-            <details className="compatibility-capability-section" key={key}>
-              <summary className="transcode-automation-section-summary"><span>{label}</span><strong className="transcode-preset-section-count">{rules.length}</strong></summary>
-              <div className="compatibility-capability-section-body">
-                {rules.length ? rules.map((rule, index) => renderRuleSummary(rule, index)) : <p className="field-hint">—</p>}
-              </div>
-            </details>
-          ))}
+          <div><span>{t("transcoding.container")}</span><strong>{definition.container.toUpperCase()}</strong></div>
+          {releaseVisibility.automationRules ? <div><span>{t("transcoding.automation.usedByRules")}</span><strong>{preset.used_by_rule_count}</strong></div> : null}
+          {sections.map(({ key, kind, label }) => <div key={key}><span>{label}</span><strong>{summaryFor(key, kind)}</strong></div>)}
+          <div><span>{t("transcoding.externalSubtitles")}</span><strong>{externalRule.action === "remove" ? t("transcoding.actions.drop") : t("transcoding.actions.encode")}</strong></div>
         </div>
         {preset.description ? <p className="field-hint">{preset.description}</p> : null}
       </div>
@@ -1061,18 +1138,15 @@ export function TranscodePresetsRulesPanel({
   const renderPresetEditor = () => {
     if (!presetDraft) return null;
     return (
-      <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor">
-        <div className="field-label-row">
-          <strong>{presetDraft.id ? t("transcoding.automation.editPreset") : t("transcoding.automation.newPreset")}</strong>
-          <button type="button" className="secondary icon-only-button" title={t("common.close")} onClick={closePresetEditor}><X aria-hidden="true" size={14} /></button>
-        </div>
+      <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor transcode-preset-editor">
         <div className="compatibility-profile-form-grid">
-          <label><span>{t("transcoding.automation.presetName")}</span><input className="settings-choice-input" value={presetDraft.name} onChange={(event) => setPresetDraft({ ...presetDraft, name: event.target.value })} /></label>
-          <label className="compatibility-profile-field-wide"><span>{t("transcoding.automation.presetDescription")}</span><textarea className="settings-choice-input" rows={3} value={presetDraft.description} onChange={(event) => setPresetDraft({ ...presetDraft, description: event.target.value })} /></label>
+          <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.automation.presetName")}</span><input className="settings-choice-input transcode-control" value={presetDraft.name} onChange={(event) => setPresetDraft({ ...presetDraft, name: event.target.value })} /></label>
+          <label className="compatibility-profile-field-wide transcode-control-field"><span className="transcode-field-label">{t("transcoding.automation.presetDescription")}</span><textarea className="settings-choice-input transcode-control" rows={3} value={presetDraft.description} onChange={(event) => setPresetDraft({ ...presetDraft, description: event.target.value })} /></label>
         </div>
         <PresetDefinitionEditor definition={presetDraft.definition} onChange={(definition) => setPresetDraft({ ...presetDraft, definition })} />
         <div className="compatibility-profile-card-actions transcode-automation-editor-actions">
           <button type="button" className="transcode-action-button" onClick={() => void savePreset()} disabled={busy || !presetDraft.name.trim()}><Save aria-hidden="true" />{t("common.save")}</button>
+          <button type="button" className="secondary transcode-action-button" onClick={closePresetEditor} disabled={busy}>{t("common.cancel")}</button>
         </div>
       </div>
     );
@@ -1255,7 +1329,13 @@ export function TranscodePresetsRulesPanel({
   };
 
   const renderPresetList = () => {
-    const visiblePresets = standaloneTab === "presets" ? filteredPresets : presets;
+    const isPresetCatalog = (standaloneTab ?? tab) === "presets";
+    const availablePresets = isPresetCatalog
+      ? presets.filter((preset) => !preset.is_builtin)
+      : presets;
+    const visiblePresets = isPresetCatalog
+      ? filteredPresets.filter((preset) => !preset.is_builtin)
+      : presets;
     const list = (
       <div className={`compatibility-profile-list${standaloneTab === "presets" ? " compatibility-profile-catalog-list" : ""}`}>
         {standalonePresetTabs ? (
@@ -1292,7 +1372,15 @@ export function TranscodePresetsRulesPanel({
             {renderPresetEditor()}
           </article>
         ) : null}
-        {!visiblePresets.length && !(presetDraft?.id === null && presetEditorOpen) ? <p className="compatibility-profile-search-empty">{t("transcoding.automation.searchEmpty")}</p> : null}
+        {!visiblePresets.length && !(presetDraft?.id === null && presetEditorOpen) ? (
+          availablePresets.length ? (
+            <p className="compatibility-profile-search-empty">{t("transcoding.automation.searchEmpty")}</p>
+          ) : (
+            <div className="transcode-preset-placeholder-body">
+              <PanelEmptyState message={t("transcoding.presetSettingsTabs.transcodingEmpty")} />
+            </div>
+          )
+        ) : null}
       </div>
     );
     return standalonePresetTabs ? list : <section className="transcode-automation-tab-content">{list}</section>;

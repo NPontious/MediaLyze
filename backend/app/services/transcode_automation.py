@@ -164,6 +164,28 @@ def ensure_builtin_transcode_presets(db: Session) -> None:
         db.flush()
 
 
+def remove_unreferenced_builtin_transcode_presets(db: Session) -> None:
+    """Remove old bundled presets when no saved rule or history record uses them."""
+
+    presets = db.scalars(
+        select(TranscodePreset).where(TranscodePreset.is_builtin.is_(True))
+    ).all()
+    for preset in presets:
+        referenced_by_rule = db.scalar(
+            select(TranscodeRule.id)
+            .where(TranscodeRule.profile_id == preset.id)
+            .limit(1)
+        )
+        referenced_by_history = db.scalar(
+            select(TranscodeAutomationRecord.id)
+            .where(TranscodeAutomationRecord.profile_id == preset.id)
+            .limit(1)
+        )
+        if referenced_by_rule is None and referenced_by_history is None:
+            db.delete(preset)
+    db.flush()
+
+
 def list_transcode_presets(db: Session) -> list[TranscodePresetRead]:
     presets = db.scalars(
         select(TranscodePreset).order_by(

@@ -2,13 +2,9 @@
 
 MediaLyze can create a new video variant with FFmpeg from the `Transcoding` panel of a file detail page. The feature is intentionally limited to files with a regular video stream. The default is a separate `Transcode_Output` tree; writing beside the source is explicit, and replacing the original requires a server-side confirmation and creates no byte-for-byte backup.
 
-## Built-in presets and plans
+## Transcoding plans
 
-The built-in presets are starting points for a plan:
-
-- **Original / copy:** uses the source container when it can carry the existing streams and copies every internal stream unchanged. This is the default and keeps the source codec, quality, language, HDR signaling, and stream metadata intact.
-- **Save storage:** MKV/HEVC, CRF or CQ 22, preserved resolution, frame rate, and dynamic range, with non-video streams copied where compatible.
-- **Modern:** MKV/AV1, CRF or CQ 30, with non-video streams copied where compatible.
+The file-detail panel starts with a copy plan that preserves the source streams and container where compatible. Users can edit the plan directly, select one of their saved presets, or choose `Custom`. MediaLyze no longer supplies bundled transcoding presets.
 
 The normalized versioned plan stores the container; `copy`, `drop`, or `encode` for every stream (the legacy `keep` value remains accepted for old plans); target codec and quality fields; the resolved worker-specific encoder; resolution, frame rate, pixel format, profile, level, preset and GOP controls; dynamic-range handling; chapter, metadata, cover, and attachment behavior; selected sidecar subtitles; the filename template; and the effective execution/output policy. The file-detail UI asks only for the target codec. The selected worker resolves a compatible encoder and device at validation/queue time. Existing explicit encoder fields remain accepted for backwards-compatible API and saved-plan payloads. The API accepts no raw command or arbitrary FFmpeg argument field.
 
@@ -28,7 +24,7 @@ Video encode controls use constant-quality ranges and optional speed presets whi
 
 The Transcoding settings page stores reusable, versioned preset definitions in SQLite. A preset is an ordered set of stream rules for video, audio, internal subtitles, and optional external subtitle sidecars. Each rule can match codec, language, and default-track state and can copy, convert, or remove the matching stream. Internal streams that do not match a rule are copied; external sidecars are not embedded unless an external-subtitle rule explicitly selects them. Saved presets contain abstract stream criteria rather than file-specific stream indexes, subtitle IDs, or raw FFmpeg arguments. A saved preset is materialized against the current file into the same concrete `TranscodePlan` used by the file-detail workflow.
 
-The three built-in presets are immutable starting points. Users can create, edit, duplicate, and delete custom presets. Preset versions and the selected preset version are recorded on every queued job. Jobs retain a complete preset snapshot, so later edits do not change the provenance of an existing run.
+The preset catalog starts empty on new installations. Users can create, edit, duplicate, and delete their own presets. Preset versions and the selected preset version are recorded on every queued job. Jobs retain a complete preset snapshot, so later edits do not change the provenance of an existing run.
 
 The canonical management endpoint is `/api/transcoding/presets`. The former `/api/transcoding/profiles` paths and profile-named storage/plan fields remain compatibility aliases for existing clients and data.
 
@@ -168,8 +164,8 @@ sysfs metadata; the runtime probe is authoritative.
 The desktop version supports Apple Silicon and Intel Mac graphics through
 macOS VideoToolbox. It uses the bundled `h264_videotoolbox` and
 `hevc_videotoolbox` encoders, and only enables the device after a real runtime
-probe succeeds. The `Save storage` preset automatically prefers HEVC
-VideoToolbox when hardware-required mode is active.
+probe succeeds. A user-created preset that targets HEVC can use HEVC VideoToolbox
+when hardware-required mode is active and the encoder passes its runtime probe.
 
 Docker Desktop for macOS runs the Linux image inside a virtual machine and
 does not expose the Mac's Apple GPU or macOS VideoToolbox framework to that

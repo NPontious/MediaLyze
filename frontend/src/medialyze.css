@@ -14301,6 +14301,12 @@ html[data-theme="dark"] {
   background: color-mix(in srgb, var(--nested-surface) 76%, transparent);
 }
 
+.transcode-automation-editor.transcode-preset-editor {
+  gap: 14px;
+  padding: 12px;
+  background: transparent;
+}
+
 .transcode-condition-group {
   display: grid;
   gap: 0.55rem;
@@ -15291,6 +15297,34 @@ html[data-theme="dark"] {
   border-radius: 999px;
 }
 
+.transcode-formatting-preset-options.is-folder {
+  grid-template-columns: minmax(150px, 0.45fr) minmax(220px, 1fr);
+}
+
+.transcode-formatting-preset-toggles .transcode-filename-option,
+.transcode-preset-filename-options .transcode-filename-option {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.transcode-preset-language-control > label {
+  width: min(320px, 100%);
+}
+
+.transcode-preset-stream-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.transcode-preset-stream-item .transcode-stream-list-row {
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 34%);
+}
+
+.transcode-preset-external-subtitles {
+  width: fit-content;
+}
+
 .transcode-filename-section {
   display: grid;
   gap: 14px;
@@ -15493,9 +15527,12 @@ html[data-theme="dark"] {
 
 .transcode-filename-template-editor {
   min-height: 40px;
+  min-width: 0;
   line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  overflow-y: hidden;
   cursor: text;
 }
 
