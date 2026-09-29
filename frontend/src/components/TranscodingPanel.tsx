@@ -25,14 +25,16 @@ import {
 } from "../lib/api";
 import { formatBytes, formatCodecLabel, formatDuration, formatSpatialAudioProfileLabel } from "../lib/format";
 import { releaseVisibility } from "../lib/release-visibility";
-import { formatFilenameLanguageCode, formatLanguageLabel, languageOptions, normalizeLanguageTag, type FilenameLanguageCodeFormat } from "../lib/language";
+import { formatFilenameLanguageCode, formatLanguageLabel, languageOptions, normalizeLanguageTag, streamLanguageCodeFormats, type FilenameLanguageCodeFormat } from "../lib/language";
 import { classifyResolutionCategory } from "../lib/resolution-categories";
 import { applyFormattingPreset, formattingDefinitionFromPlan, matchingFormattingPresetId, type FormattingKind } from "../lib/transcode-formatting-presets";
-import { FILENAME_METADATA_TOKEN_PATTERN, FILENAME_METADATA_TOKENS, type FilenameMetadataToken } from "../lib/transcode-formatting-metadata";
+import { FILENAME_METADATA_TOKENS, type FilenameMetadataToken } from "../lib/transcode-formatting-metadata";
+import { filenameTemplateEditorMarkup, filenameTemplateFromEditor, filenameTemplateSelectionFromEditor, restoreFilenameTemplateCaret } from "../lib/filename-template-editor";
 import { parseTranscodeSpeed, TranscodeProgressSummary } from "./TranscodeProgressSummary";
 import { SparklesIcon } from "./SparklesIcon";
 import { TranscodeFormattingMetadataMenu } from "./TranscodeFormattingMetadataMenu";
 import { TooltipTrigger } from "./TooltipTrigger";
+import { LanguageCodeFormatField } from "./LanguageCodeFormatField";
 
 const STREAM_ACTIONS: TranscodeStreamAction[] = ["copy", "encode", "drop"];
 const STREAM_KINDS = ["video_streams", "audio_streams", "subtitle_streams"] as const;
@@ -53,9 +55,6 @@ const FILENAME_CLEANUP_PATTERNS: Partial<Record<Exclude<FilenameCleanupPreset, "
   square_and_round_brackets: "\\[[^\\[\\]]*\\]|\\([^()]*\\)",
   all_brackets: "\\[[^\\[\\]]*\\]|\\([^()]*\\)|\\{[^{}]*\\}",
 };
-type FilenameTemplatePart =
-  | { type: "text"; value: string }
-  | { type: "token"; token: FilenameMetadataToken };
 
 function connectorReleaseYear(sources: FileConnectorSource[]): string {
   const source = sources.find((entry) => entry.preferred && (entry.production_year !== null || entry.premiere_date))
@@ -172,133 +171,6 @@ function filenameFrameRateValue(value: number | null | undefined): string {
   return `${Number.isInteger(value) ? value : value.toFixed(3).replace(/\.?0+$/, "")} fps`;
 }
 
-function filenameTemplateParts(template: string): FilenameTemplatePart[] {
-  const parts: FilenameTemplatePart[] = [];
-  let cursor = 0;
-  FILENAME_METADATA_TOKEN_PATTERN.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = FILENAME_METADATA_TOKEN_PATTERN.exec(template)) !== null) {
-    if (match.index > cursor) parts.push({ type: "text", value: template.slice(cursor, match.index) });
-    parts.push({ type: "token", token: match[1] as FilenameMetadataToken });
-    cursor = match.index + match[0].length;
-  }
-  if (cursor < template.length) parts.push({ type: "text", value: template.slice(cursor) });
-  return parts;
-}
-
-function escapeFilenameTemplateHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character] ?? character);
-}
-
-function filenameTemplateEditorMarkup(template: string): string {
-  return filenameTemplateParts(template).map((part) => part.type === "token"
-    ? `<span class="transcode-filename-inline-token" contenteditable="false" data-filename-token="${part.token}">{${part.token}}</span>`
-    : `<span class="transcode-filename-inline-text">${escapeFilenameTemplateHtml(part.value)}</span>`).join("");
-}
-
-function filenameTemplateNodeLength(node: Node): number {
-  if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? "").length;
-  if (node.nodeType !== Node.ELEMENT_NODE) return 0;
-  const element = node as HTMLElement;
-  const token = element.dataset.filenameToken;
-  if (token) return `{${token}}`.length;
-  if (element.tagName === "BR") return 1;
-  return Array.from(node.childNodes).reduce((total, child) => total + filenameTemplateNodeLength(child), 0);
-}
-
-function filenameTemplateFromEditor(root: HTMLElement): string {
-  const serialize = (node: Node): string => {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-    if (node.nodeType !== Node.ELEMENT_NODE) return "";
-    const element = node as HTMLElement;
-    const token = element.dataset.filenameToken;
-    if (token) return `{${token}}`;
-    if (element.tagName === "BR") return "\n";
-    const content = Array.from(node.childNodes).map(serialize).join("");
-    return element !== root && (element.tagName === "DIV" || element.tagName === "P") ? `${content}\n` : content;
-  };
-  return Array.from(root.childNodes).map(serialize).join("").replace(/\u00a0/g, " ");
-}
-
-function filenameTemplateOffsetFromPoint(root: HTMLElement, container: Node, offset: number): number | null {
-  if (container !== root && !root.contains(container)) return null;
-
-  const measure = (node: Node): number | null => {
-    if (node === container) {
-      if (node.nodeType === Node.TEXT_NODE) return Math.min(offset, (node.textContent ?? "").length);
-      const children = Array.from(node.childNodes);
-      return children.slice(0, Math.min(offset, children.length)).reduce((total, child) => total + filenameTemplateNodeLength(child), 0);
-    }
-    if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset.filenameToken) return null;
-    let before = 0;
-    for (const child of Array.from(node.childNodes)) {
-      const result = measure(child);
-      if (result !== null) return before + result;
-      before += filenameTemplateNodeLength(child);
-    }
-    return null;
-  };
-
-  return measure(root);
-}
-
-function filenameTemplateSelectionFromEditor(root: HTMLElement): { start: number; end: number } | null {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || !selection.anchorNode || !selection.focusNode) return null;
-  const start = filenameTemplateOffsetFromPoint(root, selection.anchorNode, selection.anchorOffset);
-  const end = filenameTemplateOffsetFromPoint(root, selection.focusNode, selection.focusOffset);
-  if (start === null || end === null) return null;
-  return start <= end ? { start, end } : { start: end, end: start };
-}
-
-function restoreFilenameTemplateCaret(root: HTMLElement, targetOffset: number): void {
-  const boundary = (() => {
-    let consumed = 0;
-    const visit = (node: Node): { container: Node; offset: number } | null => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const length = (node.textContent ?? "").length;
-        if (targetOffset <= consumed + length) return { container: node, offset: Math.max(0, targetOffset - consumed) };
-        consumed += length;
-        return null;
-      }
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const element = node as HTMLElement;
-        const token = element.dataset.filenameToken;
-        if (token) {
-          const length = `{${token}}`.length;
-          const parent = node.parentNode;
-          if (parent && targetOffset <= consumed + length) {
-            const index = Array.prototype.indexOf.call(parent.childNodes, node) as number;
-            return { container: parent, offset: targetOffset <= consumed ? index : index + 1 };
-          }
-          consumed += length;
-          return null;
-        }
-      }
-      for (const child of Array.from(node.childNodes)) {
-        const result = visit(child);
-        if (result) return result;
-      }
-      return null;
-    };
-    return visit(root) ?? { container: root, offset: root.childNodes.length };
-  })();
-
-  root.focus();
-  const selection = window.getSelection();
-  if (!selection) return;
-  const range = document.createRange();
-  range.setStart(boundary.container, boundary.offset);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
 
 type StreamKind = (typeof STREAM_KINDS)[number];
 type QualityMode = "crf" | "cq" | "qp" | "global_quality";
@@ -979,9 +851,9 @@ type StreamControlFieldsProps = {
 };
 
 type StreamLanguageFieldProps = {
-  kind: "audio_streams" | "subtitle_streams";
-  stream: TranscodePlan["audio_streams"][number] | TranscodePlan["subtitle_streams"][number];
-  source: AudioStream | SubtitleStream | undefined;
+  kind: StreamKind;
+  stream: TranscodePlan[StreamKind][number];
+  source: VideoStream | AudioStream | SubtitleStream | undefined;
   languageTags: string[];
   languageLocale: string;
   controlClass: string;
@@ -1098,6 +970,7 @@ function StreamControlFields({
     };
     return (
       <div className="transcode-stream-encode-fields transcode-video-encode-fields">
+        <StreamLanguageField kind="video_streams" stream={stream} source={source as VideoStream | undefined} languageTags={languageTags} languageLocale={languageLocale} controlClass={controlClass} t={t} onPatch={onPatch} />
         <label className="transcode-control-field transcode-dynamic-range-field">
           <span className="transcode-field-label">
             <span>{t("transcoding.dynamicRange")}</span>
@@ -1666,11 +1539,12 @@ export function TranscodingPanel({
   }, [capabilities, plan?.container]);
   const languageTags = useMemo(
     () => languageOptions([
+      ...file.video_streams.map((stream) => stream.language),
       ...file.audio_streams.map((stream) => stream.language),
       ...file.subtitle_streams.map((stream) => stream.language),
       ...file.external_subtitles.map((subtitle) => subtitle.language),
     ], i18n.language),
-    [file.audio_streams, file.subtitle_streams, file.external_subtitles, i18n.language],
+    [file.video_streams, file.audio_streams, file.subtitle_streams, file.external_subtitles, i18n.language],
   );
 
   const setPlanKeepingTarget = useCallback((nextPlan: TranscodePlan) => {
@@ -2086,29 +1960,17 @@ export function TranscodingPanel({
   ));
 
   const renderLanguageCodeFormatControl = (kind: FormattingKind) => (
-    <label className="transcode-filename-field transcode-language-code-field">
-      <span className="transcode-field-label">
-        <span>{t("transcoding.languageCodeFormat")}</span>
-        <TooltipTrigger
-          ariaLabel={t("transcoding.languageCodeFormatHelpAria")}
-          content={t("transcoding.languageCodeFormatHelp")}
-          pinOnClick={false}
-          maxWidth={420}
-        />
-      </span>
-      <select
-        className={transcodeControlClass}
-        aria-label={`${t("transcoding.languageCodeFormat")} (${t(kind === "filename" ? "transcoding.filenameFormatting" : "transcoding.folderFormatting")})`}
-        value={(kind === "filename" ? plan.filename_language_code_format : plan.folder_language_code_format) ?? "iso_639_1"}
-        onChange={(event) => {
-          setExpertPlan({ ...plan, profile: "expert", [kind === "filename" ? "filename_language_code_format" : "folder_language_code_format"]: event.target.value as FilenameLanguageCodeFormat });
-          setValidation(null);
-        }}
-      >
-        <option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option>
-        <option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option>
-      </select>
-    </label>
+    <LanguageCodeFormatField
+      className="transcode-filename-field transcode-language-code-field"
+      controlClassName={transcodeControlClass}
+      kind={kind}
+      ariaLabel={`${t("transcoding.languageCodeFormat")} (${t(kind === "filename" ? "transcoding.filenameFormatting" : "transcoding.folderFormatting")})`}
+      value={(kind === "filename" ? plan.filename_language_code_format : plan.folder_language_code_format) ?? "iso_639_1"}
+      onChange={(format: FilenameLanguageCodeFormat) => {
+        setExpertPlan({ ...plan, profile: "expert", [kind === "filename" ? "filename_language_code_format" : "folder_language_code_format"]: format });
+        setValidation(null);
+      }}
+    />
   );
 
   return (
@@ -2131,7 +1993,14 @@ export function TranscodingPanel({
         <label>
           <span>{t("transcoding.container")}</span>
           <select className={transcodeControlClass} value={plan.container} onChange={(event) => {
-            setExpertPlan({ ...plan, profile: "expert", container: event.target.value as TranscodePlan["container"] });
+            const container = event.target.value as TranscodePlan["container"];
+            const allowed = streamLanguageCodeFormats(container);
+            setExpertPlan({
+              ...plan, profile: "expert", container,
+              video_language_code_format: allowed.includes(plan.video_language_code_format ?? "container_default") ? plan.video_language_code_format : "container_default",
+              audio_language_code_format: allowed.includes(plan.audio_language_code_format ?? "container_default") ? plan.audio_language_code_format : "container_default",
+              subtitle_language_code_format: allowed.includes(plan.subtitle_language_code_format ?? "container_default") ? plan.subtitle_language_code_format : "container_default",
+            });
             setValidation(null);
           }}>
             {capabilities.containers.map((container) => <option key={container} value={container}>{container.toUpperCase()}</option>)}
@@ -2259,6 +2128,19 @@ export function TranscodingPanel({
             aria-labelledby={`transcode-stream-tab-${streamTabLabelKey(activeStreamTab)}`}
             tabIndex={0}
           >
+            <div className="transcode-configuration-grid transcode-stream-language-format-row">
+              <LanguageCodeFormatField
+                container={plan.container}
+                kind={activeStreamTab === "video_streams" ? "video" : activeStreamTab === "audio_streams" ? "audio" : "subtitle"}
+                controlClassName={transcodeControlClass}
+                ariaLabel={`${t("transcoding.languageCodeFormat")} (${t(`transcoding.streamTabs.${streamTabLabelKey(activeStreamTab)}`)})`}
+                value={plan[`${activeStreamTab.slice(0, -8)}_language_code_format` as "video_language_code_format" | "audio_language_code_format" | "subtitle_language_code_format"] ?? "container_default"}
+                onChange={(format) => {
+                  setExpertPlan({ ...plan, profile: "expert", [`${activeStreamTab.slice(0, -8)}_language_code_format`]: format });
+                  setValidation(null);
+                }}
+              />
+            </div>
             <div className="transcode-stream-list">
             <div className="compatibility-profile-search transcode-stream-search">
               <Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" />
@@ -2342,7 +2224,7 @@ export function TranscodingPanel({
                   bitrate: kind === "audio_streams"
                     ? (preserveExistingEncodeSettings ? stream.bitrate : defaultAudioBitrate(source as AudioStream | undefined, targetCodec || "aac")) || null
                     : null,
-                  language: kind !== "video_streams" ? sourceLanguage || "und" : null,
+                  language: sourceLanguage || "und",
                   title: kind !== "video_streams" ? sourceTitle ?? null : null,
                   width: kind === "video_streams" ? sourceVideo?.width ?? null : null,
                   height: kind === "video_streams" ? sourceVideo?.height ?? null : null,
@@ -2441,18 +2323,16 @@ export function TranscodingPanel({
                       ) : streamAction === "copy" ? (
                         <div className="transcode-stream-copy-details">
                           <p className="field-hint transcode-stream-copy-note">{t("transcoding.copyNote")}</p>
-                          {kind !== "video_streams" ? (
-                            <StreamLanguageField
-                              kind={kind}
-                              stream={stream}
-                              source={source as AudioStream | SubtitleStream | undefined}
-                              languageTags={languageTags}
-                              languageLocale={i18n.language}
-                              controlClass={transcodeControlClass}
-                              t={t}
-                              disabled
-                            />
-                          ) : null}
+                          <StreamLanguageField
+                            kind={kind}
+                            stream={stream}
+                            source={source}
+                            languageTags={languageTags}
+                            languageLocale={i18n.language}
+                            controlClass={transcodeControlClass}
+                            t={t}
+                            disabled
+                          />
                         </div>
                       ) : <p className="field-hint transcode-stream-drop-note">{t("transcoding.dropNote")}</p>}
                     </div>

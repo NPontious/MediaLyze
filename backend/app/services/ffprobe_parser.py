@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from backend.app.services.languages import normalize_language_code
+from backend.app.services.languages import normalize_language_code, normalize_language_tag
 from backend.app.utils.processes import get_hidden_subprocess_kwargs
 
 
@@ -103,13 +103,12 @@ def _abridged_value(tags: dict[str, Any]) -> str | None:
 
 
 def _stream_language(tags: dict[str, Any]) -> str | None:
-    language = normalize_language_code(_tag_value(tags, "language", "lang"))
-    if language and language != "und":
-        return language
-
-    ietf_language = normalize_language_code(
-        _tag_value(tags, "language_ietf", "language-ietf", "language ietf", "languageietf")
+    language = normalize_language_tag(_tag_value(tags, "language", "lang"))
+    ietf_language = normalize_language_tag(
+        _tag_value(tags, "language_ietf", "language-ietf", "language ietf", "languageietf", "locale")
     )
+    # The IETF tag carries region/script information when both legacy and
+    # modern Matroska language elements are present.
     return ietf_language or language
 
 
@@ -395,6 +394,7 @@ class NormalizedVideoStream:
     bit_rate: int | None
     bit_depth: int | None = None
     hdr_type: str | None = None
+    language: str | None = None
 
 
 @dataclass(slots=True)
@@ -551,6 +551,7 @@ def normalize_ffprobe_payload(payload: dict[str, Any]) -> ProbeResult:
                     bit_rate=_safe_int(stream.get("bit_rate")),
                     bit_depth=_safe_int(stream.get("bits_per_raw_sample") or stream.get("bits_per_sample")),
                     hdr_type=_hdr_type(stream),
+                    language=_stream_language(stream.get("tags") or {}),
                 )
             )
         elif codec_type == "audio":

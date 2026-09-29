@@ -30,20 +30,20 @@ export function applyFormattingPreset(plan: TranscodePlan, preset: TranscodeForm
   if (preset.kind === "filename") return {
     ...plan,
     profile: "expert",
-    filename_format_enabled: value.enabled,
+    filename_format_enabled: true,
     filename_template: value.template,
     filename_template_override: true,
     filename_template_explicit_source: value.source_name_explicit ?? false,
     filename_metadata_separator: value.metadata_separator,
     filename_cleanup_preset: value.cleanup_preset,
     filename_cleanup_regex: value.cleanup_regex,
-    include_subtitle_languages: value.include_subtitle_languages,
+    include_subtitle_languages: false,
     filename_language_code_format: value.language_code_format,
   };
   return {
     ...plan,
     profile: "expert",
-    folder_format_enabled: value.enabled,
+    folder_format_enabled: true,
     folder_template: value.template,
     folder_template_override: true,
     folder_metadata_separator: value.metadata_separator,
@@ -59,6 +59,8 @@ export function matchingFormattingPresetId(plan: TranscodePlan, presets: Transco
   const current = formattingDefinitionFromPlan(plan, kind);
   return Object.entries(current).every(([key, value]) => {
     const saved = preset.definition[key as keyof TranscodeFormattingDefinition];
+    if (key === "enabled") return value === true;
+    if (key === "include_subtitle_languages") return value === false;
     return (key === "source_name_explicit" ? saved ?? false : saved) === value;
   }) ? preset.id : null;
 }

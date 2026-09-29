@@ -1117,6 +1117,7 @@ export type VideoStream = {
   bit_rate: number | null;
   bit_depth?: number | null;
   hdr_type: string | null;
+  language?: string | null;
 };
 
 export type AudioStream = {
@@ -1357,7 +1358,7 @@ export type TranscodeFormattingDefinition = {
   cleanup_preset: FilenameCleanupPreset;
   cleanup_regex: string | null;
   include_subtitle_languages: boolean;
-  language_code_format: "iso_639_1" | "iso_639_2";
+  language_code_format: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47";
 };
 
 export type TranscodeFormattingPreset = {
@@ -1372,6 +1373,9 @@ export type TranscodePlan = {
   version: 1;
   profile: "compatibility" | "storage" | "modern" | "expert";
   container: "mkv" | "mp4" | "webm";
+  video_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  audio_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  subtitle_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
   video_streams: TranscodeStreamPlan[];
   audio_streams: TranscodeStreamPlan[];
   subtitle_streams: TranscodeStreamPlan[];
@@ -1393,8 +1397,8 @@ export type TranscodePlan = {
   filename_format_enabled?: boolean;
   include_subtitle_languages?: boolean;
   filename_metadata_separator?: string | null;
-  filename_language_code_format?: "iso_639_1" | "iso_639_2" | null;
-  folder_language_code_format?: "iso_639_1" | "iso_639_2" | null;
+  filename_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
+  folder_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
   filename_release_year?: number | null;
   filename_movie_title?: string | null;
   filename_series_name?: string | null;
@@ -1442,6 +1446,9 @@ export type TranscodePresetStreamRule = {
 export type TranscodePresetDefinition = {
   version: 1;
   container: "source" | "mkv" | "mp4" | "webm";
+  video_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  audio_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  subtitle_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
   video_rules: TranscodePresetStreamRule[];
   audio_rules: TranscodePresetStreamRule[];
   subtitle_rules: TranscodePresetStreamRule[];
@@ -1460,8 +1467,8 @@ export type TranscodePresetDefinition = {
   filename_template_explicit_source?: boolean;
   include_subtitle_languages: boolean;
   filename_metadata_separator?: string | null;
-  filename_language_code_format?: "iso_639_1" | "iso_639_2" | null;
-  folder_language_code_format?: "iso_639_1" | "iso_639_2" | null;
+  filename_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
+  folder_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
   filename_cleanup_preset?: FilenameCleanupPreset | null;
   filename_cleanup_regex?: string | null;
   execution_mode: "inherit" | "hardware_required" | "cpu_only";

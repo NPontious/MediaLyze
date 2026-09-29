@@ -60,6 +60,7 @@ class VideoStreamRead(BaseModel):
     bit_rate: int | None
     bit_depth: int | None
     hdr_type: str | None
+    language: str | None = None
 
 
 class AudioStreamRead(BaseModel):

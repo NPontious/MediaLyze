@@ -14,6 +14,10 @@ class TranscodeStreamAction(str, Enum):
     encode = "encode"
 
 
+FilenameLanguageCodeFormat = Literal["iso_639_1", "iso_639_2", "iso_639_2_t", "iso_639_3", "bcp_47"]
+StreamLanguageCodeFormat = Literal["container_default", "iso_639_2", "iso_639_2_region", "iso_639_2_t"]
+
+
 class TranscodeStreamPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -57,6 +61,9 @@ class TranscodePlan(BaseModel):
     version: Literal[1] = 1
     profile: Literal["compatibility", "storage", "modern", "expert"] = "compatibility"
     container: Literal["mkv", "mp4", "webm"] = "mp4"
+    video_language_code_format: StreamLanguageCodeFormat = "container_default"
+    audio_language_code_format: StreamLanguageCodeFormat = "container_default"
+    subtitle_language_code_format: StreamLanguageCodeFormat = "container_default"
     video_streams: list[TranscodeStreamPlan] = Field(default_factory=list)
     audio_streams: list[TranscodeStreamPlan] = Field(default_factory=list)
     subtitle_streams: list[TranscodeStreamPlan] = Field(default_factory=list)
@@ -79,8 +86,8 @@ class TranscodePlan(BaseModel):
     filename_template_explicit_source: bool = False
     filename_format_enabled: bool = True
     include_subtitle_languages: bool = False
-    filename_language_code_format: Literal["iso_639_1", "iso_639_2"] = "iso_639_1"
-    folder_language_code_format: Literal["iso_639_1", "iso_639_2"] = "iso_639_1"
+    filename_language_code_format: FilenameLanguageCodeFormat = "iso_639_1"
+    folder_language_code_format: FilenameLanguageCodeFormat = "iso_639_1"
     filename_metadata_separator: str = Field(default=", ", max_length=32)
     # Resolved from matched connector metadata during validation. Keeping the
     # value in the normalized plan lets remote federation workers render the
@@ -136,7 +143,7 @@ class TranscodeFormattingDefinition(BaseModel):
     cleanup_preset: Literal["none", "square_brackets", "round_brackets", "square_and_round_brackets", "all_brackets", "custom"] = "none"
     cleanup_regex: str | None = Field(default=None, max_length=256)
     include_subtitle_languages: bool = False
-    language_code_format: Literal["iso_639_1", "iso_639_2"] = "iso_639_1"
+    language_code_format: FilenameLanguageCodeFormat = "iso_639_1"
 
 
 class TranscodeFormattingPresetCreate(BaseModel):
@@ -219,6 +226,9 @@ class TranscodePresetDefinition(BaseModel):
 
     version: Literal[1] = 1
     container: Literal["source", "mkv", "mp4", "webm"] = "source"
+    video_language_code_format: StreamLanguageCodeFormat = "container_default"
+    audio_language_code_format: StreamLanguageCodeFormat = "container_default"
+    subtitle_language_code_format: StreamLanguageCodeFormat = "container_default"
     video_rules: list[TranscodePresetStreamRule] = Field(default_factory=list, max_length=128)
     audio_rules: list[TranscodePresetStreamRule] = Field(default_factory=list, max_length=128)
     subtitle_rules: list[TranscodePresetStreamRule] = Field(default_factory=list, max_length=128)
@@ -240,8 +250,8 @@ class TranscodePresetDefinition(BaseModel):
     filename_template_override: bool = False
     filename_template_explicit_source: bool = False
     include_subtitle_languages: bool = False
-    filename_language_code_format: Literal["iso_639_1", "iso_639_2"] = "iso_639_1"
-    folder_language_code_format: Literal["iso_639_1", "iso_639_2"] = "iso_639_1"
+    filename_language_code_format: FilenameLanguageCodeFormat = "iso_639_1"
+    folder_language_code_format: FilenameLanguageCodeFormat = "iso_639_1"
     filename_metadata_separator: str = Field(default=", ", max_length=32)
     filename_cleanup_preset: Literal[
         "none",

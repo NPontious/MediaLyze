@@ -1188,6 +1188,7 @@ class VideoStream(Base):
     bit_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)
     bit_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hdr_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     media_file: Mapped[MediaFile] = relationship(back_populates="video_streams")
 
@@ -1219,7 +1220,7 @@ class AudioStream(Base):
     replay_gain_peak: Mapped[str | None] = mapped_column(String(64), nullable=True)
     writing_library: Mapped[str | None] = mapped_column(String(512), nullable=True)
     md5_unencoded: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(64), nullable=True)
     default_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     forced_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Music-specific metadata
@@ -1267,7 +1268,7 @@ class SubtitleStream(Base):
     media_file_id: Mapped[int] = mapped_column(ForeignKey("media_files.id", ondelete="CASCADE"), nullable=False)
     stream_index: Mapped[int] = mapped_column(Integer, nullable=False)
     codec: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(64), nullable=True)
     default_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     forced_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     subtitle_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -1285,7 +1286,7 @@ class ExternalSubtitle(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     media_file_id: Mapped[int] = mapped_column(ForeignKey("media_files.id", ondelete="CASCADE"), nullable=False)
     path: Mapped[str] = mapped_column(String(2048), nullable=False)
-    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(64), nullable=True)
     format: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     media_file: Mapped[MediaFile] = relationship(back_populates="external_subtitles")

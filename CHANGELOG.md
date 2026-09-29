@@ -4,12 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
-- Align preset creation with the File Detail Transcoding controls, remove stream rule fields that are not available there, and place Cancel with Save.
-- Match filename and folder formatting preset editor spacing and controls to the File Detail Transcoding formatting section.
-
 ## v0.19.0
 
->2026-09-28
+>2026-09-29
 
 ### ✨ New
 

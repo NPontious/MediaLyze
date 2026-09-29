@@ -282,6 +282,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "bit_rate": "ALTER TABLE video_streams ADD COLUMN bit_rate INTEGER",
         "bit_depth": "ALTER TABLE video_streams ADD COLUMN bit_depth INTEGER",
         "hdr_type": "ALTER TABLE video_streams ADD COLUMN hdr_type VARCHAR(64)",
+        "language": "ALTER TABLE video_streams ADD COLUMN language VARCHAR(64)",
     },
     "audio_streams": {
         "codec": "ALTER TABLE audio_streams ADD COLUMN codec VARCHAR(64)",

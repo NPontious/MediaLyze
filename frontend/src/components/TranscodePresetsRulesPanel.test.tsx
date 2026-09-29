@@ -156,8 +156,52 @@ describe("TranscodePresetsRulesPanel", () => {
     expect(screen.queryByText("Used by automatic rules")).not.toBeInTheDocument();
   });
 
-  it("exposes editable custom presets and makes built-in templates customizable without deleting them", async () => {
-    const { container } = render(
+  it("keeps stream language rules separate and leaves formatting to its own presets", async () => {
+    vi.spyOn(api, "updateTranscodePreset").mockResolvedValue(custom);
+    render(<TranscodePresetsRulesPanel capabilityMatrix={() => null} acceleratorsTooltip={null} standaloneTab="presets" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit My preset" }));
+
+    expect(screen.queryByRole("textbox", { name: "Filename formatting" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add metadata" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Language code format" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Override default template" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Include subtitle languages" })).not.toBeInTheDocument();
+
+    const streamTabs = screen.getByRole("tablist", { name: "Stream types" });
+    fireEvent.click(screen.getByRole("tab", { name: "Audio" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add language rule" }));
+    expect(screen.getByRole("option", { name: "German" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Choose rule language" }), { target: { value: "en" } });
+    expect(screen.getByRole("option", { name: "Bulgarian" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Add language" }), { target: { value: "de" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Custom language code" }), { target: { value: "fr-CA" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add code" }));
+    expect(screen.getByRole("button", { name: /Remove German/ })).toBeInTheDocument();
+    const audioRule = screen.getByRole("button", { name: /Remove German/ }).closest(".transcode-preset-stream-item");
+    expect(audioRule?.querySelector(".transcode-stream-list-row")).toContainElement(screen.getByRole("combobox", { name: "Add language" }));
+    expect(audioRule?.querySelector(".transcode-stream-list-row")).not.toHaveTextContent("Audio");
+    expect(audioRule?.querySelector(".transcode-stream-list-row")).not.toHaveTextContent("German");
+    expect(audioRule?.querySelector(".transcode-preset-language-chips")).toHaveTextContent("German");
+    expect(screen.queryByRole("combobox", { name: "Language code format (Audio)" })).not.toBeInTheDocument();
+    expect(screen.getByText("All remaining languages").closest(".transcode-stream-list-row")).not.toHaveTextContent("Audio");
+    fireEvent.click(screen.getByRole("tab", { name: "Video" }));
+    expect(streamTabs).toContainElement(screen.getByRole("tab", { name: "Video" }));
+    expect(screen.queryByRole("button", { name: /Remove German/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Subtitles" }));
+    expect(screen.queryByRole("button", { name: /Remove German/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Metadata settings" }));
+    expect(screen.getByRole("group", { name: "Metadata settings" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(api.updateTranscodePreset).toHaveBeenCalled());
+    const definition = vi.mocked(api.updateTranscodePreset).mock.calls[0][1].definition!;
+    expect(definition.audio_rules[0].match_languages).toEqual(["en", "de", "fr-CA"]);
+    expect(definition.video_rules).toEqual([]);
+    expect(definition.filename_template_override).toBe(false);
+  });
+
+  it("exposes editable custom presets while keeping built-in templates out of the catalog", async () => {
+    render(
       <TranscodePresetsRulesPanel
         capabilityMatrix={(tabControls) => (
           <section className="transcode-automation-tab-content" data-testid="capability-matrix">
@@ -192,28 +236,17 @@ describe("TranscodePresetsRulesPanel", () => {
     expect(descriptionPortal).toHaveStyle({ maxWidth: "300px" });
     fireEvent.pointerDown(document.body);
     expect((await screen.findByRole("button", { name: "New preset" })).closest(".settings-profile-toggle-row")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Compatibility" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Compatibility" })).not.toBeInTheDocument();
     expect(screen.queryByText("v1 · built-in")).not.toBeInTheDocument();
-
-    const customizeButton = await screen.findByRole("button", { name: "Customize Compatibility" });
-    expect(customizeButton).toHaveClass("compatibility-profile-quick-action");
 
     const editButton = screen.getByRole("button", { name: "Edit My preset" });
     expect(editButton).toHaveClass("compatibility-profile-quick-action");
 
-    const builtinDeleteButton = screen.getByRole("button", { name: "Delete Compatibility" });
-    expect(builtinDeleteButton).toBeDisabled();
-    expect(builtinDeleteButton).toHaveAttribute("title", "Built-in templates cannot be deleted; create a copy to customize one.");
-
     fireEvent.click(editButton);
     expect(await screen.findByDisplayValue("My preset")).toBeInTheDocument();
     expect(screen.getByDisplayValue("My custom stream plan.").tagName).toBe("TEXTAREA");
-    expect(container.querySelector("details.compatibility-capability-section")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-
-    fireEvent.click(customizeButton);
-    await waitFor(() => expect(api.duplicateTranscodePreset).toHaveBeenCalledWith(builtin.id));
-    expect(await screen.findByText("Edit preset")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Stream types" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Delete My preset" }));
     await waitFor(() => expect(api.deleteTranscodePreset).toHaveBeenCalledWith(custom.id));
@@ -245,7 +278,7 @@ describe("TranscodePresetsRulesPanel", () => {
     const search = await screen.findByRole("searchbox", { name: "Search presets" });
     expect(container.querySelector(".compatibility-profile-list.compatibility-profile-catalog-list")).not.toBeNull();
     expect(screen.getByRole("button", { name: "New preset" }).closest(".settings-profile-toggle-row")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Customize Compatibility" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Customize Compatibility" })).not.toBeInTheDocument();
 
     fireEvent.change(search, { target: { value: "custom" } });
     expect(screen.getByRole("button", { name: "Edit My preset" })).toBeInTheDocument();

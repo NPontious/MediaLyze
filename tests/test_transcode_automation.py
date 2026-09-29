@@ -74,6 +74,19 @@ def test_saved_profile_schema_is_stream_index_free() -> None:
     assert "stream_index" not in rule.model_dump()
 
 
+def test_language_specific_stream_rule_precedes_remaining_languages() -> None:
+    from types import SimpleNamespace
+
+    remaining = TranscodePresetStreamRule(action="copy")
+    english_and_german = TranscodePresetStreamRule(match_languages=["en", "de"], action="remove")
+    rules = [remaining, english_and_german]
+
+    assert automation._first_matching_stream_rule(rules, SimpleNamespace(language="eng")) is english_and_german
+    assert automation._first_matching_stream_rule(rules, SimpleNamespace(language="de")) is english_and_german
+    assert automation._first_matching_stream_rule(rules, SimpleNamespace(language="fr")) is remaining
+    assert automation._first_matching_stream_rule(rules, SimpleNamespace(language=None)) is remaining
+
+
 def test_builtin_profiles_are_seeded_and_immutable(tmp_path: Path) -> None:
     factory = _session_factory()
     with factory() as db:
@@ -260,6 +273,11 @@ def test_profile_materialization_copies_unmatched_internal_and_external_is_opt_i
         assert plan.external_subtitles == []
 
         definition = _profile_definition(external=True)
+        definition.filename_template = "Hidden legacy template"
+        definition.filename_template_override = True
+        definition.include_subtitle_languages = True
+        definition.filename_cleanup_preset = "all_brackets"
+        definition.filename_language_code_format = "iso_639_2"
         profile.definition = definition.model_dump(mode="json")
         db.commit()
         plan_with_sidecar = automation.materialize_transcode_preset(
@@ -271,6 +289,11 @@ def test_profile_materialization_copies_unmatched_internal_and_external_is_opt_i
         assert [(item.subtitle_id, item.action) for item in plan_with_sidecar.external_subtitles] == [
             (media_file.external_subtitles[0].id, "copy")
         ]
+        assert plan_with_sidecar.filename_template != "Hidden legacy template"
+        assert plan_with_sidecar.filename_template_override is False
+        assert plan_with_sidecar.include_subtitle_languages is False
+        assert plan_with_sidecar.filename_cleanup_preset == "none"
+        assert plan_with_sidecar.filename_language_code_format == "iso_639_2"
 
 
 def test_output_subfolder_is_relative_and_keeps_library_root_layout(monkeypatch, tmp_path: Path) -> None:

@@ -1,13 +1,16 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Plus, Save, Search, SquarePen, Star, Trash2 } from "lucide-react";
 
 import { api, type TranscodeFormattingDefinition, type TranscodeFormattingPreset } from "../lib/api";
 import type { FormattingKind } from "../lib/transcode-formatting-presets";
 import { FILENAME_METADATA_TOKENS, type FilenameMetadataToken, type FilenameMetadataTokenEntry } from "../lib/transcode-formatting-metadata";
+import { filenameTemplateEditorMarkup, filenameTemplateFromEditor, filenameTemplateSelectionFromEditor, restoreFilenameTemplateCaret } from "../lib/filename-template-editor";
+import { formatFilenameLanguageCode } from "../lib/language";
 import { PanelEmptyState } from "./PanelEmptyState";
 import { TranscodeFormattingMetadataMenu } from "./TranscodeFormattingMetadataMenu";
 import { TooltipTrigger } from "./TooltipTrigger";
+import { LanguageCodeFormatField } from "./LanguageCodeFormatField";
 
 const cleanupValues: TranscodeFormattingDefinition["cleanup_preset"][] = [
   "none", "square_brackets", "round_brackets", "square_and_round_brackets", "all_brackets", "custom",
@@ -65,11 +68,12 @@ function exampleSourceName(definition: TranscodeFormattingDefinition): string {
 
 function formattingExampleOutput(definition: TranscodeFormattingDefinition, kind: FormattingKind): string {
   const separator = definition.metadata_separator || ", ";
+  const exampleLanguages = ["en", "de"].map((language) => formatFilenameLanguageCode(language, definition.language_code_format)).join(separator);
   const values = {
     ...exampleMetadataValues,
     sourceName: exampleSourceName(definition),
-    audioLanguages: ["English", "German"].join(separator),
-    subtitleLanguages: ["English", "German"].join(separator),
+    audioLanguages: exampleLanguages,
+    subtitleLanguages: exampleLanguages,
   };
   let template = definition.template;
   if (kind === "filename" && !definition.source_name_explicit && !template.includes("{sourceName}")) {
@@ -90,7 +94,7 @@ function formattingExampleOutput(definition: TranscodeFormattingDefinition, kind
 
 function emptyDefinition(kind: FormattingKind): TranscodeFormattingDefinition {
   return {
-    enabled: kind === "filename",
+    enabled: true,
     template: kind === "filename" ? "{sourceName} [{resolution}, {dynRange}, {codec}] [{audioLanguages}]" : "{folderName}",
     source_name_explicit: kind === "filename",
     metadata_separator: ", ",
@@ -112,7 +116,8 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
   const { t } = useTranslation();
   const metadataMenuId = `formatting-metadata-${useId()}`;
   const templateInputId = `formatting-template-${kind}-${useId()}`;
-  const templateInputRef = useRef<HTMLInputElement>(null);
+  const templateInputRef = useRef<HTMLDivElement>(null);
+  const templateSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const [presets, setPresets] = useState<TranscodeFormattingPreset[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [draftId, setDraftId] = useState<number | null | undefined>(undefined);
@@ -125,6 +130,15 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
 
   useEffect(() => {
     let active = true;
+    setPresets([]);
+    setExpandedId(null);
+    setDraftId(undefined);
+    setName("");
+    setDefinition(emptyDefinition(kind));
+    setSearch("");
+    setError(null);
+    setMetadataMenuOpen(false);
+    templateSelectionRef.current = null;
     void api.transcodeFormattingPresets()
       .then((all) => { if (active) { setPresets(all.filter((preset) => preset.kind === kind)); setError(null); } })
       .catch((reason: Error) => { if (active) setError(reason.message); });
@@ -138,15 +152,17 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
     setDefinition(emptyDefinition(kind));
     setError(null);
     setMetadataMenuOpen(false);
+    templateSelectionRef.current = null;
   }
 
   function startEdit(preset: TranscodeFormattingPreset) {
     setExpandedId(preset.id);
     setDraftId(preset.id);
     setName(preset.name);
-    setDefinition({ ...preset.definition, template: visibleTemplate(preset), source_name_explicit: kind === "filename" });
+    setDefinition({ ...preset.definition, template: visibleTemplate(preset), source_name_explicit: kind === "filename", enabled: true, include_subtitle_languages: false });
     setError(null);
     setMetadataMenuOpen(false);
+    templateSelectionRef.current = null;
   }
 
   function cancelEditing() {
@@ -158,27 +174,59 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
   function insertMetadataToken(token: FilenameMetadataToken) {
     const input = templateInputRef.current;
     const currentTemplate = definition.template;
-    const hasFocusedSelection = Boolean(input && document.activeElement === input);
-    const selectionStart = hasFocusedSelection && input ? input.selectionStart ?? currentTemplate.length : currentTemplate.length;
-    const selectionEnd = hasFocusedSelection && input ? input.selectionEnd ?? selectionStart : selectionStart;
+    const selection = input ? filenameTemplateSelectionFromEditor(input) ?? templateSelectionRef.current : templateSelectionRef.current;
+    const selectionStart = selection?.start ?? currentTemplate.length;
+    const selectionEnd = selection?.end ?? selectionStart;
     const insertion = `{${token}}`;
     const nextTemplate = `${currentTemplate.slice(0, selectionStart)}${insertion}${currentTemplate.slice(selectionEnd)}`;
+    templateSelectionRef.current = { start: selectionStart + insertion.length, end: selectionStart + insertion.length };
     setDefinition((current) => ({ ...current, template: nextTemplate, source_name_explicit: kind === "filename" }));
     if (input) {
       window.requestAnimationFrame(() => {
-        input.focus();
-        input.setSelectionRange(selectionStart + insertion.length, selectionStart + insertion.length);
+        restoreFilenameTemplateCaret(input, selectionStart + insertion.length);
       });
     }
+  }
+
+  useLayoutEffect(() => {
+    const editor = templateInputRef.current;
+    const selection = templateSelectionRef.current;
+    if (editor && selection && document.activeElement === editor) restoreFilenameTemplateCaret(editor, selection.end);
+  }, [definition.template]);
+
+  function handleTemplateKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      return;
+    }
+    if (event.key !== "Backspace" && event.key !== "Delete") return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const selection = filenameTemplateSelectionFromEditor(event.currentTarget);
+    if (!selection || selection.start !== selection.end) return;
+    const currentTemplate = filenameTemplateFromEditor(event.currentTarget);
+    const tokenText = FILENAME_METADATA_TOKENS.map(({ token }) => `{${token}}`).find((candidate) => event.key === "Backspace"
+      ? currentTemplate.slice(0, selection.start).endsWith(candidate)
+      : currentTemplate.slice(selection.start).startsWith(candidate));
+    if (!tokenText) return;
+    event.preventDefault();
+    const start = event.key === "Backspace" ? selection.start - tokenText.length : selection.start;
+    const end = event.key === "Backspace" ? selection.start : selection.start + tokenText.length;
+    templateSelectionRef.current = { start, end: start };
+    setDefinition((current) => ({ ...current, template: `${currentTemplate.slice(0, start)}${currentTemplate.slice(end)}`, source_name_explicit: kind === "filename" }));
+    window.setTimeout(() => {
+      const editor = templateInputRef.current;
+      if (editor) restoreFilenameTemplateCaret(editor, start);
+    }, 0);
   }
 
   async function save() {
     if (!name.trim() || !definition.template.trim()) return;
     setBusy(true);
     try {
+      const savedDefinition = { ...definition, enabled: true, include_subtitle_languages: false };
       const saved = draftId === null
-        ? await api.createTranscodeFormattingPreset({ kind, name: name.trim(), definition })
-        : await api.updateTranscodeFormattingPreset(draftId as number, { name: name.trim(), definition });
+        ? await api.createTranscodeFormattingPreset({ kind, name: name.trim(), definition: savedDefinition })
+        : await api.updateTranscodeFormattingPreset(draftId as number, { name: name.trim(), definition: savedDefinition });
       setPresets((current) => [...current.filter((preset) => preset.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
       setExpandedId(saved.id);
       setDraftId(undefined);
@@ -237,10 +285,10 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
         </label>
       </div>
       <div className="transcode-filename-body transcode-formatting-preset-body">
-        <label className="transcode-control-field">
+        <div className="transcode-control-field">
           <span className="transcode-field-label">{t(kind === "filename" ? "transcoding.filenameTemplate" : "transcoding.folderTemplate")}</span>
-          <input ref={templateInputRef} id={templateInputId} className="settings-choice-input transcode-control transcode-filename-template-input" maxLength={512} value={definition.template} onChange={(event) => setDefinition({ ...definition, template: event.target.value, source_name_explicit: kind === "filename" })} />
-        </label>
+          <div ref={templateInputRef} id={templateInputId} className="settings-choice-input transcode-control transcode-filename-template-input transcode-filename-template-editor" contentEditable suppressContentEditableWarning role="textbox" aria-label={t(kind === "filename" ? "transcoding.filenameTemplate" : "transcoding.folderTemplate")} aria-multiline="false" aria-valuetext={definition.template} onInput={(event) => { const nextTemplate = filenameTemplateFromEditor(event.currentTarget); const selection = filenameTemplateSelectionFromEditor(event.currentTarget); if (selection) templateSelectionRef.current = selection; setDefinition({ ...definition, template: nextTemplate.slice(0, 512), source_name_explicit: kind === "filename" }); }} onKeyDown={handleTemplateKeyDown} onSelect={(event) => { const selection = filenameTemplateSelectionFromEditor(event.currentTarget); if (selection) templateSelectionRef.current = selection; }} onKeyUp={(event) => { const selection = filenameTemplateSelectionFromEditor(event.currentTarget); if (selection) templateSelectionRef.current = selection; }} onMouseUp={(event) => { const selection = filenameTemplateSelectionFromEditor(event.currentTarget); if (selection) templateSelectionRef.current = selection; }} onBlur={(event) => { const selection = filenameTemplateSelectionFromEditor(event.currentTarget); if (selection) templateSelectionRef.current = selection; }} dangerouslySetInnerHTML={{ __html: filenameTemplateEditorMarkup(definition.template) }} />
+        </div>
         <TranscodeFormattingMetadataMenu kind={kind} id={metadataMenuId} open={metadataMenuOpen} onToggle={() => setMetadataMenuOpen((current) => !current)}>
           {metadataGroups.map((group) => (
             <div className="transcode-filename-token-group" key={group.name}>
@@ -253,7 +301,7 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
                     .replaceAll("{token}", tokenText)
                     .replaceAll("{label}", label);
                   const exampleValue = entry.token === "audioLanguages" || entry.token === "subtitleLanguages"
-                    ? ["English", "German"].join(definition.metadata_separator || ", ")
+                    ? ["en", "de"].map((language) => formatFilenameLanguageCode(language, definition.language_code_format)).join(definition.metadata_separator || ", ")
                     : entry.token === "sourceName" ? exampleSourceName(definition) : exampleMetadataValues[entry.token];
                   return (
                     <TooltipTrigger
@@ -304,24 +352,17 @@ export function TranscodeFormattingPresetsPanel({ kind, tabs }: { kind: Formatti
               </label>
             ) : null}
           </div>
-          {kind === "filename" ? (
-            <label className="transcode-filename-field transcode-language-code-field">
-              <span className="transcode-field-label">{t("transcoding.languageCodeFormat")}</span>
-              <select className="settings-choice-input transcode-control" value={definition.language_code_format} onChange={(event) => setDefinition({ ...definition, language_code_format: event.target.value as TranscodeFormattingDefinition["language_code_format"] })}>
-                <option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option>
-                <option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option>
-              </select>
-            </label>
-          ) : null}
+          <LanguageCodeFormatField
+            className="transcode-filename-field transcode-language-code-field"
+            kind={kind}
+            value={definition.language_code_format}
+            onChange={(language_code_format) => setDefinition({ ...definition, language_code_format })}
+          />
         </div>
         <div className="transcode-filename-preview is-prominent">
           <span>{t("transcoding.formattingPresets.exampleOutput")}</span>
           <code aria-live="polite">{exampleOutput}</code>
         </div>
-      </div>
-      <div className="transcode-global-options transcode-formatting-preset-toggles">
-        <label className="transcode-filename-option"><input type="checkbox" checked={definition.enabled} onChange={(event) => setDefinition({ ...definition, enabled: event.target.checked })} /><span>{t(kind === "filename" ? "transcoding.filenameFormattingToggle" : "transcoding.folderFormattingToggle")}</span></label>
-        {kind === "filename" ? <label className="transcode-filename-option"><input type="checkbox" checked={definition.include_subtitle_languages} onChange={(event) => setDefinition({ ...definition, include_subtitle_languages: event.target.checked })} /><span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span></label> : null}
       </div>
       <div className="compatibility-profile-card-actions transcode-automation-editor-actions"><button type="button" className="transcode-action-button" disabled={busy || !name.trim() || !definition.template.trim()} onClick={() => void save()}><Save size={16} aria-hidden="true" />{t("common.save")}</button><button type="button" className="secondary transcode-action-button" disabled={busy} onClick={cancelEditing}>{t("common.cancel")}</button></div>
     </div>

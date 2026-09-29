@@ -13807,6 +13807,12 @@ html[data-theme="dark"] {
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
+.transcode-presets-settings-panel .transcode-automation-toggle-row {
+  height: auto;
+  row-gap: 8px;
+  padding-block: 4px 8px;
+}
+
 .transcode-automation-standalone-header {
   align-items: center;
   min-height: 42px;
@@ -13859,6 +13865,13 @@ html[data-theme="dark"] {
 .transcode-automation-content {
   display: grid;
   gap: 0.65rem;
+}
+
+.transcode-presets-settings-panel,
+.transcode-presets-settings-panel .transcode-automation-section,
+.transcode-presets-settings-panel .transcode-automation-content {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .transcode-automation-panel-body {
@@ -14538,6 +14551,10 @@ html[data-theme="dark"] {
   padding: 12px 14px;
 }
 
+.transcode-language-format-tooltip-portal {
+  background: #1f1c16;
+}
+
 .transcode-matrix-tooltip-preview {
   display: flex;
   align-items: center;
@@ -14638,6 +14655,38 @@ html[data-theme="dark"] {
   gap: 3px;
   color: rgba(243, 239, 232, 0.86);
   font-size: 0.75rem;
+}
+
+.transcode-language-format-tooltip .transcode-matrix-tooltip-level-head {
+  align-items: baseline;
+}
+
+.transcode-language-format-tooltip .transcode-matrix-tooltip-level-head strong {
+  min-width: 0;
+  font-size: 0.78rem;
+}
+
+.transcode-language-format-tooltip .transcode-matrix-tooltip-level-head code {
+  flex: 0 0 auto;
+  color: #8be4c5;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.transcode-language-format-tooltip .transcode-matrix-tooltip-summary {
+  gap: 5px 14px;
+}
+
+.transcode-language-format-tooltip .transcode-matrix-tooltip-summary > div {
+  min-width: 0;
+  align-items: baseline;
+}
+
+.transcode-language-format-tooltip .transcode-matrix-tooltip-summary strong {
+  overflow-wrap: anywhere;
+  font-size: 0.74rem;
+  font-weight: 500;
+  text-align: right;
 }
 
 .transcode-matrix-tooltip-summary {
@@ -14884,6 +14933,11 @@ html[data-theme="dark"] {
 
 .transcode-stream-tabpanel {
   min-width: 0;
+}
+
+.transcode-stream-language-format-row {
+  grid-template-columns: minmax(0, 240px);
+  margin-bottom: 0.55rem;
 }
 
 .transcode-stream-list {
@@ -15301,20 +15355,125 @@ html[data-theme="dark"] {
   grid-template-columns: minmax(150px, 0.45fr) minmax(220px, 1fr);
 }
 
-.transcode-formatting-preset-toggles .transcode-filename-option,
-.transcode-preset-filename-options .transcode-filename-option {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
+.transcode-preset-container-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.65rem;
 }
 
-.transcode-preset-language-control > label {
-  width: min(320px, 100%);
+.transcode-preset-container-row > label:first-child {
+  flex: 1 1 220px;
+  max-width: 220px;
+}
+
+.transcode-preset-container-row > label:last-child {
+  flex: 1 1 300px;
+  max-width: 320px;
 }
 
 .transcode-preset-stream-list {
   max-height: none;
   overflow: visible;
+}
+
+.transcode-preset-rule-group + .transcode-preset-rule-group,
+.transcode-preset-rule-group > .transcode-stream-list-item + .transcode-stream-list-item {
+  border-top: 2px solid color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+.transcode-preset-stream-item .transcode-stream-details {
+  padding-top: 0.2rem;
+  border-top: 0;
+  background: transparent;
+}
+
+.transcode-preset-rule-group > h4 {
+  margin: 0;
+  padding: 10px 12px 0;
+  font-size: 0.82rem;
+}
+
+.transcode-preset-stream-item .transcode-stream-row-copy {
+  align-items: center;
+  align-content: center;
+  padding: 0 12px;
+}
+
+.transcode-preset-stream-item .transcode-stream-format {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.transcode-preset-rule-languages {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.transcode-preset-language-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.transcode-preset-language-controls > label {
+  flex: 0 1 220px;
+  min-width: min(220px, 100%);
+}
+
+.transcode-preset-stream-item .transcode-stream-list-row.has-language-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 12px;
+}
+
+.transcode-preset-stream-item .transcode-stream-list-row.has-language-controls > .transcode-preset-language-controls {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.transcode-preset-stream-item .transcode-stream-list-row.has-language-controls > .transcode-stream-row-actions {
+  margin: 0 0 0 auto;
+}
+
+.transcode-preset-custom-language {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.transcode-preset-custom-language > input {
+  width: min(180px, 100%);
+}
+
+.transcode-preset-language-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.transcode-preset-language-chip {
+  gap: 6px;
+}
+
+.transcode-preset-add-language-rule {
+  margin: 8px 12px 12px;
+}
+
+.transcode-preset-new-language-rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 12px;
+}
+
+.transcode-preset-new-language-rule > select,
+.transcode-preset-new-language-rule > input {
+  width: min(180px, 100%);
 }
 
 .transcode-preset-stream-item .transcode-stream-list-row {
@@ -15537,18 +15696,31 @@ html[data-theme="dark"] {
 }
 
 .transcode-filename-inline-token {
+  --filename-token-accent: var(--accent);
   display: inline-block;
   margin: 0 2px;
   padding: 1px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border: 1px solid color-mix(in srgb, var(--filename-token-accent) 38%, var(--border));
   border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  color: var(--ink);
+  background: color-mix(in srgb, var(--filename-token-accent) 14%, transparent);
+  color: color-mix(in srgb, var(--filename-token-accent) 76%, var(--ink));
   font-size: 0.78rem;
   line-height: 1.45;
   white-space: nowrap;
   user-select: none;
   vertical-align: baseline;
+}
+
+.transcode-filename-inline-token.is-medialyze {
+  --filename-token-accent: var(--accent);
+}
+
+.transcode-filename-inline-token.is-connector {
+  --filename-token-accent: var(--accent-2);
+}
+
+.transcode-filename-inline-token.is-source-name {
+  --filename-token-accent: var(--accent-3);
 }
 
 .transcode-filename-metadata-tools {

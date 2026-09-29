@@ -55,7 +55,7 @@ from backend.app.schemas.transcoding import (
     TranscodeVariantRead,
 )
 from backend.app.services.app_settings import get_app_settings
-from backend.app.services.languages import format_filename_language_code, normalize_language_tag
+from backend.app.services.languages import format_filename_language_code, format_stream_language_code, normalize_language_tag
 from backend.app.services.resolution_categories import classify_resolution_category
 from backend.app.services.spatial_audio import format_spatial_audio_profile
 from backend.app.utils.processes import get_hidden_subprocess_kwargs
@@ -2198,6 +2198,8 @@ def _append_stream_options(
     dynamic_range: str,
     *,
     hardware_device_name: str | None = None,
+    language_code_format: str = "container_default",
+    container: str = "mkv",
 ) -> None:
     specifier = f"{kind_letter}:{output_index}"
     if decision.action in {TranscodeStreamAction.keep, TranscodeStreamAction.copy}:
@@ -2278,7 +2280,7 @@ def _append_stream_options(
             arguments.extend([f"-g:{specifier}", str(decision.gop_size)])
     language = decision.language or getattr(source, "language", None)
     if language:
-        arguments.extend([f"-metadata:s:{specifier}", f"language={language}"])
+        arguments.extend([f"-metadata:s:{specifier}", f"language={format_stream_language_code(language, language_code_format, container)}"])
     if decision.title:
         arguments.extend([f"-metadata:s:{specifier}", f"title={decision.title}"])
     disposition: list[str] = []
@@ -2953,15 +2955,21 @@ def validate_transcode_plan(
             if compatibility and output_codec not in compatibility[kind]:
                 errors.append(f"Codec {output_codec or 'unknown'} is not supported for {kind} in {plan.container}")
             arguments.extend(["-map", f"0:{decision.stream_index}"])
-            _append_stream_options(
-                arguments,
-                kind_letter[kind],
-                output_counts[kind],
-                decision,
-                source,
-                plan.dynamic_range,
-                hardware_device_name=hardware_device_name,
-            )
+            language_format = getattr(plan, f"{kind}_language_code_format")
+            try:
+                _append_stream_options(
+                    arguments,
+                    kind_letter[kind],
+                    output_counts[kind],
+                    decision,
+                    source,
+                    plan.dynamic_range,
+                    hardware_device_name=hardware_device_name,
+                    language_code_format=language_format,
+                    container=plan.container,
+                )
+            except ValueError as exc:
+                errors.append(f"{kind} stream {decision.stream_index}: {exc}")
             output_counts[kind] += 1
         for stream_index in set(source_by_kind[kind]) - seen:
             removed.append(f"{kind} stream {stream_index}")
@@ -2985,7 +2993,11 @@ def validate_transcode_plan(
         arguments.extend([f"-c:s:{output_index}", codec])
         language = decision.language or row.language
         if language:
-            arguments.extend([f"-metadata:s:s:{output_index}", f"language={language}"])
+            try:
+                encoded_language = format_stream_language_code(language, plan.subtitle_language_code_format, plan.container)
+                arguments.extend([f"-metadata:s:s:{output_index}", f"language={encoded_language}"])
+            except ValueError as exc:
+                errors.append(f"External subtitle {row.path}: {exc}")
         if decision.title:
             arguments.extend([f"-metadata:s:s:{output_index}", f"title={decision.title}"])
         output_counts["subtitle"] += 1

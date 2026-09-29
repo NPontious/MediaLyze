@@ -701,7 +701,22 @@ def _first_matching_stream_rule(
     rules: list[TranscodePresetStreamRule],
     stream: Any,
 ) -> TranscodePresetStreamRule | None:
-    return next((rule for rule in rules if _stream_matches(rule, stream)), None)
+    # The unrestricted rule is the fallback for languages not claimed by a
+    # specific rule, even for older presets that stored it first.
+    specific = (
+        rule for rule in rules
+        if rule.match_languages or rule.match_codecs or rule.match_default is not None
+    )
+    match = next((rule for rule in specific if _stream_matches(rule, stream)), None)
+    if match is not None:
+        return match
+    return next(
+        (
+            rule for rule in rules
+            if not rule.match_languages and not rule.match_codecs and rule.match_default is None
+        ),
+        None,
+    )
 
 
 def materialize_transcode_preset(
@@ -766,6 +781,9 @@ def materialize_transcode_preset(
     return TranscodePlan(
         profile=profile_key,
         container=container,
+        video_language_code_format=definition.video_language_code_format,
+        audio_language_code_format=definition.audio_language_code_format,
+        subtitle_language_code_format=definition.subtitle_language_code_format,
         video_streams=video_plans,
         audio_streams=audio_plans,
         subtitle_streams=subtitle_plans,
@@ -775,19 +793,12 @@ def materialize_transcode_preset(
         metadata="keep" if definition.metadata == "keep" else "drop",
         cover="keep" if definition.cover == "keep" else "drop",
         attachments="keep" if definition.attachments == "keep" else "drop",
-        filename_template=definition.filename_template,
-        filename_template_override=definition.filename_template_override,
-        filename_template_explicit_source=definition.filename_template_explicit_source,
+        filename_template_override=False,
         filename_format_enabled=filename_format_enabled,
-        include_subtitle_languages=definition.include_subtitle_languages,
         folder_format_enabled=folder_format_enabled,
         folder_template="{folderName}",
         folder_template_override=False,
-        filename_metadata_separator=definition.filename_metadata_separator,
         filename_language_code_format=definition.filename_language_code_format,
-        folder_language_code_format=definition.folder_language_code_format,
-        filename_cleanup_preset=definition.filename_cleanup_preset,
-        filename_cleanup_regex=definition.filename_cleanup_regex,
         output_mode=output_mode,
         execution_mode=execution_mode,
     )

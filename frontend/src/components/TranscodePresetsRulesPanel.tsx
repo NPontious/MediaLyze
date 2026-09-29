@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { Ban, Clock3, Copy, Gauge, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Star, Trash2, Unplug, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { releaseVisibility } from "../lib/release-visibility";
+import { formatLanguageName, languageOptions, normalizeLanguageTag, streamLanguageCodeFormats } from "../lib/language";
 
 import {
   api,
@@ -22,6 +23,7 @@ import { CopyIcon } from "./CopyIcon";
 import { PanelEmptyState } from "./PanelEmptyState";
 import { SquarePenIcon } from "./SquarePenIcon";
 import { TooltipTrigger } from "./TooltipTrigger";
+import { LanguageCodeFormatField } from "./LanguageCodeFormatField";
 
 type PresetDraft = {
   id: number | null;
@@ -531,32 +533,57 @@ function PresetDefinitionEditor({
   definition: TranscodePresetDefinition;
   onChange: (definition: TranscodePresetDefinition) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const [activeStreamTab, setActiveStreamTab] = useState<PresetRuleListKey>("video_rules");
+  const [metadataSettingsOpen, setMetadataSettingsOpen] = useState(false);
+  const [customLanguageDrafts, setCustomLanguageDrafts] = useState<Record<string, string>>({});
+  const [addingLanguageRuleFor, setAddingLanguageRuleFor] = useState<PresetRuleListKey | null>(null);
+  const [newRuleLanguageCode, setNewRuleLanguageCode] = useState("");
+  const metadataSettingsId = useId();
   const sections: Array<{ key: PresetRuleListKey; kind: PresetRuleKind; label: string }> = [
     { key: "video_rules", kind: "video", label: t("transcoding.streamTabs.video") },
     { key: "audio_rules", kind: "audio", label: t("transcoding.streamTabs.audio") },
     { key: "subtitle_rules", kind: "subtitle", label: t("transcoding.streamTabs.subtitles") },
+    { key: "external_subtitle_rules", kind: "external", label: t("transcoding.externalSubtitles") },
   ];
   const updateRule = (key: PresetRuleListKey, kind: PresetRuleKind, patch: Partial<TranscodePresetStreamRule>) => onChange(replaceDefaultPresetRule(definition, key, kind, patch));
   const actionForUi = (action: TranscodePresetStreamRule["action"]) => action === "convert" ? "encode" : action === "remove" ? "drop" : "copy";
-  const renderCodecSelect = (key: PresetRuleListKey, kind: PresetRuleKind, rule: TranscodePresetStreamRule) => {
+  const renderCodecSelect = (kind: PresetRuleKind, rule: TranscodePresetStreamRule, patchRule: (patch: Partial<TranscodePresetStreamRule>) => void) => {
     const codecs = compatiblePresetCodecs(kind, definition.container);
     const fallback = kind === "video" ? "hevc" : kind === "subtitle" || kind === "external" ? "subrip" : "aac";
     return (
-      <select className="settings-choice-input transcode-control" value={rule.codec ?? fallback} aria-label={t("transcoding.targetCodec")} onChange={(event) => updateRule(key, kind, { codec: event.target.value })}>
+      <select className="settings-choice-input transcode-control" value={rule.codec ?? fallback} aria-label={t("transcoding.targetCodec")} onChange={(event) => patchRule({ codec: event.target.value })}>
         {codecs.map((codec) => <option key={codec} value={codec}>{presetCodecLabels[codec] ?? codec}</option>)}
       </select>
     );
   };
-  const renderStreamSection = ({ key, kind, label }: (typeof sections)[number]) => {
-    const rule = defaultPresetRule(definition, key, kind);
+  const renderStreamSection = (
+    { key, kind, label }: (typeof sections)[number],
+    rule: TranscodePresetStreamRule,
+    patchRule: (patch: Partial<TranscodePresetStreamRule>) => void,
+    rowKey: string,
+    languageSpecific = false,
+    onRemove?: () => void,
+    usedLanguages?: Set<string>,
+  ) => {
     const action = actionForUi(rule.action);
     const ActionIcon = rule.action === "convert" ? RefreshCw : rule.action === "remove" ? Ban : Copy;
-    const patchRule = (patch: Partial<TranscodePresetStreamRule>) => updateRule(key, kind, patch);
+    const customLanguage = normalizeLanguageTag(customLanguageDrafts[rowKey] ?? "");
+    const canAddCustomLanguage = Boolean(customLanguage && !usedLanguages?.has(customLanguage));
     return (
-      <article className={"transcode-stream-list-item transcode-preset-stream-item" + (action === "drop" ? " is-dropped" : "")} key={key}>
-        <div className="transcode-stream-list-row">
-          <div className="transcode-stream-row-copy"><strong>{label}</strong></div>
+      <article className={"transcode-stream-list-item transcode-preset-stream-item" + (action === "drop" ? " is-dropped" : "")} key={rowKey}>
+        <div className={"transcode-stream-list-row" + (languageSpecific ? " has-language-controls" : "")}>
+          {languageSpecific ? (
+            <div className="transcode-preset-language-controls">
+              <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.presetLanguageRules.languages")}</span>
+                <select className="settings-choice-input transcode-control" value="" aria-label={t("transcoding.presetLanguageRules.addLanguage")} onChange={(event) => patchRule({ match_languages: [...rule.match_languages, event.target.value] })}>
+                  <option value="" disabled>{t("transcoding.presetLanguageRules.addLanguage")}</option>
+                  {languageOptions(rule.match_languages, i18n.language).filter((language) => !usedLanguages?.has(language)).map((language) => <option key={language} value={language}>{formatLanguageName(language, i18n.language)}</option>)}
+                </select>
+              </label>
+              <div className="transcode-preset-custom-language"><input className="settings-choice-input transcode-control" aria-label={t("transcoding.presetLanguageRules.customCode")} placeholder="en-US" value={customLanguageDrafts[rowKey] ?? ""} onChange={(event) => setCustomLanguageDrafts((current) => ({ ...current, [rowKey]: event.target.value }))} /><button type="button" className="secondary small settings-panel-header-action" disabled={!canAddCustomLanguage} onClick={() => { patchRule({ match_languages: [...rule.match_languages, customLanguage] }); setCustomLanguageDrafts((current) => ({ ...current, [rowKey]: "" })); }}><Plus size={14} aria-hidden="true" />{t("transcoding.presetLanguageRules.addCode")}</button></div>
+            </div>
+          ) : <div className="transcode-stream-row-copy"><span className="transcode-stream-format">{t("transcoding.presetLanguageRules.remaining")}</span></div>}
           <div className="transcode-stream-row-actions">
             <div className="transcode-action-field is-expanded" data-action={action}>
               <ActionIcon aria-hidden="true" className="transcode-stream-action-icon" size={14} />
@@ -564,8 +591,16 @@ function PresetDefinitionEditor({
                 <option value="copy">{t("transcoding.actions.copy")}</option><option value="convert">{t("transcoding.actions.encode")}</option><option value="remove">{t("transcoding.actions.drop")}</option>
               </select>
             </div>
+            {onRemove ? <button type="button" className="secondary icon-only-button" aria-label={t("transcoding.presetLanguageRules.removeRule", { kind: label })} onClick={onRemove}><Trash2 size={15} aria-hidden="true" /></button> : null}
           </div>
         </div>
+        {languageSpecific ? (
+          <div className="transcode-preset-rule-languages">
+            <div className="transcode-preset-language-chips">
+              {rule.match_languages.map((language) => <button type="button" className="secondary small transcode-preset-language-chip" key={language} disabled={rule.match_languages.length === 1} aria-label={t("transcoding.presetLanguageRules.removeLanguage", { language: formatLanguageName(language, i18n.language) })} onClick={() => patchRule({ match_languages: rule.match_languages.filter((entry) => entry !== language) })}>{formatLanguageName(language, i18n.language)}<X size={13} aria-hidden="true" /></button>)}
+            </div>
+          </div>
+        ) : null}
         {rule.action === "convert" ? (
           <div className="transcode-stream-details">
             {kind === "video" ? (
@@ -576,7 +611,7 @@ function PresetDefinitionEditor({
                     {(["preserve", "sdr", "hdr10", "hlg"] as const).map((value) => <option key={value} value={value}>{t("transcoding.dynamicRanges." + value)}</option>)}
                   </select>
                 </label>
-                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(key, kind, rule)}</label>
+                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(kind, rule, patchRule)}</label>
                 <label className="transcode-control-field transcode-range-field">
                   <span className="transcode-field-label">{t("transcoding.quality", { mode: "CRF/CQ" })}</span>
                   <span className="transcode-range-row">
@@ -603,7 +638,7 @@ function PresetDefinitionEditor({
               </div>
             ) : kind === "audio" ? (
               <div className="transcode-stream-encode-fields">
-                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(key, kind, rule)}</label>
+                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(kind, rule, patchRule)}</label>
                 <label className="transcode-control-field transcode-range-field">
                   <span className="transcode-field-label">{t("transcoding.bitrate")}</span>
                   <select className="settings-choice-input transcode-control" value={rule.bitrate ?? 192_000} onChange={(event) => patchRule({ bitrate: Number(event.target.value) })}>
@@ -613,7 +648,7 @@ function PresetDefinitionEditor({
               </div>
             ) : (
               <div className="transcode-stream-encode-fields">
-                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(key, kind, rule)}</label>
+                <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">{t("transcoding.targetCodec")}</span>{renderCodecSelect(kind, rule, patchRule)}</label>
               </div>
             )}
           </div>
@@ -621,41 +656,76 @@ function PresetDefinitionEditor({
       </article>
     );
   };
+  const renderRuleGroup = (section: (typeof sections)[number]) => {
+    const { key, kind, label } = section;
+    const explicitRules = definition[key].map((rule, index) => ({ rule, index })).filter(({ rule }) => !isCatchAllPresetRule(rule));
+    const usedLanguages = new Set(explicitRules.flatMap(({ rule }) => rule.match_languages));
+    const addRule = (language: string) => {
+      onChange({ ...definition, [key]: [...definition[key], { ...emptyStreamRule(kind), action: "copy", match_languages: [language] }] });
+      setAddingLanguageRuleFor(null);
+      setNewRuleLanguageCode("");
+    };
+    const normalizedNewRuleCode = normalizeLanguageTag(newRuleLanguageCode);
+    return (
+      <div className="transcode-preset-rule-group" key={key}>
+        {kind === "external" ? <h4>{label}</h4> : null}
+        {explicitRules.map(({ rule, index }) => renderStreamSection(
+          section,
+          rule,
+          (patch) => onChange({ ...definition, [key]: definition[key].map((entry, ruleIndex) => ruleIndex === index ? { ...entry, ...patch } : entry) }),
+          `${key}-${index}`,
+          true,
+          () => onChange({ ...definition, [key]: definition[key].filter((_entry, ruleIndex) => ruleIndex !== index) }),
+          usedLanguages,
+        ))}
+        {renderStreamSection(section, defaultPresetRule(definition, key, kind), (patch) => updateRule(key, kind, patch), `${key}-remaining`)}
+        {addingLanguageRuleFor === key ? <div className="transcode-preset-new-language-rule"><select className="settings-choice-input transcode-control" value="" aria-label={t("transcoding.presetLanguageRules.chooseLanguage")} onChange={(event) => addRule(event.target.value)}><option value="" disabled>{t("transcoding.presetLanguageRules.chooseLanguage")}</option>{languageOptions([], i18n.language).filter((language) => !usedLanguages.has(language)).map((language) => <option key={language} value={language}>{formatLanguageName(language, i18n.language)}</option>)}</select><input className="settings-choice-input transcode-control" aria-label={t("transcoding.presetLanguageRules.customCode")} placeholder="en-US" value={newRuleLanguageCode} onChange={(event) => setNewRuleLanguageCode(event.target.value)} /><button type="button" className="secondary small settings-panel-header-action" disabled={!normalizedNewRuleCode || usedLanguages.has(normalizedNewRuleCode)} onClick={() => addRule(normalizedNewRuleCode)}>{t("transcoding.presetLanguageRules.addCode")}</button><button type="button" className="secondary icon-only-button" aria-label={t("common.cancel")} onClick={() => setAddingLanguageRuleFor(null)}><X size={15} aria-hidden="true" /></button></div> : <button type="button" className="secondary small settings-panel-header-action transcode-preset-add-language-rule" disabled={definition[key].length >= 128} onClick={() => setAddingLanguageRuleFor(key)}><Plus size={14} aria-hidden="true" />{t("transcoding.presetLanguageRules.addRule")}</button>}
+      </div>
+    );
+  };
   return (
     <div className="settings-sidebar-stack transcode-preset-definition">
-      <div className="transcode-configuration-grid">
-        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.container")}</span><select className="settings-choice-input transcode-control" value={definition.container} onChange={(event) => onChange({ ...definition, container: event.target.value as TranscodePresetDefinition["container"] })}>
+      <div className="transcode-configuration-grid transcode-preset-container-row">
+        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.container")}</span><select className="settings-choice-input transcode-control" value={definition.container} onChange={(event) => {
+          const container = event.target.value as TranscodePresetDefinition["container"];
+          const allowed = streamLanguageCodeFormats(container);
+          onChange({
+            ...definition, container,
+            video_language_code_format: allowed.includes(definition.video_language_code_format ?? "container_default") ? definition.video_language_code_format : "container_default",
+            audio_language_code_format: allowed.includes(definition.audio_language_code_format ?? "container_default") ? definition.audio_language_code_format : "container_default",
+            subtitle_language_code_format: allowed.includes(definition.subtitle_language_code_format ?? "container_default") ? definition.subtitle_language_code_format : "container_default",
+          });
+        }}>
           {(["source", "mkv", "mp4", "webm"] as const).map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}
         </select></label>
+        <LanguageCodeFormatField value={definition.filename_language_code_format ?? "iso_639_1"} onChange={(filename_language_code_format) => onChange({ ...definition, filename_language_code_format })} />
       </div>
-      <div className="transcode-global-options transcode-preset-filename-options">
-        <label className="transcode-filename-option"><input type="checkbox" checked={definition.filename_template_override} onChange={(event) => onChange({ ...definition, filename_template_override: event.target.checked })} /><span>{t("transcoding.filenameTemplateOverride")}</span></label>
-        <label className="transcode-filename-option"><input type="checkbox" checked={definition.include_subtitle_languages} onChange={(event) => onChange({ ...definition, include_subtitle_languages: event.target.checked })} /><span>{t("transcoding.filenameIncludeSubtitleLanguages")}</span></label>
-      </div>
-      <div className="transcode-configuration-grid transcode-preset-language-control">
-        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.languageCodeFormat")}</span><select className="settings-choice-input transcode-control" value={definition.filename_language_code_format ?? "iso_639_1"} onChange={(event) => onChange({ ...definition, filename_language_code_format: event.target.value as "iso_639_1" | "iso_639_2" })}><option value="iso_639_1">{t("transcoding.languageCodeFormats.iso_639_1")}</option><option value="iso_639_2">{t("transcoding.languageCodeFormats.iso_639_2")}</option></select></label>
-      </div>
-      <div className="transcode-filename-body">
-        <label className="transcode-control-field"><span className="transcode-field-label">{t("transcoding.filenameTemplate")}</span><input className="settings-choice-input transcode-control" disabled={!definition.filename_template_override} value={definition.filename_template} onChange={(event) => onChange({ ...definition, filename_template: event.target.value, filename_template_override: true })} /></label>
-      </div>
-      <div className="transcode-metadata-option-list" role="group" aria-label={t("transcoding.metadataSettings")}>
-        {(["metadata", "chapters", "cover", "attachments"] as const).map((option) => (
-          <label className="transcode-global-option" key={option}><input type="checkbox" checked={definition[option] === "keep"} onChange={(event) => onChange({ ...definition, [option]: event.target.checked ? "keep" : "drop" })} /><span>{t("transcoding.options." + option)}</span></label>
-        ))}
-      </div>
-      <div className="transcode-stream-list transcode-preset-stream-list">
-        {sections.map(renderStreamSection)}
-      </div>
-      <label className="transcode-external-subtitle transcode-preset-external-subtitles">
-        <input type="checkbox" checked={defaultPresetRule(definition, "external_subtitle_rules", "external").action !== "remove"} onChange={(event) => {
-          const enabled = event.target.checked;
-          updateRule("external_subtitle_rules", "external", {
-            action: enabled ? "convert" : "remove",
-            codec: definition.container === "mp4" ? "mov_text" : definition.container === "webm" ? "webvtt" : "subrip",
-          });
-        }} />
-        <span>{t("transcoding.externalSubtitles")}</span>
-      </label>
+      <section className="transcode-streams">
+        <div className="compatibility-profile-list transcode-stream-catalog">
+          <div className="transcode-automation-tab-controls transcode-stream-tabs">
+            <div className="transcode-automation-tab-list" role="tablist" aria-label={t("transcoding.streamTabs.ariaLabel")} aria-orientation="horizontal">
+              {sections.slice(0, 3).map(({ key, label }, index) => <button key={key} type="button" id={`preset-stream-tab-${key}`} role="tab" className={`transcode-automation-tab-button transcode-stream-tab${activeStreamTab === key ? " active" : ""}`} aria-selected={activeStreamTab === key} aria-controls={`preset-stream-panel-${key}`} tabIndex={activeStreamTab === key ? 0 : -1} onClick={() => setActiveStreamTab(key)} onKeyDown={(event) => {
+                const keys = sections.slice(0, 3).map((section) => section.key);
+                const nextIndex = event.key === "ArrowRight" ? (index + 1) % keys.length : event.key === "ArrowLeft" ? (index - 1 + keys.length) % keys.length : event.key === "Home" ? 0 : event.key === "End" ? keys.length - 1 : null;
+                if (nextIndex === null) return;
+                event.preventDefault();
+                setActiveStreamTab(keys[nextIndex]);
+                window.requestAnimationFrame(() => document.getElementById(`preset-stream-tab-${keys[nextIndex]}`)?.focus());
+              }}><span className="transcode-automation-tab-label">{label}</span></button>)}
+            </div>
+          </div>
+          <div id={`preset-stream-panel-${activeStreamTab}`} className="transcode-stream-tabpanel" role="tabpanel" aria-labelledby={`preset-stream-tab-${activeStreamTab}`} tabIndex={0}>
+            <div className="transcode-stream-list transcode-preset-stream-list">
+              {renderRuleGroup(sections.find((section) => section.key === activeStreamTab)!)}
+              {activeStreamTab === "subtitle_rules" ? renderRuleGroup(sections[3]) : null}
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className={`media-card library-settings-card transcode-filename-section transcode-metadata-settings${metadataSettingsOpen ? " is-expanded" : " is-collapsed"}`}>
+        <header className="transcode-filename-header"><button type="button" className="transcode-filename-toggle" aria-expanded={metadataSettingsOpen} aria-controls={metadataSettingsId} onClick={() => setMetadataSettingsOpen((open) => !open)}><span className="transcode-filename-chevron" aria-hidden="true">{metadataSettingsOpen ? <ChevronDown className="nav-icon" /> : <ChevronRight className="nav-icon" />}</span><span className="transcode-filename-heading"><h3>{t("transcoding.metadataSettings")}</h3></span></button></header>
+        {metadataSettingsOpen ? <div className="transcode-filename-body" id={metadataSettingsId}><div className="transcode-global-options transcode-metadata-option-list" role="group" aria-label={t("transcoding.metadataSettings")}>{(["chapters", "metadata", "cover", "attachments"] as const).map((option) => <label className="transcode-global-option" key={option}><input type="checkbox" aria-label={t(`transcoding.options.${option}`)} checked={definition[option] === "keep"} onChange={(event) => onChange({ ...definition, [option]: event.target.checked ? "keep" : "drop" })} /><span className="transcode-global-option-label">{t(`transcoding.options.${option}`)}</span><TooltipTrigger ariaLabel={t(`transcoding.optionHelpAria.${option}`)} content={t(`transcoding.optionHelp.${option}`)} pinOnClick={false} /></label>)}</div></div> : null}
+      </section>
     </div>
   );
 }
@@ -760,9 +830,10 @@ export function TranscodePresetsRulesPanel({
     if (!presetDraft?.name.trim()) return;
     setBusy(true);
     try {
+      const definition = { ...presetDraft.definition, filename_template_override: false };
       const saved = presetDraft.id
-        ? await api.updateTranscodePreset(presetDraft.id, { name: presetDraft.name.trim(), description: presetDraft.description, definition: presetDraft.definition })
-        : await api.createTranscodePreset({ name: presetDraft.name.trim(), description: presetDraft.description, definition: presetDraft.definition });
+        ? await api.updateTranscodePreset(presetDraft.id, { name: presetDraft.name.trim(), description: presetDraft.description, definition })
+        : await api.createTranscodePreset({ name: presetDraft.name.trim(), description: presetDraft.description, definition });
       setPresets((current) => presetDraft.id ? current.map((preset) => preset.id === saved.id ? saved : preset) : [...current, saved]);
       setPresetDraft(presetDraftFrom(saved));
       setTab("presets");

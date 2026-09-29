@@ -110,8 +110,20 @@ def test_normalize_ffprobe_payload_prefers_ietf_language_when_language_is_undefi
 
     normalized = normalize_ffprobe_payload(payload)
 
-    assert normalized.audio_streams[0].language == "de"
-    assert normalized.subtitle_streams[0].language == "en"
+    assert normalized.audio_streams[0].language == "de-DE"
+    assert normalized.subtitle_streams[0].language == "en-US"
+
+
+def test_normalize_ffprobe_payload_prefers_specific_video_language_tag() -> None:
+    payload = {
+        "format": {"format_name": "matroska,webm"},
+        "streams": [{
+            "index": 0, "codec_type": "video", "codec_name": "h264",
+            "tags": {"language": "ger", "language_ietf": "de-DE"},
+        }],
+    }
+    normalized = normalize_ffprobe_payload(payload)
+    assert normalized.video_streams[0].language == "de-DE"
 
 
 def test_normalize_ffprobe_payload_keeps_missing_stream_languages_undefined() -> None:

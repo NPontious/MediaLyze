@@ -1,3 +1,5 @@
+import languageRegistry from "./language-registry.json";
+
 const ISO_639_2_TO_1: Record<string, string> = {
   ara: "ar", bul: "bg", cat: "ca", ces: "cs", cze: "cs", dan: "da",
   deu: "de", ger: "de", ell: "el", gre: "el", eng: "en", spa: "es",
@@ -40,7 +42,10 @@ export function normalizeLanguageTag(value: string | null | undefined): string {
   if (!rawParts.length || rawParts.some((part) => !part)) return "";
   const parts = [...rawParts];
   const primaryRaw = parts.shift()?.toLowerCase() ?? "";
-  const primary = ISO_639_2_TO_1[primaryRaw] ?? primaryRaw;
+  const primary = (languageRegistry.aliases as Record<string, string>)[primaryRaw]
+    ?? (languageRegistry.preferred as Record<string, string>)[primaryRaw]
+    ?? ISO_639_2_TO_1[primaryRaw]
+    ?? primaryRaw;
   if (primary !== "i" && primary !== "x" && (!/^[a-z]{2,3}$/.test(primary))) return "";
   let extensionMode = false;
   let regionSeen = false;
@@ -68,7 +73,18 @@ function languageDisplayTag(tag: string): string {
 }
 
 /** Filename language code conventions supported by the transcoding plan. */
-export type FilenameLanguageCodeFormat = "iso_639_1" | "iso_639_2";
+export type FilenameLanguageCodeFormat = "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47";
+export type StreamLanguageCodeFormat = "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+
+export const FILENAME_LANGUAGE_CODE_FORMATS: FilenameLanguageCodeFormat[] = ["iso_639_1", "iso_639_2", "iso_639_2_t", "iso_639_3", "bcp_47"];
+
+export function streamLanguageCodeFormats(container: "source" | "mkv" | "mp4" | "webm"): StreamLanguageCodeFormat[] {
+  return container === "mp4"
+    ? ["container_default", "iso_639_2_t"]
+    : container === "source"
+      ? ["container_default"]
+      : ["container_default", "iso_639_2", "iso_639_2_region"];
+}
 
 // ISO 639-2/B is the bibliographic/media convention used for three-letter
 // filename codes (for example ger/eng rather than deu/eng). Unknown primary
@@ -89,13 +105,15 @@ export function formatFilenameLanguageCode(
 ): string {
   const tag = normalizeLanguageTag(value);
   if (!tag) return "";
-  if (format !== "iso_639_2") return tag;
+  if (format === "bcp_47") return tag;
   const [primary, ...rest] = tag.split("-");
-  return [ISO_639_1_TO_2_B[primary] ?? primary, ...rest].join("-");
+  const map = format === "iso_639_1" ? languageRegistry.to_1
+    : format === "iso_639_2" ? languageRegistry.to_2_b : languageRegistry.to_2_t;
+  return [(map as Record<string, string>)[primary] ?? (format === "iso_639_2" ? ISO_639_1_TO_2_B[primary] : undefined) ?? primary, ...rest].join("-");
 }
 
-/** Return a localized language name while retaining the exact normalized code. */
-export function formatLanguageLabel(value: string | null | undefined, locale = "en"): string {
+/** Return a localized language name without an appended code. */
+export function formatLanguageName(value: string | null | undefined, locale = "en"): string {
   const tag = normalizeLanguageTag(value) || "und";
   const displayTag = languageDisplayTag(tag);
   const localeBase = locale.split("-")[0].toLowerCase();
@@ -110,7 +128,13 @@ export function formatLanguageLabel(value: string | null | undefined, locale = "
   if (!name || name.toLowerCase() === displayTag.toLowerCase()) {
     name = tag === "und" ? "Undetermined" : tag === "mul" ? "Multiple languages" : tag === "zxx" ? "No linguistic content" : displayTag;
   }
-  return `${name} (${tag})`;
+  return name;
+}
+
+/** Return a localized language name while retaining the exact normalized code. */
+export function formatLanguageLabel(value: string | null | undefined, locale = "en"): string {
+  const tag = normalizeLanguageTag(value) || "und";
+  return `${formatLanguageName(tag, locale)} (${tag})`;
 }
 
 /** Build stable, localized select options from common and source-observed tags. */

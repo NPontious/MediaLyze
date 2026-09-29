@@ -135,20 +135,22 @@ describe("AppShell", () => {
     renderShell();
 
     const primaryNavigation = await screen.findByRole("navigation", { name: "Primary" });
-    const primaryLinks = Array.from(primaryNavigation.querySelectorAll<HTMLAnchorElement>(".media-nav-icons > a"));
-    expect(primaryLinks.map((link) => link.getAttribute("href"))).toEqual([
+    const navItems = Array.from(primaryNavigation.querySelector(".media-nav-icons")!.children);
+    expect(navItems.map((item) => item.matches("a") ? item.getAttribute("href") : item.querySelector("button")?.getAttribute("aria-label"))).toEqual([
       "/",
+      "Libraries",
       "/files/compare",
-      "/settings",
       "/storage-map",
       "/transcoding",
+      "/settings",
     ]);
-    expect(primaryLinks.map((link) => link.getAttribute("data-tooltip"))).toEqual([
+    expect(navItems.map((item) => item.matches("a") ? item.getAttribute("data-tooltip") : item.querySelector("button")?.getAttribute("data-tooltip"))).toEqual([
       "Dashboard",
+      "Libraries",
       "Compare files",
-      "Settings",
       "Storage map",
       "Transcoding",
+      "Settings",
     ]);
 
     fireEvent.click(screen.getByRole("link", { name: "Storage map" }));

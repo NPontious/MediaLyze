@@ -713,96 +713,6 @@ export function AppShell() {
                   </>
                 )}
               </NavLink>
-              <NavLink
-                to="/files/compare"
-                end
-                aria-label={t("nav.compareAria")}
-                data-tooltip={t("nav.compareAria")}
-                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive ? (
-                      <motion.span
-                        layoutId="primary-nav-pill"
-                        className="nav-active-pill"
-                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
-                      />
-                    ) : null}
-                    <span className="nav-link-content">
-                      <GitCompare aria-hidden="true" className="nav-icon" />
-                    </span>
-                  </>
-                )}
-              </NavLink>
-              <NavLink
-                to="/settings"
-                end
-                aria-label={t("nav.settingsAria")}
-                data-tooltip={t("nav.settingsAria")}
-                className={({ isActive }) =>
-                  `icon-nav-button ${isActive ? "active" : ""}${showFirstLibraryAttention ? " is-first-library-attention" : ""}`.trim()
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive ? (
-                      <motion.span
-                        layoutId="primary-nav-pill"
-                        className="nav-active-pill"
-                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
-                      />
-                    ) : null}
-                    <span className="nav-link-content" onClick={handleSettingsIconClick}>
-                      <Settings aria-hidden="true" className="nav-icon" />
-                    </span>
-                  </>
-                )}
-              </NavLink>
-              <NavLink
-                to="/storage-map"
-                end
-                aria-label={t("nav.storageMapAria")}
-                data-tooltip={t("nav.storageMapAria")}
-                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive ? (
-                      <motion.span
-                        layoutId="primary-nav-pill"
-                        className="nav-active-pill"
-                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
-                      />
-                    ) : null}
-                    <span className="nav-link-content">
-                      <Map aria-hidden="true" className="nav-icon" />
-                    </span>
-                  </>
-                )}
-              </NavLink>
-              <NavLink
-                to="/transcoding"
-                end
-                aria-label={t("nav.transcodingAria")}
-                data-tooltip={t("nav.transcodingAria")}
-                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive ? (
-                      <motion.span
-                        layoutId="primary-nav-pill"
-                        className="nav-active-pill"
-                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
-                      />
-                    ) : null}
-                    <span className="nav-link-content">
-                      <Activity aria-hidden="true" className="nav-icon" />
-                    </span>
-                  </>
-                )}
-              </NavLink>
               <div
                 ref={librariesMenuRef}
                 className="media-nav-library-menu"
@@ -851,6 +761,96 @@ export function AppShell() {
                   </div>
                 ) : null}
               </div>
+              <NavLink
+                to="/files/compare"
+                end
+                aria-label={t("nav.compareAria")}
+                data-tooltip={t("nav.compareAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <GitCompare aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
+              <NavLink
+                to="/storage-map"
+                end
+                aria-label={t("nav.storageMapAria")}
+                data-tooltip={t("nav.storageMapAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <Map aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
+              <NavLink
+                to="/transcoding"
+                end
+                aria-label={t("nav.transcodingAria")}
+                data-tooltip={t("nav.transcodingAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <Activity aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
+              <NavLink
+                to="/settings"
+                end
+                aria-label={t("nav.settingsAria")}
+                data-tooltip={t("nav.settingsAria")}
+                className={({ isActive }) =>
+                  `icon-nav-button ${isActive ? "active" : ""}${showFirstLibraryAttention ? " is-first-library-attention" : ""}`.trim()
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content" onClick={handleSettingsIconClick}>
+                      <Settings aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
             </div>
           </nav>
         </div>
