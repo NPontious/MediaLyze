@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 >2026-09-29
 
+This release brings ffmpeg transcoding to MediaLyze!
+
+validated plans with stream controls, hardware capability tests, reusable presets, flexible filename and folder formatting and linked variants that can be played side by side against the original for direct comparison. Alongside it, the interface gets denser and more consistent, with compact library navigation in the header and more compact settings tables. See the following release notes for a complete picture.
+
 ### ✨ New
 
 - **Video transcoding** — build validated FFmpeg plans with stream controls, tested hardware acceleration, explicit CPU-only mode, configurable output, and linked variants for comparison.
