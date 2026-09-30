@@ -101,7 +101,6 @@ import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
 import { GitCompareArrowsIcon } from "../components/GitCompareArrowsIcon";
 import { GithubIcon } from "../components/GithubIcon";
-import { HandCoinsIcon } from "../components/HandCoinsIcon";
 import { JellyfinIcon } from "../components/JellyfinIcon";
 import { ConnectorProviderIcon } from "../components/ConnectorProviderIcon";
 import { ConnectorStreamingDetails } from "../components/JellyfinMetadataDetails";
@@ -139,7 +138,7 @@ type CatalogSectionId =
   | "stats"
   | "runtime"
   | "file-library"
-  | "duplicates-path-telemetry"
+  | "duplicates-path"
   | "dialogs";
 
 type CatalogSectionDefinition = {
@@ -160,9 +159,9 @@ const catalogSections: CatalogSectionDefinition[] = [
   { id: "runtime", titleKey: "uiElements.sections.runtime", descriptionKey: "uiElements.descriptions.runtime" },
   { id: "file-library", titleKey: "uiElements.sections.fileLibrary", descriptionKey: "uiElements.descriptions.fileLibrary" },
   {
-    id: "duplicates-path-telemetry",
-    titleKey: "uiElements.sections.duplicatesPathTelemetry",
-    descriptionKey: "uiElements.descriptions.duplicatesPathTelemetry",
+    id: "duplicates-path",
+    titleKey: "uiElements.sections.duplicatesPath",
+    descriptionKey: "uiElements.descriptions.duplicatesPath",
   },
   { id: "dialogs", titleKey: "uiElements.sections.dialogs", descriptionKey: "uiElements.descriptions.dialogs" },
 ];
@@ -1212,7 +1211,7 @@ function ComparisonChartFixture() {
   );
 }
 
-function ReleaseDialogFixture({ telemetryOff = false }: { telemetryOff?: boolean }) {
+function ReleaseDialogFixture() {
   return (
     <div className="release-notes-dialog ui-elements-dialog-surface" role="presentation">
       <div className="release-notes-header">
@@ -1228,7 +1227,6 @@ function ReleaseDialogFixture({ telemetryOff = false }: { telemetryOff?: boolean
               <span>Downloaded</span>
             </button>
             <a href="/issues" className="release-notes-icon-link" aria-label="Report an issue" onClick={preventCatalogNavigation}><Bug aria-hidden="true" className="nav-icon" /></a>
-            <a href="/sponsors" className="release-notes-icon-link" aria-label="Support MediaLyze" onClick={preventCatalogNavigation}><HandCoinsIcon aria-hidden="true" className="release-notes-hand-coins-icon" size={18} /></a>
             <a href="/releases" className="release-notes-icon-link" aria-label="Open GitHub repository" onClick={preventCatalogNavigation}>
               <GithubIcon className="release-notes-github-icon" size={18} aria-hidden="true" />
             </a>
@@ -2724,7 +2722,7 @@ export function UiElementsPage() {
           </CatalogSection>
 
           <CatalogSection definition={catalogSections[10]}>
-            <VariantGroup title="Duplicates, paths, telemetry">
+            <VariantGroup title="Duplicates, paths">
               <VariantCard title="Duplicate group cards" source={`${libraryDetail} > Duplicates`} classes={["duplicate-group-card", "duplicate-group-item-card", "duplicate-group-action"]} wide>
                 <div className="duplicate-group-list">
                   <DuplicateGroupFixture />
@@ -3404,14 +3402,9 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[11]}>
             <VariantGroup title="Dialogs, popovers, tooltips">
-              <VariantCard title="Release notes dialog" source={releaseNotes} status="Minimal and full telemetry leave room for flat issue, support, and GitHub actions." classes={["release-notes-dialog", "release-notes-header", "release-notes-title-block", "page-heading-row", "page-heading-icon", "release-notes-icon-link", "release-notes-version"]} wide>
+              <VariantCard title="Release notes dialog" source={releaseNotes} status="Clean layout leaves room for flat issue and GitHub actions." classes={["release-notes-dialog", "release-notes-header", "release-notes-title-block", "page-heading-row", "page-heading-icon", "release-notes-icon-link", "release-notes-version"]} wide>
                 <div className="ui-elements-dialog-demo">
                   <ReleaseDialogFixture />
-                </div>
-              </VariantCard>
-              <VariantCard title="Release notes dialog · telemetry off" source={releaseNotes} status="The compact consent selector remains available when telemetry is off." classes={["release-notes-dialog", "release-notes-secondary-actions", "telemetry-mode-toggle", "release-notes-icon-link"]} wide>
-                <div className="ui-elements-dialog-demo">
-                  <ReleaseDialogFixture telemetryOff />
                 </div>
               </VariantCard>
               <VariantCard title="Create library dialog shell" source={`${settings} > Add library`} classes={["settings-create-library-backdrop", "settings-create-library-dialog", "settings-create-library-dialog-header"]}>

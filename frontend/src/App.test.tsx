@@ -99,7 +99,7 @@ describe("App routing", () => {
     expect(screen.getByRole("heading", { name: "Tables" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime & scan logs" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Library & file detail" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Duplicates, paths & telemetry" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Duplicates & paths" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Dialogs, popovers & tooltips" })).toBeInTheDocument();
 
     expect(screen.getAllByText("Dashboard", { exact: false }).length).toBeGreaterThan(0);

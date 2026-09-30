@@ -11,7 +11,6 @@ import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import { FolderInputIcon } from "./FolderInputIcon";
 import { FolderOutputIcon } from "./FolderOutputIcon";
 import { GithubIcon } from "./GithubIcon";
-import { HandCoinsIcon } from "./HandCoinsIcon";
 import { api, type ConnectorConnection, type ConnectorSyncJob, type ScanJob, type UpdateStatus } from "../lib/api";
 import { APP_VERSION } from "../lib/app-version";
 import { useAppData } from "../lib/app-data";
@@ -33,7 +32,6 @@ import { useScanJobs } from "../lib/scan-jobs";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/NPontious/MediaLyze/";
 const GITHUB_ISSUE_URL = "https://github.com/NPontious/MediaLyze/issues/new/choose";
-const GITHUB_SPONSORS_URL = "https://github.com/sponsors/frederikemmer";
 const UI_ELEMENTS_CLICK_WINDOW_MS = 1500;
 const UI_ELEMENTS_CLICK_COUNT = 3;
 const RELEASE_NOTE_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -929,16 +927,6 @@ export function AppShell() {
                     data-tooltip={t("releaseNotes.reportIssueAria")}
                   >
                     <Bug aria-hidden="true" className="nav-icon" />
-                  </a>
-                  <a
-                    className="release-notes-icon-link"
-                    href={GITHUB_SPONSORS_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={t("releaseNotes.donateAria")}
-                    data-tooltip={t("releaseNotes.donateAria")}
-                  >
-                    <HandCoinsIcon aria-hidden="true" className="release-notes-hand-coins-icon" size={18} />
                   </a>
                   <a
                     className="release-notes-icon-link"

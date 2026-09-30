@@ -186,7 +186,6 @@
     "closeMenuAria": "Hide release history actions",
     "githubAria": "Open GitHub repository",
     "reportIssueAria": "Report an issue",
-    "donateAria": "Support MediaLyze",
     "closeAria": "Close release notes"
   },
   "libraries": {
@@ -1688,7 +1687,7 @@
       "stats": "Statistics & charts",
       "runtime": "Runtime & scan logs",
       "fileLibrary": "Library & file detail",
-      "duplicatesPathTelemetry": "Duplicates, paths & telemetry",
+      "duplicatesPath": "Duplicates & paths",
       "dialogs": "Dialogs, popovers & tooltips"
     },
     "descriptions": {
@@ -1702,7 +1701,7 @@
       "stats": "Metric cards, distribution lists, chart controls, and comparison toolbar variants.",
       "runtime": "Active scan cards, scan log cards, outcome badges, and diagnostic controls.",
       "fileLibrary": "File-detail navigation, preview surfaces, stream details, and quality score rows.",
-      "duplicatesPathTelemetry": "Duplicate cards, path browser states, and telemetry selection surfaces.",
+      "duplicatesPath": "Duplicate cards and path browser states.",
       "dialogs": "Release notes, create-library dialog shells, filter popovers, quality popovers, and tooltip triggers."
     },
     "sources": {

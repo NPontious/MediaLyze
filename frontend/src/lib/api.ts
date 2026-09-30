@@ -2137,9 +2137,6 @@ export type TranscodingSettings = {
   remove_partial_output: boolean;
 };
 
-export type TelemetryPreviewMode = "none" | "minimal" | "enabled";
-export type TelemetryMode = "none" | "initialized" | "off" | "minimal" | "enabled";
-
 export type HistoryStorageCategory = {
   entry_count: number;
   current_estimated_bytes: number;

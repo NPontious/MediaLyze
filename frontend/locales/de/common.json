@@ -186,7 +186,6 @@
     "closeMenuAria": "Aktionen zum Versionsverlauf ausblenden",
     "githubAria": "GitHub-Repository oeffnen",
     "reportIssueAria": "Issue melden",
-    "donateAria": "MediaLyze unterstuetzen",
     "closeAria": "Versionshinweise schliessen"
   },
   "libraries": {
@@ -1688,7 +1687,7 @@
       "stats": "Statistiken & Charts",
       "runtime": "Runtime & Scan-Logs",
       "fileLibrary": "Library & File Detail",
-      "duplicatesPathTelemetry": "Duplikate, Pfade & Telemetrie",
+      "duplicatesPath": "Duplikate & Pfade",
       "dialogs": "Dialoge, Popover & Tooltips"
     },
     "descriptions": {
@@ -1702,7 +1701,7 @@
       "stats": "Metrik-Karten, Verteilungslisten, Chart-Controls und Comparison-Toolbar-Varianten.",
       "runtime": "Aktive Scan-Karten, Scan-Log-Karten, Outcome-Badges und Diagnose-Controls.",
       "fileLibrary": "File-Detail-Navigation, Preview-Flächen, Stream-Details und Quality-Score-Zeilen.",
-      "duplicatesPathTelemetry": "Duplikat-Karten, Path-Browser-Zustände und Telemetrie-Auswahlflächen.",
+      "duplicatesPath": "Duplikat-Karten und Path-Browser-Zustände.",
       "dialogs": "Release Notes, Create-Library-Dialoge, Filter-Popover, Quality-Popover und Tooltip-Trigger."
     },
     "sources": {

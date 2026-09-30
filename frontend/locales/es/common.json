@@ -186,7 +186,6 @@
     "closeMenuAria": "Ocultar acciones del historial de versiones",
     "githubAria": "Abrir repositorio de GitHub",
     "reportIssueAria": "Informar de un problema",
-    "donateAria": "Apoyar MediaLyze",
     "closeAria": "Cerrar notas de la versión"
   },
   "libraries": {
@@ -1688,7 +1687,7 @@
       "stats": "Estadísticas y gráficos",
       "runtime": "Ejecución y logs de escaneo",
       "fileLibrary": "Biblioteca y detalle de archivo",
-      "duplicatesPathTelemetry": "Duplicados, rutas y telemetría",
+      "duplicatesPath": "Duplicados y rutas",
       "dialogs": "Diálogos, popovers y tooltips"
     },
     "descriptions": {
@@ -1702,7 +1701,7 @@
       "stats": "Tarjetas métricas, listas de distribución, controles de gráficos y variantes de la barra de comparación.",
       "runtime": "Tarjetas de escaneo activo, tarjetas de logs, insignias de resultado y controles de diagnóstico.",
       "fileLibrary": "Navegación de detalle de archivo, superficies de vista previa, detalles de pistas y filas de puntuación de calidad.",
-      "duplicatesPathTelemetry": "Tarjetas de duplicados, estados del explorador de rutas y superficies de selección de telemetría.",
+      "duplicatesPath": "Tarjetas de duplicados y estados del explorador de rutas.",
       "dialogs": "Notas de versión, diálogos para crear biblioteca, popovers de filtro, popovers de calidad y disparadores de tooltip."
     },
     "sources": {

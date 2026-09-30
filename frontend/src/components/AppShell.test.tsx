@@ -258,14 +258,6 @@ describe("AppShell", () => {
       "data-tooltip",
       "Report an issue",
     );
-    expect(screen.getByRole("link", { name: "Support MediaLyze" })).toHaveAttribute(
-      "href",
-      "https://github.com/sponsors/frederikemmer",
-    );
-    expect(screen.getByRole("link", { name: "Support MediaLyze" })).toHaveAttribute(
-      "data-tooltip",
-      "Support MediaLyze",
-    );
 
     fireEvent.mouseDown(document.querySelector(".release-notes-backdrop")!);
 
