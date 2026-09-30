@@ -149,12 +149,43 @@ def test_get_app_settings_seeds_built_in_default_ignore_patterns_for_new_install
     assert loaded.feature_flags.in_depth_dolby_vision_profiles is False
     assert loaded.feature_flags.show_all_playbacks_when_unstacked is False
     assert loaded.pattern_recognition.analyze_bonus_content is True
+    assert loaded.pattern_recognition.duplicate_matching.duration_tolerance_seconds == 10
+    assert loaded.pattern_recognition.duplicate_matching.user_filename_suffix_regexes == []
+    assert len(loaded.pattern_recognition.duplicate_matching.default_filename_suffix_regexes) == 1
     assert loaded.pattern_recognition.show_season_patterns.recognition_mode.value == "folder_depth"
     assert loaded.pattern_recognition.show_season_patterns.series_folder_depth == 1
     assert loaded.pattern_recognition.show_season_patterns.season_folder_depth == 2
     assert "*/Specials/*" in loaded.pattern_recognition.bonus_content.effective_folder_patterns
     assert "*/Season 00/*" in loaded.pattern_recognition.bonus_content.effective_folder_patterns
     assert loaded.pattern_recognition.show_season_patterns.episode_file_regexes == []
+
+
+def test_transcoding_settings_ignore_legacy_global_device_selection(tmp_path) -> None:
+    session_factory = build_session_factory()
+    settings = build_settings(tmp_path)
+
+    with session_factory() as db:
+        db.add(
+            AppSetting(
+                key="global",
+                value={"transcoding": {"selected_devices": ["cuda0"], "gpu_parallel_jobs_per_device": 2}},
+            )
+        )
+        db.commit()
+
+        loaded = get_app_settings(db, settings)
+        assert not hasattr(loaded.transcoding, "selected_devices")
+
+        updated = update_app_settings(
+            db,
+            AppSettingsUpdate(transcoding={"cpu_budget_percent": 80}),
+            settings,
+        )
+        stored = db.get(AppSetting, "global")
+
+    assert updated.transcoding.cpu_budget_percent == 80
+    assert stored is not None
+    assert "selected_devices" not in stored.value["transcoding"]
 
 
 def test_get_app_settings_preserves_season_zero_bonus_patterns(tmp_path) -> None:
@@ -194,6 +225,10 @@ def test_update_app_settings_persists_pattern_recognition(tmp_path) -> None:
             AppSettingsUpdate(
                 pattern_recognition={
                     "analyze_bonus_content": False,
+                    "duplicate_matching": {
+                        "duration_tolerance_seconds": 12,
+                        "user_filename_suffix_regexes": [r"\s+\(Director's Cut\)$"],
+                    },
                     "show_season_patterns": {
                         "recognition_mode": "regex",
                         "series_folder_depth": 1,
@@ -214,6 +249,14 @@ def test_update_app_settings_persists_pattern_recognition(tmp_path) -> None:
         stored = db.get(AppSetting, "global")
 
     assert updated.pattern_recognition.analyze_bonus_content is True
+    assert updated.pattern_recognition.duplicate_matching.duration_tolerance_seconds == 12
+    assert updated.pattern_recognition.duplicate_matching.user_filename_suffix_regexes == [
+        r"\s+\(Director's Cut\)$"
+    ]
+    assert updated.pattern_recognition.duplicate_matching.effective_filename_suffix_regexes == [
+        r"\s+\(Director's Cut\)$",
+        r"(?:\s+\(\d{4}\)|\s+\[[^\]]*\])+\s*$",
+    ]
     assert updated.pattern_recognition.show_season_patterns.recognition_mode.value == "regex"
     assert updated.pattern_recognition.bonus_content.effective_folder_patterns == ["*/Extras/*", "*/Specials/*"]
     assert updated.pattern_recognition.bonus_content.effective_file_patterns == []
@@ -221,6 +264,25 @@ def test_update_app_settings_persists_pattern_recognition(tmp_path) -> None:
     assert stored.value["pattern_recognition"]["analyze_bonus_content"] is True
     assert stored.value["pattern_recognition"]["bonus_content"]["user_file_patterns"] == []
     assert stored.value["pattern_recognition"]["bonus_content"]["default_file_patterns"] == []
+
+
+def test_update_app_settings_rejects_invalid_duplicate_filename_regex(tmp_path) -> None:
+    session_factory = build_session_factory()
+    settings = build_settings(tmp_path)
+
+    with session_factory() as db:
+        with pytest.raises(ValueError, match="Invalid duplicate filename suffix regex"):
+            update_app_settings(
+                db,
+                AppSettingsUpdate(
+                    pattern_recognition={
+                        "duplicate_matching": {
+                            "user_filename_suffix_regexes": ["("],
+                        },
+                    },
+                ),
+                settings,
+            )
 
 
 def test_update_app_settings_rejects_invalid_pattern_recognition_regex(tmp_path) -> None:
@@ -505,6 +567,8 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
     assert updated.history_retention.library_history.days == 730
     assert updated.history_retention.scan_history.days == 45
     assert updated.history_retention.scan_history.storage_limit_gb == 0.25
+    assert updated.history_retention.transcode_history.days == 90
+    assert updated.history_retention.transcode_history.storage_limit_gb == 0.0
     assert updated.feature_flags.hide_automatic_update_reminders is True
     assert updated.feature_flags.show_analyzed_files_csv_export is True
     assert updated.feature_flags.show_full_width_app_shell is True
@@ -523,10 +587,22 @@ def test_update_app_settings_persists_split_ignore_patterns_and_merges_effective
             "parallel_scan_jobs": 3,
             "comparison_scatter_point_limit": 10000,
         },
+        "transcoding": {
+            "execution_mode": "hardware_required",
+            "cpu_budget_percent": 90,
+            "cpu_parallel_jobs": "auto",
+            "gpu_parallel_jobs_per_device": 1,
+            "default_output_mode": "transcode_output",
+            "on_error": "continue",
+            "retry_count": 0,
+            "existing_output": "fail",
+            "remove_partial_output": True,
+        },
         "history_retention": {
             "file_history": {"days": 120, "storage_limit_gb": 1.5},
             "library_history": {"days": 730, "storage_limit_gb": 0.0},
             "scan_history": {"days": 45, "storage_limit_gb": 0.25},
+            "transcode_history": {"days": 90, "storage_limit_gb": 0.0},
         },
         "ui_preferences": {
             "interface_language": "en",

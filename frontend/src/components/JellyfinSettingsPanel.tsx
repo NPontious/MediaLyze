@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   CircleStop,
   Link2,
+  Network,
   RefreshCw,
   Search,
   Server,
@@ -400,11 +401,12 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
           <div className="jellyfin-form-grid">
             <label>
               <span>{t("jellyfin.serverUrl")}</span>
-              <input type="url" value={baseUrl} placeholder="http://jellyfin:8096" onChange={(event) => setBaseUrl(event.target.value)} />
+              <input className="settings-choice-input" type="url" value={baseUrl} placeholder="http://jellyfin:8096" onChange={(event) => setBaseUrl(event.target.value)} />
             </label>
             <label>
               <span>{t("jellyfin.apiKey")}</span>
               <input
+                className="settings-choice-input"
                 type="password"
                 value={apiKey}
                 placeholder={connection.api_key_configured ? t("jellyfin.apiKeyConfigured") : ""}
@@ -422,7 +424,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
                   content={t("jellyfin.syncIntervalHelp")}
                 >?</TooltipTrigger>
               </span>
-              <input id="jellyfin-sync-interval" type="number" min="0" max="10080" value={syncInterval} onChange={(event) => setSyncInterval(event.target.value)} />
+              <input className="settings-choice-input" id="jellyfin-sync-interval" type="number" min="0" max="10080" value={syncInterval} onChange={(event) => setSyncInterval(event.target.value)} />
             </div>
           </div>
           <div className="jellyfin-actions">
@@ -435,7 +437,7 @@ export function JellyfinSettingsPanel({ onCatalogChanged }: { onCatalogChanged?:
               {connection.enabled ? t("jellyfin.disableIntegration") : t("jellyfin.enableIntegration")}
             </button>
             <button className="secondary small" type="button" disabled={connectionBusy || syncRunning || autoSaving} onClick={() => void testConnection()}>
-              {pending === "test" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <Link2 aria-hidden="true" />} {t("jellyfin.testConnection")}
+              {pending === "test" ? <RefreshCw aria-hidden="true" className="is-spinning" /> : <Network aria-hidden="true" />} {t("jellyfin.testConnection")}
             </button>
             <button className="secondary small" type="button" disabled={connectionBusy || syncRunning || autoSaving || connectionDirty || !connection.enabled} onClick={() => void syncNow()}>
               <RefreshCw aria-hidden="true" className={pending === "sync" ? "is-spinning" : ""} /> {t("jellyfin.syncNow")}

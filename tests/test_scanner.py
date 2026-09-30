@@ -1,10 +1,12 @@
 import os
+import shutil
 import tempfile
+import wave
 from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("CONFIG_PATH", tempfile.mkdtemp(prefix="medialyze-config-"))
@@ -43,6 +45,90 @@ from backend.app.services.scanner import _iter_media_files
 from backend.app.services.scanner import ScanCanceled
 from backend.app.services.scanner import run_quality_recompute, run_scan
 from backend.app.utils.time import utc_now
+
+
+@pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe is not installed")
+def test_real_ffprobe_corrupt_mp4_does_not_interrupt_scan(tmp_path: Path) -> None:
+    media_dir = tmp_path / "library"
+    media_dir.mkdir()
+    # A recognizable MP4 header without its required moov atom, as in #184.
+    (media_dir / "broken.mp4").write_bytes(bytes.fromhex("000000186674797069736f6d0000020069736f6d69736f32"))
+    with wave.open(str(media_dir / "healthy.wav"), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b"\0\0" * 8000)
+    settings = Settings(config_path=tmp_path / "config", media_root=tmp_path)
+    engine = create_engine(f"sqlite:///{tmp_path / 'scan.db'}")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)() as db:
+        library = Library(name="Mixed", path=str(media_dir), type=LibraryType.mixed, scan_config={})
+        db.add(library)
+        db.commit()
+        job = run_scan(db, settings, library.id, "full")
+        assert job.status == JobStatus.completed
+        assert job.files_scanned == 2
+        assert job.errors == 1
+        files = db.scalars(select(MediaFile).order_by(MediaFile.filename)).all()
+        assert files[0].scan_status == ScanStatus.failed
+        assert "moov atom not found" in files[0].analysis_failure_reason
+        assert files[1].scan_status == ScanStatus.ready
+        assert len(files[1].audio_streams) == 1
+
+
+def test_full_scan_releases_persisted_analysis_data(tmp_path: Path, monkeypatch) -> None:
+    media_dir = tmp_path / "library"
+    media_dir.mkdir()
+    for index in range(4):
+        (media_dir / f"movie-{index}.mkv").write_text("video")
+    (media_dir / "movie-0.en.srt").write_text("subtitle")
+    payload = {
+        "format": {"format_name": "matroska", "duration": "60", "tags": {"comment": "x" * 100000}},
+        "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}],
+        "chapters": [{"id": 0, "start_time": "0", "end_time": "60"}],
+    }
+    monkeypatch.setattr(scanner_service, "run_ffprobe", lambda *_args: payload)
+    settings = Settings(config_path=tmp_path / "config", media_root=tmp_path, scan_commit_batch_size=100)
+    engine = create_engine(f"sqlite:///{tmp_path / 'scan.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with session_factory() as db:
+        library = Library(name="Movies", path=str(media_dir), type=LibraryType.movies, scan_config={})
+        db.add(library)
+        db.commit()
+        library_id = library.id
+        run_scan(db, settings, library_id, "full")
+
+    retained_payload_counts = []
+    apply_analysis = scanner_service._apply_analysis_result
+
+    def check_retained_data(db, *args, **kwargs):
+        files = [item for item in db.identity_map.values() if isinstance(item, MediaFile)]
+        retained_payload_counts.append(sum("raw_ffprobe_json" not in inspect(item).unloaded for item in files))
+        return apply_analysis(db, *args, **kwargs)
+
+    monkeypatch.setattr(scanner_service, "_apply_analysis_result", check_retained_data)
+    with session_factory() as db:
+        job = run_scan(db, settings, library_id, "full")
+        assert job.status == JobStatus.completed
+        assert job.files_scanned == 4
+    assert retained_payload_counts == [0, 0, 0, 0]
+
+    with session_factory() as db:
+        files = db.scalars(select(MediaFile).order_by(MediaFile.filename)).all()
+        assert all(item.raw_ffprobe_json == payload for item in files)
+        assert all(len(item.chapters) == 1 for item in files)
+        assert all(item.quality_score_breakdown is not None for item in files)
+        assert len(files[0].external_subtitles) == 1
+
+    def unexpected_probe(*_args):
+        pytest.fail("Unchanged files must not be reanalyzed")
+
+    monkeypatch.setattr(scanner_service, "run_ffprobe", unexpected_probe)
+    with session_factory() as db:
+        job = run_scan(db, settings, library_id, "incremental")
+        assert job.files_scanned == 0
+        assert job.unchanged_files == 4
 
 
 def test_iter_media_files_skips_symlink_directories(tmp_path: Path) -> None:
@@ -2232,6 +2318,7 @@ def test_incremental_scan_backfills_missing_signatures_for_combined_duplicate_mo
     assert ffprobe_calls == []
     assert refreshed is not None
     assert refreshed.filename_signature == "movie name"
+    assert refreshed.filename_pattern_signature == "movie name"
     assert refreshed.content_hash is not None
     assert refreshed.content_hash_algorithm == "sha256"
     assert job.files_scanned == 1

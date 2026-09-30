@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_app_settings, get_db_session, get_scan_runtime
+from backend.app.api.federation_routes import federation_protocol_router, federation_router
 from backend.app.core.config import Settings
 from backend.app.schemas.app_settings import AppSettingsRead, AppSettingsUpdate
 from backend.app.schemas.browse import BrowseResponse
@@ -105,6 +106,38 @@ from backend.app.schemas.scan import (
     ScanRequest,
 )
 from backend.app.schemas.storage_map import LibraryStorageMapRead
+from backend.app.schemas.transcoding import (
+    TranscodeFormattingPresetCreate,
+    TranscodeFormattingPresetRead,
+    TranscodeFormattingPresetUpdate,
+    FileTranscodeRead,
+    TranscodeAutomationPreviewRead,
+    TranscodeAutomationRunRead,
+    TranscodeAutomationScope,
+    TranscodeCapabilityMatrixRead,
+    TranscodeCapabilitiesRead,
+    TranscodeJobPageRead,
+    TranscodeJobRead,
+    TranscodeMatrixTestProgressRead,
+    TranscodePlan,
+    TranscodePresetCreate,
+    TranscodePresetDuplicate,
+    TranscodePresetRead,
+    TranscodePresetUpdate,
+    TranscodeReplacementApproval,
+    TranscodeRuleCreate,
+    TranscodeRuleRead,
+    TranscodeRuleReorder,
+    TranscodeRuleUpdate,
+    TranscodeValidationRead,
+)
+from backend.app.services.transcode_formatting_presets import (
+    FormattingPresetError,
+    create_formatting_preset,
+    delete_formatting_preset,
+    list_formatting_presets,
+    update_formatting_preset,
+)
 from backend.app.schemas.update_status import (
     DesktopUpdateReminderMark,
     DesktopUpdateReminderRead,
@@ -138,6 +171,10 @@ from backend.app.models.entities import (
     MediaFile,
     ScanJob,
     ScanTriggerSource,
+    TranscodeJob,
+    TranscodeVariant,
+    LibraryRoot,
+    TranscodeAutomationRun,
 )
 from backend.app.services.connector_credentials import read_connector_secret
 from backend.app.services.connector_registry import connector_registry
@@ -226,6 +263,48 @@ from backend.app.services.media_service import (
     list_library_files,
     search_media_files,
 )
+from backend.app.services.transcoding import (
+    TranscodeValidationError,
+    get_file_transcode,
+    get_transcode_capabilities,
+    list_transcode_jobs,
+    delete_transcode_job,
+    serialize_transcode_job,
+    validate_transcode_plan,
+)
+from backend.app.services.transcode_federation import (
+    FederationError,
+    choose_worker_for_media_file,
+    federation_enabled,
+)
+from backend.app.services.transcode_automation import (
+    TranscodeAutomationError,
+    approve_transcode_rule_replacement,
+    create_transcode_preset,
+    create_transcode_rule,
+    delete_transcode_preset,
+    delete_transcode_rule,
+    duplicate_transcode_preset,
+    get_transcode_automation_run,
+    get_transcode_preset,
+    get_transcode_rule,
+    list_transcode_automation_runs,
+    list_transcode_presets,
+    list_transcode_rules,
+    preview_transcode_automation,
+    reorder_transcode_rules,
+    serialize_transcode_automation_run,
+    serialize_transcode_preset,
+    serialize_transcode_rule,
+    update_transcode_preset,
+    update_transcode_rule,
+)
+from backend.app.services.transcode_matrix import (
+    TranscodeMatrixBusyError,
+    load_transcode_matrix,
+    run_transcode_matrix_test,
+    transcode_matrix_test_progress,
+)
 from backend.app.services.path_access import inspect_desktop_path
 from backend.app.services.quality_profiles import (
     create_quality_profile,
@@ -254,10 +333,24 @@ from backend.app.services.update_status import (
 )
 
 router = APIRouter()
+router.include_router(federation_router)
+router.include_router(federation_protocol_router)
 
 
 def _profile_error(exc: ProfileCatalogError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _transcode_automation_error(exc: TranscodeAutomationError) -> HTTPException:
+    message = str(exc)
+    lowered = message.lower()
+    if "not found" in lowered:
+        status_code = 404
+    elif any(token in lowered for token in ("already exists", "still used", "immutable", "cannot be deleted")):
+        status_code = 409
+    else:
+        status_code = 400
+    return HTTPException(status_code=status_code, detail=message)
 
 
 def _normalize_panel_query(panels: list[str] | None) -> list[str] | None:
@@ -1968,6 +2061,7 @@ def library_duplicates(
     limit: int = Query(default=25, ge=1, le=200),
     include_suppressed: bool = Query(default=False),
     db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
 ) -> DuplicateGroupPageRead:
     try:
         return list_library_duplicate_groups(
@@ -1976,6 +2070,7 @@ def library_duplicates(
             offset=offset,
             limit=limit,
             include_suppressed=include_suppressed,
+            duplicate_matching_settings=load_app_settings(db, settings).pattern_recognition.duplicate_matching,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Library not found") from exc
@@ -2801,6 +2896,425 @@ def file_search(
     return search_media_files(db, query=query, library_id=library_id, limit=limit)
 
 
+@router.get("/transcoding/capabilities", response_model=TranscodeCapabilitiesRead)
+def transcoding_capabilities(
+    refresh: bool = Query(default=False),
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeCapabilitiesRead:
+    return get_transcode_capabilities(settings, refresh=refresh)
+
+
+@router.get("/transcoding/capability-matrix", response_model=TranscodeCapabilityMatrixRead)
+def transcoding_capability_matrix(
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeCapabilityMatrixRead:
+    return load_transcode_matrix(settings)
+
+
+@router.get(
+    "/transcoding/capability-matrix/test/progress",
+    response_model=TranscodeMatrixTestProgressRead,
+)
+def transcoding_capability_matrix_test_progress() -> TranscodeMatrixTestProgressRead:
+    return transcode_matrix_test_progress()
+
+
+@router.post("/transcoding/capability-matrix/test", response_model=TranscodeCapabilityMatrixRead)
+def transcoding_capability_matrix_test(
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeCapabilityMatrixRead:
+    try:
+        return run_transcode_matrix_test(settings)
+    except TranscodeMatrixBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/transcoding/formatting-presets", response_model=list[TranscodeFormattingPresetRead])
+def transcoding_formatting_presets_list(db: Session = Depends(get_db_session)) -> list[TranscodeFormattingPresetRead]:
+    return list_formatting_presets(db)
+
+
+@router.post("/transcoding/formatting-presets", response_model=TranscodeFormattingPresetRead, status_code=201)
+def transcoding_formatting_preset_create(
+    payload: TranscodeFormattingPresetCreate,
+    db: Session = Depends(get_db_session),
+) -> TranscodeFormattingPresetRead:
+    try:
+        return create_formatting_preset(db, payload)
+    except FormattingPresetError as exc:
+        raise HTTPException(status_code=409 if "already exists" in str(exc) else 400, detail=str(exc)) from exc
+
+
+@router.patch("/transcoding/formatting-presets/{preset_id}", response_model=TranscodeFormattingPresetRead)
+def transcoding_formatting_preset_update(
+    preset_id: int,
+    payload: TranscodeFormattingPresetUpdate,
+    db: Session = Depends(get_db_session),
+) -> TranscodeFormattingPresetRead:
+    try:
+        return update_formatting_preset(db, preset_id, payload)
+    except FormattingPresetError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409 if "already exists" in str(exc) else 400, detail=str(exc)) from exc
+
+
+@router.delete("/transcoding/formatting-presets/{preset_id}", status_code=204)
+def transcoding_formatting_preset_delete(preset_id: int, db: Session = Depends(get_db_session)) -> Response:
+    try:
+        delete_formatting_preset(db, preset_id)
+    except FormattingPresetError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@router.get("/transcoding/presets", response_model=list[TranscodePresetRead])
+@router.get("/transcoding/profiles", response_model=list[TranscodePresetRead], include_in_schema=False, deprecated=True)
+def transcoding_presets_list(
+    db: Session = Depends(get_db_session),
+) -> list[TranscodePresetRead]:
+    return list_transcode_presets(db)
+
+
+@router.post("/transcoding/presets", response_model=TranscodePresetRead, status_code=201)
+@router.post("/transcoding/profiles", response_model=TranscodePresetRead, status_code=201, include_in_schema=False, deprecated=True)
+def transcoding_preset_create(
+    payload: TranscodePresetCreate,
+    db: Session = Depends(get_db_session),
+) -> TranscodePresetRead:
+    try:
+        return create_transcode_preset(db, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.get("/transcoding/presets/{preset_id}", response_model=TranscodePresetRead)
+@router.get("/transcoding/profiles/{preset_id}", response_model=TranscodePresetRead, include_in_schema=False, deprecated=True)
+def transcoding_preset_detail(
+    preset_id: int,
+    db: Session = Depends(get_db_session),
+) -> TranscodePresetRead:
+    try:
+        return serialize_transcode_preset(db, get_transcode_preset(db, preset_id))
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.patch("/transcoding/presets/{preset_id}", response_model=TranscodePresetRead)
+@router.patch("/transcoding/profiles/{preset_id}", response_model=TranscodePresetRead, include_in_schema=False, deprecated=True)
+def transcoding_preset_update(
+    preset_id: int,
+    payload: TranscodePresetUpdate,
+    db: Session = Depends(get_db_session),
+) -> TranscodePresetRead:
+    try:
+        return update_transcode_preset(db, preset_id, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.post("/transcoding/presets/{preset_id}/duplicate", response_model=TranscodePresetRead, status_code=201)
+@router.post("/transcoding/profiles/{preset_id}/duplicate", response_model=TranscodePresetRead, status_code=201, include_in_schema=False, deprecated=True)
+def transcoding_preset_duplicate(
+    preset_id: int,
+    payload: TranscodePresetDuplicate | None = None,
+    db: Session = Depends(get_db_session),
+) -> TranscodePresetRead:
+    try:
+        return duplicate_transcode_preset(db, preset_id, payload.name if payload else None)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.delete("/transcoding/presets/{preset_id}", status_code=204)
+@router.delete("/transcoding/profiles/{preset_id}", status_code=204, include_in_schema=False, deprecated=True)
+def transcoding_preset_delete(
+    preset_id: int,
+    db: Session = Depends(get_db_session),
+) -> Response:
+    try:
+        delete_transcode_preset(db, preset_id)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+    return Response(status_code=204)
+
+
+@router.get("/transcoding/rules", response_model=list[TranscodeRuleRead])
+def transcoding_rules_list(
+    db: Session = Depends(get_db_session),
+) -> list[TranscodeRuleRead]:
+    try:
+        return list_transcode_rules(db)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.post("/transcoding/rules", response_model=TranscodeRuleRead, status_code=201)
+def transcoding_rule_create(
+    payload: TranscodeRuleCreate,
+    db: Session = Depends(get_db_session),
+) -> TranscodeRuleRead:
+    try:
+        return create_transcode_rule(db, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.post("/transcoding/rules/reorder", response_model=list[TranscodeRuleRead])
+def transcoding_rules_reorder(
+    payload: TranscodeRuleReorder,
+    db: Session = Depends(get_db_session),
+) -> list[TranscodeRuleRead]:
+    try:
+        return reorder_transcode_rules(db, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.get("/transcoding/rules/{rule_id}", response_model=TranscodeRuleRead)
+def transcoding_rule_detail(
+    rule_id: int,
+    db: Session = Depends(get_db_session),
+) -> TranscodeRuleRead:
+    try:
+        return serialize_transcode_rule(db, get_transcode_rule(db, rule_id))
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.patch("/transcoding/rules/{rule_id}", response_model=TranscodeRuleRead)
+def transcoding_rule_update(
+    rule_id: int,
+    payload: TranscodeRuleUpdate,
+    db: Session = Depends(get_db_session),
+) -> TranscodeRuleRead:
+    try:
+        return update_transcode_rule(db, rule_id, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.post("/transcoding/rules/{rule_id}/replacement-approval", response_model=TranscodeRuleRead)
+def transcoding_rule_replacement_approval(
+    rule_id: int,
+    payload: TranscodeReplacementApproval,
+    db: Session = Depends(get_db_session),
+) -> TranscodeRuleRead:
+    try:
+        return approve_transcode_rule_replacement(db, rule_id, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.delete("/transcoding/rules/{rule_id}", status_code=204)
+def transcoding_rule_delete(
+    rule_id: int,
+    db: Session = Depends(get_db_session),
+) -> Response:
+    try:
+        delete_transcode_rule(db, rule_id)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+    return Response(status_code=204)
+
+
+@router.post("/transcoding/automation/preview", response_model=TranscodeAutomationPreviewRead)
+def transcoding_automation_preview(
+    payload: TranscodeAutomationScope,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeAutomationPreviewRead:
+    try:
+        return preview_transcode_automation(db, settings, payload)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.post("/transcoding/automation/start", response_model=TranscodeAutomationRunRead, status_code=202)
+def transcoding_automation_start(
+    payload: TranscodeAutomationScope,
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> TranscodeAutomationRunRead:
+    try:
+        return runtime.request_transcode_automation(payload, trigger="manual")
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/transcoding/automation/status", response_model=TranscodeAutomationRunRead | None)
+def transcoding_automation_status(
+    db: Session = Depends(get_db_session),
+) -> TranscodeAutomationRunRead | None:
+    run = db.scalar(
+        select(TranscodeAutomationRun)
+        .where(TranscodeAutomationRun.status.in_(["queued", "running"]))
+        .order_by(TranscodeAutomationRun.created_at.desc(), TranscodeAutomationRun.id.desc())
+    )
+    if run is None:
+        run = db.scalar(
+            select(TranscodeAutomationRun)
+            .order_by(TranscodeAutomationRun.created_at.desc(), TranscodeAutomationRun.id.desc())
+        )
+    return serialize_transcode_automation_run(run) if run else None
+
+
+@router.get("/transcoding/automation/runs", response_model=list[TranscodeAutomationRunRead])
+def transcoding_automation_runs(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db_session),
+) -> list[TranscodeAutomationRunRead]:
+    return list_transcode_automation_runs(db, limit=limit)
+
+
+@router.get("/transcoding/automation/{run_id}", response_model=TranscodeAutomationRunRead)
+def transcoding_automation_detail(
+    run_id: int,
+    db: Session = Depends(get_db_session),
+) -> TranscodeAutomationRunRead:
+    try:
+        return serialize_transcode_automation_run(get_transcode_automation_run(db, run_id))
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.post("/transcoding/automation/{run_id}/cancel", response_model=TranscodeAutomationRunRead)
+def transcoding_automation_cancel(
+    run_id: int,
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> TranscodeAutomationRunRead:
+    try:
+        return runtime.cancel_transcode_automation(run_id)
+    except TranscodeAutomationError as exc:
+        raise _transcode_automation_error(exc) from exc
+
+
+@router.get("/files/{file_id}/transcode", response_model=FileTranscodeRead)
+def file_transcode_detail(
+    file_id: int,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> FileTranscodeRead:
+    media_file = db.get(MediaFile, file_id)
+    if media_file is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    if not media_file.video_streams:
+        raise HTTPException(status_code=409, detail="Transcoding requires a regular video stream")
+    return get_file_transcode(db, settings, media_file)
+
+
+@router.post("/files/{file_id}/transcode/validate", response_model=TranscodeValidationRead)
+def file_transcode_validate(
+    file_id: int,
+    payload: TranscodePlan,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> TranscodeValidationRead:
+    media_file = db.get(MediaFile, file_id)
+    if media_file is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    try:
+        if payload.target_mode != "local":
+            if not federation_enabled(db, settings):
+                raise FederationError("Federation is not enabled on this installation", status_code=409)
+            selection = choose_worker_for_media_file(db, settings, media_file, payload)
+            selected_plan = selection.resolved_plan or payload
+            if not selection.candidate.is_local:
+                remote_capabilities = TranscodeCapabilitiesRead.model_validate(selection.candidate.capabilities)
+                return validate_transcode_plan(
+                    db,
+                    settings,
+                    media_file,
+                    selected_plan,
+                    capabilities_override=remote_capabilities,
+                    device_id_override=selected_plan.target_device_id,
+                )
+            return validate_transcode_plan(db, settings, media_file, selected_plan)
+        return validate_transcode_plan(db, settings, media_file, payload)
+    except FederationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/files/{file_id}/transcode", response_model=TranscodeJobRead, status_code=202)
+def file_transcode_start(
+    file_id: int,
+    payload: TranscodePlan,
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    db: Session = Depends(get_db_session),
+) -> TranscodeJobRead:
+    try:
+        job, _validation = runtime.request_transcode(file_id, payload)
+    except TranscodeValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.validation.model_dump(mode="json")) from exc
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "Media file not found" else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    except FederationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return serialize_transcode_job(job, db.get(MediaFile, file_id))
+
+
+@router.get("/transcode-jobs/active", response_model=TranscodeJobPageRead)
+def transcode_jobs_active(db: Session = Depends(get_db_session)) -> TranscodeJobPageRead:
+    return list_transcode_jobs(db, active_only=True, limit=200)
+
+
+@router.get("/transcode-jobs", response_model=TranscodeJobPageRead)
+def transcode_jobs_list(
+    library_id: int | None = Query(default=None, ge=1),
+    status: JobStatus | None = Query(default=None),
+    started_after: datetime | None = Query(default=None),
+    started_before: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db_session),
+) -> TranscodeJobPageRead:
+    return list_transcode_jobs(
+        db,
+        library_id=library_id,
+        status=status,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/transcode-jobs/{job_id}", response_model=TranscodeJobRead)
+def transcode_job_detail(
+    job_id: int,
+    db: Session = Depends(get_db_session),
+) -> TranscodeJobRead:
+    job = db.get(TranscodeJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Transcoding job not found")
+    return serialize_transcode_job(job, db.get(MediaFile, job.source_file_id) if job.source_file_id else None)
+
+
+@router.delete("/transcode-jobs/{job_id}", status_code=204)
+def transcode_job_delete(job_id: int, db: Session = Depends(get_db_session)) -> Response:
+    try:
+        delete_transcode_job(db, job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@router.post("/transcode-jobs/{job_id}/cancel", response_model=TranscodeJobRead)
+def transcode_job_cancel(
+    job_id: int,
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+    db: Session = Depends(get_db_session),
+) -> TranscodeJobRead:
+    try:
+        job = runtime.cancel_transcode(job_id)
+        return serialize_transcode_job(job, db.get(MediaFile, job.source_file_id) if job.source_file_id else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/files/{file_id}", response_model=MediaFileDetail)
 def file_detail(
     file_id: int,
@@ -2857,6 +3371,9 @@ def file_connector_sources(
             original_title=item.original_title,
             series_name=item.series_name,
             season_name=item.season_name,
+            season_number=item.parent_index_number,
+            episode_number=item.index_number,
+            episode_title=item.title if item.item_type.lower() == "episode" else None,
             date_created=item.date_created,
             premiere_date=item.premiere_date,
             production_year=item.production_year,
@@ -3491,6 +4008,28 @@ def file_cover(
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return StreamingResponse(io.BytesIO(content), media_type="image/png", headers=headers)
+
+
+@router.get("/transcode-variants/{variant_id}/media")
+def transcode_variant_media(
+    variant_id: int,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> FileResponse:
+    variant = db.get(TranscodeVariant, variant_id)
+    if variant is None or variant.analysis_status not in {"external", "ready", "awaiting_analysis"}:
+        raise HTTPException(status_code=404, detail="Completed transcoding variant not found")
+    path = Path(variant.output_path_snapshot).resolve()
+    if variant.output_mode == "transcode_output":
+        root = Path(settings.transcode_output_root or settings.config_path / "Transcode_Output").resolve()
+    else:
+        library_root = db.get(LibraryRoot, variant.library_root_id) if variant.library_root_id else None
+        if library_root is None:
+            raise HTTPException(status_code=404, detail="Variant library root not found")
+        root = Path(library_root.path).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Variant media not found")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/files/{file_id}/media")

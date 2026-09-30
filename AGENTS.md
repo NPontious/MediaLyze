@@ -65,6 +65,7 @@ MediaLyze currently implements:
 * English, German, Spanish, and Ukrainian UI translations
 * Docker-first deployment and GHCR image publishing
 * native desktop packaging for Windows, macOS, and Linux with a local backend sidecar
+* safe FFmpeg transcoding for regular video files with editable structured plans, real hardware capability probes, explicit hardware-required/CPU-only execution, separate output policy, linked analyzed variants, Wipe comparison, job history, cancellation, and independent retention
 
 ## 2.2 Explicit Non-Goals
 
@@ -73,7 +74,7 @@ MediaLyze does **not** currently:
 * play media
 * scrape movie or TV metadata
 * connect to external metadata APIs
-* modify, rename, or transcode media files
+* modify or rename media files implicitly; explicit transcoding may write to `Transcode_Output`, create a same-directory linked variant, or replace the original only after server-side confirmation and without a byte-for-byte backup
 * manage authentication internally
 
 ## 2.3 Backlog / Not Yet Implemented
@@ -192,6 +193,7 @@ Actual implementation:
 * jobs are queued and deduplicated per library
 * execution is backed by a `ThreadPoolExecutor`
 * file discovery stays single-threaded, while worker threads are used for per-file analysis and duplicate processing only
+* scans defer stored raw ffprobe payloads and release persisted per-file analysis data during processing; ffprobe has a 120-second timeout and bounded output (16 MiB metadata, 1 MiB diagnostics), with limit failures recorded per file
 * APScheduler manages scheduled work
 * watchdog observers feed filesystem-triggered scans
 * active jobs can be canceled globally or per library
@@ -199,6 +201,9 @@ Actual implementation:
 * startup no longer auto-queues quality-recompute backfill jobs; recomputation is queued only from explicit follow-up actions such as library profile updates
 * old `queued` and `running` jobs from previous processes are canceled during startup instead of being resumed
 * startup also runs one history-retention maintenance pass, APScheduler registers a daily history-retention maintenance job, and deferred SQLite compaction is retried automatically once scans are idle
+* transcoding jobs use a dedicated executor with separate CPU-budget and per-device GPU slots; scan discovery and analysis workers remain independent
+* hardware-required transcoding never silently falls back to CPU; encoders and devices are exposed only after a real FFmpeg one-frame probe
+* same-directory transcoding variants are flagged as non-primary and excluded from library lists, statistics, duplicates, exports, telemetry/storage aggregates, and later scans; separate `Transcode_Output` variants remain external to primary library counts
 * connector sync and binding-recompute jobs are persisted and single-flight per connection; different connections run concurrently on a dedicated connector executor without occupying scan or maintenance workers
 * connector sync uses connection/run-scoped staging and an atomic successful promote, while cancellation or failure preserves the last live snapshot; queued jobs are claimed atomically
 * startup cancels orphaned connector jobs and removes abandoned connector staging rows; scan changes compare pre/post root locators so additions, modifications, deletions, ignores, and renames trigger targeted connector rematching across connections
@@ -553,6 +558,206 @@ UI catalog maintenance rule:
 * catalog examples should use exported shared components where possible; for non-exported page-local patterns, reproduce the real DOM shape and classes closely and keep catalog-specific CSS limited to layout/annotation only
 * the catalog should remain useful for comparing light and dark theme behavior, related variants, and source locations so future design consolidation work can rely on it
 
+Frontend design consistency and density:
+
+* `frontend/globals.css` is the source for global visual tokens and base primitives; `frontend/src/medialyze.css` contains feature and layout styling; shared React patterns live under `frontend/src/components/`. Inspect these sources, `/ui-elements`, and the nearest current page before introducing a new visual treatment.
+* Existing components, class combinations, CSS variables, spacing, typography, control sizes, surface hierarchy, iconography, and interaction patterns are the default. Reuse them first. A new component or selector needs a concrete gap that an existing pattern cannot cover; do not create one-off card, badge, button, spacing, modal, or form styles only to make a new screen look different.
+* New pages and features must match the visual density of adjacent current pages. Prefer content-driven layouts, compact vertical rhythm, and clear grouping. Avoid oversized headings or controls, unnecessary empty padding, duplicate nested surfaces, arbitrary margins or minimum heights, and full-width blocks unless the content or responsive behavior requires them.
+* CSS presence alone is not evidence that a pattern is current. When conflicting visual variants exist, use the latest accepted implementation and the `/ui-elements` catalog as the reference; if that is ambiguous, identify the conflict before choosing a variant.
+* If no suitable current pattern exists or the request intentionally changes the design language, state which existing patterns were considered and present a concise proposal before implementing a large new visual system. Do not silently invent a competing design language.
+* Treat `/ui-elements` as a living design reference, not merely documentation. Before implementation compare the intended pattern in both light and dark themes and at narrow widths; after implementation update the representative example and its source reference. Keep the catalog free of known legacy variants unless they are intentionally supported.
+* Every meaningful visual state must be designed consistently: default, hover, focus-visible, active or selected, disabled, loading, error, empty, long content, light and dark theme, and mobile or narrow widths as applicable. Use semantic interactive elements and preserve keyboard access, visible focus, readable contrast, and usable touch targets.
+* For materially visual changes, run the relevant frontend checks and build, and inspect the affected route or `/ui-elements` when the environment allows it at light, dark, and narrow widths. If visual inspection is unavailable, state that explicitly and do not claim visual verification.
+* When the user rejects a design or prefers a replacement, perform a design-impact audit: search all frontend components, pages, catalog entries, and CSS for the old selectors, class combinations, tokens, and distinctive declarations. Report the affected locations, separate intentional exceptions from true legacy uses, and explicitly propose whether the migration should cover them. Do not silently expand a feature change into an unrelated migration.
+* If the user approves a broader migration, update all affected usages in the same change set where practical, update `/ui-elements` and relevant tests, and remove obsolete selectors, variables, keyframes, and overrides. Before finishing, use `rg` to verify that no active references to the old pattern remain; if any must remain, document why and where.
+
+Frontend design decision history:
+
+* Repository-wide frontend design decisions are recorded in this section of `AGENTS.md` until a dedicated history document is introduced.
+* Record a decision when a design becomes canonical, replaces or rejects a product-wide pattern, or leaves intentional exceptions after a migration. Keep entries dated and concise; do not record every local spacing tweak.
+* Each entry should include the decision, rationale, canonical implementation and catalog references, deprecated selectors or patterns, migration scope, status, and remaining intentional exceptions.
+* Update the entry when the canonical pattern or migration status changes. The history must not keep legacy CSS alive; after migration, retain only identifiers needed to explain intentional exceptions.
+
+### 2026-09-30 — Overlay transcoding metrics on the speed graph
+
+* Decision: progress, time remaining, and speed share the 30px graph area instead of adding a separate metrics row. The phase overlays the progress bar in the same small muted type as metric labels, with a white backdrop that interrupts the thin 6px bar behind the centered label, keeping the summary near the density of adjacent target columns.
+* Canonical references: `TranscodeProgressSummary`, `.transcoding-progress-summary`, and the real component in `/ui-elements` Transcoding job center. Migration: Transcoding and File Detail share the compact layout; the stacked metrics/graph pattern is retired. Status: active.
+
+### 2026-09-30 — Share stream language formatting in Metadata settings
+
+* Decision: File Detail and transcoding presets place one language-code format control in Metadata settings for video, audio, and subtitle streams. New settings use Container default; source-container presets fall back to the actual container default when their selected format is unsupported. Previously stored mixed stream formats remain visible until explicitly replaced.
+* Canonical references: `TranscodingPanel`, `TranscodePresetsRulesPanel`, `LanguageCodeFormatField`, `.transcode-metadata-option-list`, and the shared metadata examples in `/ui-elements`.
+* Metadata options use contiguous 36px rows with centered content, help icons directly beside option labels, and an inline language-format dropdown. Removed the per-stream `.transcode-stream-language-format-row` and the preset editor's misplaced filename-language control. Filename and folder formatting controls remain independent in their own sections. Migration: both editors and catalog; status: active.
+
+### 2026-09-25 — Place filename source as an editable token
+
+* Decision: new filename templates include `{sourceName}` explicitly; users may move or remove it. Existing stored templates without this token retain their implicit source name until edited. `{movieTitle}` uses matched connector film metadata, and unavailable tokens remain visible but inactive.
+* Canonical references: `TranscodingPanel`, `render_output_filename`, the formatting preset model, and `/ui-elements` filename token groups.
+* Token groups identify MediaLyze and the matching connector provider. Filename and foldername language code formats live beside their respective cleanup controls and are independent.
+* Migration: filename and foldername formatting UI, plan and preset schemas, frontend preview, backend rendering, and catalog fixture. Status: active.
+
+### 2026-09-25 — Align page headings and profile hover surfaces
+
+* Decision: Dashboard, Compare files, Storage Map, and Transcoding share the responsive heading size, 10px icon gap, and 24px accent icon. Compare files has no introductory subtitle.
+* Canonical references: `.page-heading-row`, `.page-heading-icon`, the grouped Storage Map/Transcoding heading selectors, and `/ui-elements` heading examples.
+* Profile catalogs highlight the entire header row on hover or keyboard focus, including quick actions, through `.compatibility-profile-catalog-list`; expanded details keep their own surface.
+* Migration: the four named page headings and shared profile catalogs. Removed `.file-compare-title-block`; other page-specific headings remain intentional. Status: active.
+
+### 2026-09-25 — Fill favorite and default icons when active
+
+* Decision: favorite and default quick actions show their active state by filling the Sparkles or Star symbol. The Settings and File Detail navigation toggle uses the same 18px icon size as navigation items.
+* Rationale: an active symbol stays clear without adding an active button surface or emphasizing the whole row.
+* Canonical references: `ProfileFavoriteButton`, `SparklesIcon`, `PanelLeftToggleIcon`, the shared `compatibility-profile-quick-action` CSS, and the corresponding `/ui-elements` fixtures.
+* Deprecated pattern: active favorite/default button backgrounds and favorite endpoint row highlighting.
+* Migration: compatibility favorites, default streams, formatting presets, federation endpoints, and Settings/File Detail navigation examples; existing active Star icons were already filled. No intentional exceptions.
+* Status: active.
+
+### 2026-09-25 — Use flat close actions in dialogs
+
+* Decision: modal dialog headers use a borderless icon button with a 22px X; hover and keyboard focus remain visible. The Create library dialog keeps name and media type side by side on wide screens and stacks them on narrow screens.
+* Rationale: a single compact close treatment avoids outlined controls competing with dialog titles.
+* Canonical references: `.settings-create-library-dialog-header > button.secondary.icon-only-button` and `.release-notes-close` in `frontend/src/medialyze.css`, plus the dialog fixtures in `/ui-elements`.
+* Deprecated pattern: outlined dialog close buttons with a smaller X.
+* Migration: library, connector, formatting-preset, and release-notes dialogs. No intentional modal exceptions.
+* Status: active.
+
+### 2026-09-03 — Reuse accepted UI patterns and retire rejected variants
+
+* Decision: new frontend areas reuse current shared components, visual tokens, neighboring page patterns, and `/ui-elements`; legacy variants are not default choices.
+* Rationale: prevent stale designs, excessive whitespace, and parallel CSS systems.
+* Canonical references: `frontend/globals.css`, `frontend/src/medialyze.css`, `frontend/src/components/`, and `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: when a variant is rejected, audit all usages, propose the migration scope, then remove obsolete selectors and related CSS after approval.
+* Status: active.
+
+### 2026-09-07 — Keep transcoding guidance on the active tab
+
+* Decision: the Transcoding runtime workspace uses one context-sensitive tooltip beside the compact tabs; the Accelerators tab owns the capability-matrix metadata, while the matrix itself has no redundant inner heading.
+* Rationale: keep related guidance discoverable without repeating labels or adding a second visual header inside the shared profile workspace.
+* Canonical references: `frontend/src/components/TranscodeProfilesRulesPanel.tsx`, `frontend/src/components/TranscodingSettingsPanel.tsx`, and the `Compact transcoding automation tabs` catalog entry in `frontend/src/pages/UiElementsPage.tsx`.
+* Deprecated selectors: `transcode-capability-section-header`, `transcode-capability-section-heading`, `transcode-capability-tested-at`, `transcode-matrix-meta-trigger`, and `transcode-matrix-meta-tooltip`.
+* Migration: remove those selectors and update the affected matrix catalog fixture; retain `.transcode-matrix-meta` only for the Accelerator tooltip content.
+* Status: active.
+
+### 2026-09-08 — Manage federation members in the shared transcode workspace
+
+* Decision: trusted federation members use a dedicated `Members` tab beside `Accelerators` in the shared Transcoding automation workspace, with the same expandable list and borderless quick actions as profiles and rules. The compact automation tabs are labeled `Profiles`, `Rules`, `Accelerators`, and `Members`. Federation connection controls use the compact rectangular `settings-panel-header-action` pattern, with animated connect/telescope icons; copy actions use the shared animated `CopyIcon`, and tooltip bubbles fit their content. Successful copy actions stay silent and only clipboard errors become panel feedback. The federation enable control reuses the shared `toggle-switch` pattern. Both pairing actions are labeled `Connect`, and local endpoints use a flat responsive list with borderless copy actions instead of redundant type labels. Discovered candidates collect their peer pairing code in an inline field beside each Connect action, with missing-code feedback kept local to that field; the manual fallback uses the same grouped code/Connect control and vertical divider, and its address input shares the pairing-code segment styling while starting at the shared Federation name column after the plus marker. The manual plus marker stays outside the grouped control and is vertically centered against the shared row. The first-position invalid pairing-code segment follows the grouped control's inner radius so animated red feedback remains visible through the outer corner. Member, discovered-peer, and manual rows share a 38px outer shell with a 32px inner content height. Expanded member details show only currently available accelerators from the member capability payload, and each accelerator links to its matching entry in the `Accelerators` matrix; endpoint and connection-status fields are intentionally omitted because the status marker and tooltip already communicate reachability. The Federation heading stays concise, Found in Network exposes a borderless immediate refresh action, and the automation workspace uses a slightly larger separation above the tabs with a tighter gap below them.
+* Rationale: keep the Federation panel focused on pairing and local policy while giving member status, actions, and details one consistent workspace treatment.
+* Canonical references: `frontend/src/components/TranscodeProfilesRulesPanel.tsx`, `frontend/src/components/TranscodingSettingsPanel.tsx`, `frontend/src/components/TranscodeFederationPanel.tsx`, `frontend/src/lib/transcoding-matrix-state.ts`, `frontend/src/components/AnimatedConnectIcon.tsx`, `frontend/src/components/AnimatedTelescopeIcon.tsx`, `frontend/src/components/CopyIcon.tsx`, `frontend/src/components/TooltipTrigger.tsx`, and the `Federation members tab` catalog entry in `frontend/src/pages/UiElementsPage.tsx`.
+* Deprecated selectors: `transcode-federation-members`, `transcode-federation-member`, `transcode-federation-member-main`, `transcode-federation-member-details`, `transcode-federation-member-actions`, and the removed member-detail `compatibility-profile-form-grid` endpoint/status variant.
+* Migration: remove the standalone member accordion from the Federation panel, keep member actions/state connected through `TranscodingSettingsPanel`, and use capability-backed matrix links for the expanded member detail.
+* Status: active.
+
+### 2026-09-09 — Exchange and adaptively rank all Federation endpoints
+
+* Decision: paired installations exchange their configured and locally resolved HTTP(S) endpoints, retain the union as ordered fallbacks, and run authenticated latency/upload/download probes on pairing, startup, newly advertised routes, failed-route recovery, or an explicit manual network test. Healthy routes are not benchmarked on a fixed timer; failed routes use exponential recovery backoff. Future requests prefer the route with the lowest combined latency and representative transfer time, while retrying the remaining routes when the preferred route fails.
+* Rationale: a hostname, interface address, port mapping, or VPN route can disappear independently; direct federation should recover without manual re-pairing, avoid needless recurring benchmarks, and use the fastest currently reachable path.
+* Canonical references: `backend/app/services/transcode_federation.py`, `backend/app/api/federation_routes.py`, `TranscodeFederationMember.endpoint_metrics`, and `network/probe`.
+* Migration: add endpoint preference/metric persistence and SQLite additive columns; keep the existing authenticated heartbeat as the compatibility path for peers that do not expose the optional probe route; expose the manual network test beside Test Hardware only when Federation is active with a connected member.
+* Status: active.
+
+### 2026-09-09 — Use compact settings controls as the global form baseline
+
+* Decision: ordinary frontend inputs, selects, and textareas use the compact `settings-choice-input` treatment; the global fallback matches its 36px/9px/5px 12px metrics and excludes checkboxes, range controls, and hidden inputs.
+* Rationale: prevent the legacy oversized 12px 14px control reset from returning when a normal field is added without a local class.
+* Canonical references: `frontend/globals.css`, `.settings-choice-input` in `frontend/src/medialyze.css`, and the representative fixtures in `/ui-elements`.
+* Deprecated selectors: the unqualified `input, select, textarea` baseline and its 12px 14px padding / 12px radius are removed; specialized search, comparison, quality-picker, JSON-editor, checkbox, and range controls remain intentional exceptions.
+* Migration: all ordinary controls and catalog fixtures were marked with `settings-choice-input`; a global-style regression test guards the compact fallback and the absence of the legacy reset.
+* Status: active.
+
+### 2026-09-09 — Keep sliding selection pills mounted and measured
+
+* Decision: shared `SlidingTogglePill` controls are rendered as the stable first child of their toggle group, remain mounted while the selected view changes, and stay hidden until their first position is measured.
+* Rationale: selection feedback should animate from the current option to the newly selected option without an initial flash from the group's left edge.
+* Canonical references: `frontend/src/components/SlidingTogglePill.tsx`, the Transcoding automation workspace in `frontend/src/components/TranscodeProfilesRulesPanel.tsx`, and its `Compact transcoding automation tabs` catalog fixture in `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: Profiles, Rules, Accelerators, and Members now share the same tab/list DOM depth so the pill is reconciled across their conditional content; unrelated toggle groups continue using the shared component.
+* Status: active for unrelated toggle groups; superseded for the Transcoding automation workspace by the underline navigation below.
+
+### 2026-09-09 — Use compact underline navigation for transcode automation
+
+* Decision: the Transcoding automation workspace uses a compact horizontal text navigator with a stable minimum row height, a soft per-tab accent fade, and a per-tab orange underline for Profiles, Rules, Accelerators, and Members; the workspace no longer uses the shared sliding selection pill.
+* Rationale: keep the four destinations visible while removing the visually heavy capsule, the extra line directly under the tabs, and the impression that selection always enters from the left; the stable height, retained content separator, and softened active edge preserve the dense settings rhythm across all four views.
+* Canonical references: `frontend/src/components/TranscodeProfilesRulesPanel.tsx`, the transcode automation tab styles in `frontend/src/medialyze.css`, and the `Compact transcoding automation tabs` catalog entry in `frontend/src/pages/UiElementsPage.tsx`.
+* Deprecated selectors: `transcode-automation` usage of `library-history-range-toggle`, `library-history-range-pill`, and `library-history-range-button`; those shared selectors remain intentional for unrelated toggle groups.
+* Migration: update the Profiles, Rules, Accelerators, and Members workspace plus all matching `/ui-elements` fixtures; keep `SlidingTogglePill` for existing non-transcoding toggle groups.
+* Status: active.
+
+### 2026-09-09 — Use theme-aware surface tokens for nested UI areas
+
+* Decision: nested cards, catalog fixtures, ordinary UI surfaces, borders, and muted text use the shared semantic tokens `--surface`, `--surface-subtle`, `--border`, and `--text-muted`; dark mode must not inherit light gray or white surface fallbacks.
+* Rationale: keep existing and future frontend areas on the active dark palette instead of requiring a one-off dark override for every new card or input.
+* Canonical references: `frontend/globals.css`, `--nested-surface` in `frontend/src/medialyze.css`, and the Theme tokens fixture in `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: the UI catalog variant/token cards, delete-library summary, compatibility favorites, metadata search controls, file-detail download action, and Jellyfin library picker now use theme-aware surfaces; the generic semantic aliases cover connector status, external-source, library-status, and file-detail controls.
+* Status: active.
+
+### 2026-09-09 — Use transparent tracks for application scrollbars
+
+* Decision: application scrollbars use transparent tracks and theme-aware thin pill thumbs; component-specific scrollbar variants may adjust size but must preserve the transparent track.
+* Rationale: keep scroll containers from introducing light or gray rails in dark mode and align scrolling affordances with the compact control language.
+* Canonical references: the global scrollbar baseline in `frontend/globals.css`, the `Scan summary table` catalog fixture in `frontend/src/pages/UiElementsPage.tsx`, and existing scrollbar overrides in `frontend/src/medialyze.css`.
+* Migration: the global baseline now covers the scan summary table and every native scroll container; existing dialog, picker, and transcoding scrollbar variants retain transparent tracks.
+* Status: active.
+
+### 2026-09-09 — Use one canonical select control
+
+* Decision: ordinary `<select class="settings-choice-input">` controls use the same theme-aware 18px chevron, `right 12px` placement, and `8px 40px 8px 12px` padding as the accepted `Ideal` quality-profile dropdown; native option popups inherit the active light/dark color scheme and surface/text tokens.
+* Rationale: connector mappings and other standard selects must not fall back to a native edge-hugging arrow or accumulate page-specific arrow implementations, and their opened menus must remain readable in dark mode.
+* Canonical references: `select.settings-choice-input` in `frontend/src/medialyze.css`, the `--select-chevron` and `color-scheme` tokens in `frontend/globals.css`, and the quality-profile plus connector-mapping fixtures in `frontend/src/pages/UiElementsPage.tsx`.
+* Deprecated selectors: the old settings-main-column, quality-boundary, compatibility-form, library-title, and transcoding select-chevron overrides, plus `storage-map-select-wrap` and `transcoding-filter-field > svg`.
+* Migration: all ordinary selects now inherit the shared rule and theme-aware native popup colors; Storage Map and Transcoding filters no longer render separate ChevronDown siblings. The comparison-chart toolbar and integrated quality-profile picker remain intentional compact controls, but reuse the shared chevron token.
+* Status: active.
+
+### 2026-09-09 — Use compact rectangular action buttons as the ordinary baseline
+
+* Decision: ordinary text action buttons use the compact rectangular global `button` baseline with 32px height, 9px corners, and compact horizontal padding; `.small` actions use the 30px variant. This is the canonical treatment for primary, secondary, ghost, disabled, scan, connector bulk, and settings-table actions.
+* Rationale: the former 999px / 12px 18px fallback made ordinary actions look oversized and pill-shaped, while the accepted Manual scan, Select all, and Edit patterns already established a denser rectangular control language.
+* Canonical references: the global `button` and `button.small` rules in `frontend/globals.css`, the round `.tooltip-trigger` primitive in `frontend/src/medialyze.css`, `.library-scan-button.small`, `.jellyfin-user-bulk-button`, `.settings-panel-header-action.small`, and the Global button variants, tooltip, library settings, analyzed users, and Settings table fixtures in `frontend/src/pages/UiElementsPage.tsx`.
+* Intentional exceptions: navigation and selection tabs, status badges, scrollbar thumbs, progress tracks, round tooltip/help triggers, icon-only controls, and other explicitly named pill controls retain their local geometry when the capsule communicates grouping or state.
+* Migration: the global fallback and catalog variants now use the compact baseline; existing marked production examples inherit it without one-off geometry overrides. New ordinary buttons must not reintroduce the old oversized pill fallback.
+* Status: active.
+
+### 2026-09-09 — Distinguish icon-button surfaces and motion
+
+* Decision: new icon-only actions use the shared `icon-button` geometry plus an explicit `icon-button-bordered` or `icon-button-borderless` surface variant; `icon-button-static` and `icon-button-animated` document whether the Lucide symbol is static or uses an animated Lucide-derived variant. Bordered controls use a 32px rectangular hit area, 9px corners, balanced icon spacing, and theme-aware surface tokens.
+* Rationale: icon actions should not inherit ambiguous secondary fills, uneven padding, or light-mode shadows in dark mode, while the catalog must make the border and motion choices easy to compare.
+* Canonical references: the icon-button primitives in `frontend/src/medialyze.css`, the `Page-specific icon buttons` catalog fixture in `frontend/src/pages/UiElementsPage.tsx`, the bordered Quick scan action in `frontend/src/pages/LibraryDetailPage.tsx`, and the theme-aware Download cover action in the same stylesheet.
+* Deprecated selectors: bare `.icon-button` without a surface modifier for new icon-only actions; bare `.icon-only-button` remains a compatibility class for context-specific legacy controls during migration.
+* Migration: the catalog now shows bordered static Copy, borderless static Open/Compare, and bordered animated Quick scan variants; ordinary text actions such as Download cover remain text buttons and use the shared theme-aware surface treatment.
+* Intentional exceptions: navigation, tooltip/help, accordion, timeline, and compact row controls may retain their local geometry when their surrounding interaction requires a different hit area or borderless grouping.
+* Status: active.
+
+### 2026-09-09 — Use the Transcoding workspace pattern for quality profiles
+
+* Decision: Quality profiles use the same compact media-type tab row and expandable profile list as the Transcoding automation workspace; each profile contains its own expandable scoring sections such as Resolution, rendered directly in the profile surface without a redundant nested panel. Profile metadata stays inline beside the name on wide layouts and may wrap only when the available width requires it.
+* Rationale: keep profile management consistent across settings while making multiple profiles visible and reducing the need for a separate picker/editor mode.
+* Canonical references: `renderQualityProfilesPanel()` in `frontend/src/pages/LibrariesPage.tsx`, the shared compatibility-list and transcode-tab styles in `frontend/src/medialyze.css`, and the `Quality profiles list and metric accordions` catalog entry in `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: replace the integrated profile select with the compact tab/list structure, preserve profile actions and API behavior, and retain metric-level editing inside the expanded profile row.
+* Status: active.
+
+### 2026-09-09 — Keep compatibility catalog guidance in the panel heading
+
+* Decision: the Hardware & software profiles development note is exposed through the shared `TooltipTrigger` beside the panel heading instead of occupying a persistent paragraph above the profile tabs.
+* Rationale: keep the catalog compact while preserving the explanation on demand through hover, focus, and keyboard activation.
+* Canonical references: `frontend/src/components/CompatibilityProfilesPanel.tsx`, `frontend/src/components/TooltipTrigger.tsx`, and the `Compact combination profile tabs` catalog fixture in `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: remove the standalone `.compatibility-profile-development-note` surface and retain the localized note text plus a localized accessible label in the heading tooltip.
+* Status: active.
+
+### 2026-09-09 — Reuse the Quality profiles surface for Hardware & Software Profiles
+
+* Decision: Hardware & Software Profiles use the shared compact underline tab navigation, one bordered profile-list surface, and the same expandable row rhythm as Quality profiles; hardware, software, and combination profiles remain searchable and keep their existing quick actions and editors.
+* Rationale: keep the two profile catalogs visually consistent while preserving the larger hardware/software catalog's search and profile-specific editing behavior.
+* Canonical references: `frontend/src/components/CompatibilityProfilesPanel.tsx`, the shared `transcode-automation-tab-*` and compatibility-list styles in `frontend/src/medialyze.css`, and the `Compatibility profile list` / `Compact combination profile tabs` catalog fixtures in `frontend/src/pages/UiElementsPage.tsx`.
+* Deprecated selectors for this page: `.library-history-range-toggle`, `.library-history-range-button`, and `.library-history-range-pill` in `CompatibilityProfilesPanel.tsx` and its catalog fixture; the same selectors remain intentional in connector mapping, playback-history, and Transcoding job-center controls that still use the sliding selection pattern.
+* Migration: replace the compatibility catalog's sliding pill tabs and separate nested list surfaces with semantic underline tabs and one unified list surface; preserve profile search, favorites, editing, cloning, deleting, and combination creation behavior. Do not broaden this migration to the separately audited legacy controls without a dedicated design decision.
+* Status: active.
+
+### 2026-09-09 — Use contextual fuzzy search for Settings navigation
+
+* Decision: the Settings search indexes every settings page plus supported nested tabs, ranks localized labels and aliases with small typo tolerance, opens the best confident result directly, and keeps the matched control highlighted while the search remains active.
+* Rationale: users should be able to reach a setting by concept or nearby wording without first knowing which page or tab contains it.
+* Canonical references: `frontend/src/lib/settings-search.ts`, `frontend/src/pages/LibrariesPage.tsx`, the compatibility/transcoding tab components, and the Settings navigation fixture in `frontend/src/pages/UiElementsPage.tsx`.
+* Migration: the existing main-page navigation filter remains as the compact fallback; nested search results use the shared Settings navigation result surface and `data-settings-search-target` focus contract.
+* Status: active.
+
 ## 8.3 Internationalization
 
 Current translation state:
@@ -788,6 +993,9 @@ Current logical schema includes:
 * `external_subtitles`
 * `library_history`
 * `scan_jobs`
+* `transcode_variant_groups`
+* `transcode_variants`
+* `transcode_jobs`
 * `connector_connections`
 * `connector_credentials`
 * `connector_libraries`
@@ -921,6 +1129,22 @@ Current repository layout includes:
 * `docker/docker-compose.yaml`
 * `docker/env.example`
 * `docker/entrypoint.sh`
+
+Hardware portability invariant:
+
+* `docker/docker-compose.yaml` is the one CPU-safe Compose definition for all
+  Docker hosts. The standard `start-medialyze.sh`/`start-medialyze.ps1`
+  launchers add NVIDIA (`gpus: all`) and Linux DRM (`/dev/dri` plus the
+  required numeric groups) access automatically when the host exposes it;
+  vendor-specific Compose forks or hand-edited GPU overrides are not part of
+  the supported installation path.
+* Desktop installers bundle the platform FFmpeg build with the native
+  encoder families available for that target OS and probe every exposed
+  adapter at runtime. Host drivers and permissions remain prerequisites, but
+  users do not select a vendor-specific build or installer. Native Windows or
+  macOS APIs are desktop-only unless a container runtime explicitly exposes a
+  compatible Linux device; Linux Docker uses the same Compose/launcher path
+  for NVIDIA, Intel, and AMD DRM media engines.
 
 ## 12.2 Runtime Paths
 
@@ -1092,6 +1316,9 @@ When updating documentation, code, or behavior in this repository:
 * verify claims against code, tests, workflows, or GitHub release metadata
 * do not document unverified scale claims as benchmarked facts; treat large-library support as a design goal unless there is measured evidence
 * prefer concrete current file paths and interfaces over speculative future structure
+* for frontend work, apply the design consistency, density, state, and design-impact-audit rules in section 8.2 before finishing the implementation
+* keep a visual pattern's source of truth singular: when a new accepted variant replaces an old one, migrate or explicitly account for every remaining usage instead of allowing both variants to become default choices
+* when a frontend design decision becomes product-wide, update the decision history in section 8.2 with its canonical references and migration status
 * if a larger change affects architecture, runtime behavior, public interfaces, release flow, repository structure, or other information relevant for future development, update `AGENTS.md` in the same work
 * if a change affects supported library modes, scan behavior, media/subtitle extensions, parsed metadata fields, codec/HDR/subtitle classification logic, or unsupported-input handling, update `docs/supported_metadata.md` in the same work so the support matrix stays current
 * if a change is relevant for the next release, add it to `CHANGELOG.md` under `vUnreleased`

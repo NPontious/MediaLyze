@@ -1,0 +1,497 @@
+import "../i18n";
+
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  api,
+  type TranscodeFederation,
+  type TranscodePreset,
+  type TranscodePresetDefinition,
+} from "../lib/api";
+import { TranscodePresetsRulesPanel } from "./TranscodePresetsRulesPanel";
+import { releaseVisibility } from "../lib/release-visibility";
+
+const definition: TranscodePresetDefinition = {
+  version: 1,
+  container: "source",
+  video_rules: [],
+  audio_rules: [],
+  subtitle_rules: [],
+  external_subtitle_rules: [],
+  default_video_action: "copy",
+  default_audio_action: "copy",
+  default_subtitle_action: "copy",
+  default_external_subtitle_action: "remove",
+  dynamic_range: "preserve",
+  chapters: "keep",
+  metadata: "keep",
+  cover: "keep",
+  attachments: "keep",
+  filename_template: "[{resolution}]",
+  filename_template_override: false,
+  include_subtitle_languages: false,
+  execution_mode: "inherit",
+};
+
+function preset(overrides: Partial<TranscodePreset> = {}): TranscodePreset {
+  return {
+    id: 1,
+    name: "Compatibility",
+    description: "Copy compatible streams.",
+    version: 1,
+    is_builtin: true,
+    builtin_key: "compatibility",
+    definition,
+    used_by_rule_count: 0,
+    created_at: "2026-09-07T09:00:00Z",
+    updated_at: "2026-09-07T09:00:00Z",
+    ...overrides,
+  };
+}
+
+const federationFixture: TranscodeFederation = {
+  settings: {
+    enabled: true,
+    federation_id: "federation-1",
+    installation_id: "local",
+    federation_name: "",
+    display_name: "Local installation",
+    pairing_code: "123456",
+    pairing_code_from_environment: false,
+    pairing_code_expires_at: 0,
+    discovery_enabled: true,
+    accept_jobs: true,
+    endpoint_urls: ["http://local:8091"],
+    hostname_urls: [],
+    ip_urls: [],
+    resource_policy: {},
+    protocol_version: 1,
+    temp_budget_bytes: 0,
+    result_retention_hours: 24,
+  },
+  members: [{
+    id: 1,
+    installation_id: "worker-02",
+    federation_id: "federation-1",
+    display_name: "Worker 02",
+    endpoint_urls: ["http://worker-02:8091"],
+    protocol_version: 1,
+    application_version: "0.18.0",
+    status: "active",
+    connection_status: "connected",
+    reachable: true,
+    accept_jobs: true,
+    resources: { cpu_threads: 16, temp_free_bytes: 420 * 1024 * 1024 * 1024 },
+    capabilities: null,
+    capability_matrix: null,
+    active_jobs: 0,
+    network_mbps: 1000,
+    favorite_endpoint_url: null,
+    endpoint_metrics: {
+      "http://worker-02:8091": {
+        reachable: true,
+        latency_ms: 4.2,
+        throughput_mbps: 812.5,
+        last_checked_at: "2026-09-10T10:00:00Z",
+      },
+    },
+    last_seen_at: null,
+    last_sync_at: null,
+    last_error: null,
+  }],
+  discovered: [{
+    installation_id: "worker-01",
+    federation_id: "federation-1",
+    display_name: "Worker 01",
+    endpoint_urls: ["http://worker-01:8091"],
+    protocol_version: 1,
+    application_version: "0.18.0",
+    reachable: true,
+    last_seen_at: null,
+  }],
+};
+
+describe("TranscodePresetsRulesPanel", () => {
+  const builtin = preset();
+  const custom = preset({
+    id: 2,
+    name: "My preset",
+    description: "My custom stream plan.",
+    is_builtin: false,
+    builtin_key: null,
+  });
+  const copy = preset({
+    id: 3,
+    name: "Compatibility copy",
+    description: "Copy compatible streams.",
+    is_builtin: false,
+    builtin_key: null,
+  });
+
+  beforeEach(() => {
+    releaseVisibility.federation = true;
+    releaseVisibility.automationRules = true;
+    vi.spyOn(api, "transcodePresets").mockResolvedValue([builtin, custom]);
+    vi.spyOn(api, "transcodeRules").mockResolvedValue([]);
+    vi.spyOn(api, "libraries").mockResolvedValue([]);
+    vi.spyOn(api, "duplicateTranscodePreset").mockResolvedValue(copy);
+    vi.spyOn(api, "deleteTranscodePreset").mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    releaseVisibility.federation = false;
+    releaseVisibility.automationRules = false;
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("hides unfinished rule and member tabs in the release view", async () => {
+    releaseVisibility.automationRules = false;
+    releaseVisibility.federation = false;
+    render(<TranscodePresetsRulesPanel capabilityMatrix={() => null} acceleratorsTooltip={null} />);
+    expect(await screen.findByRole("tab", { name: "Presets" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Rules" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Members" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Used by automatic rules")).not.toBeInTheDocument();
+  });
+
+  it("keeps stream language rules separate and leaves formatting to its own presets", async () => {
+    vi.spyOn(api, "updateTranscodePreset").mockResolvedValue(custom);
+    render(<TranscodePresetsRulesPanel capabilityMatrix={() => null} acceleratorsTooltip={null} standaloneTab="presets" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit My preset" }));
+
+    expect(screen.queryByRole("textbox", { name: "Filename formatting" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add metadata" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Language code format" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Override default template" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Include subtitle languages" })).not.toBeInTheDocument();
+
+    const streamTabs = screen.getByRole("tablist", { name: "Stream types" });
+    fireEvent.click(screen.getByRole("tab", { name: "Audio" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add language rule" }));
+    expect(screen.getByRole("option", { name: "German" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Choose rule language" }), { target: { value: "en" } });
+    expect(screen.getByRole("option", { name: "Bulgarian" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Add language" }), { target: { value: "de" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Custom language code" }), { target: { value: "fr-CA" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add code" }));
+    expect(screen.getByRole("button", { name: /Remove German/ })).toBeInTheDocument();
+    const audioRule = screen.getByRole("button", { name: /Remove German/ }).closest(".transcode-preset-stream-item");
+    expect(audioRule?.querySelector(".transcode-stream-list-row")).toContainElement(screen.getByRole("combobox", { name: "Add language" }));
+    expect(audioRule?.querySelector(".transcode-stream-list-row")).not.toHaveTextContent("Audio");
+    expect(audioRule?.querySelector(".transcode-stream-list-row")).not.toHaveTextContent("German");
+    expect(audioRule?.querySelector(".transcode-preset-language-chips")).toHaveTextContent("German");
+    expect(screen.queryByRole("combobox", { name: "Language code format (Audio)" })).not.toBeInTheDocument();
+    expect(screen.getByText("All remaining languages").closest(".transcode-stream-list-row")).not.toHaveTextContent("Audio");
+    fireEvent.click(screen.getByRole("tab", { name: "Video" }));
+    expect(streamTabs).toContainElement(screen.getByRole("tab", { name: "Video" }));
+    expect(screen.queryByRole("button", { name: /Remove German/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Subtitles" }));
+    expect(screen.queryByRole("button", { name: /Remove German/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Metadata settings" }));
+    expect(screen.getByRole("group", { name: "Metadata settings" })).toBeInTheDocument();
+    const languageFormat = screen.getByRole("combobox", { name: "Language code format (Metadata settings)" });
+    expect(languageFormat).toHaveValue("container_default");
+    expect(within(screen.getByRole("group", { name: "Metadata settings" })).getByRole("combobox")).toBe(languageFormat);
+    fireEvent.change(languageFormat, { target: { value: "iso_639_2_region" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(api.updateTranscodePreset).toHaveBeenCalled());
+    const definition = vi.mocked(api.updateTranscodePreset).mock.calls[0][1].definition!;
+    expect(definition.audio_rules[0].match_languages).toEqual(["en", "de", "fr-CA"]);
+    expect(definition.video_rules).toEqual([]);
+    expect(definition.video_language_code_format).toBe("iso_639_2_region");
+    expect(definition.audio_language_code_format).toBe("iso_639_2_region");
+    expect(definition.subtitle_language_code_format).toBe("iso_639_2_region");
+    expect(definition.filename_template_override).toBe(false);
+  });
+
+  it("exposes editable custom presets while keeping built-in templates out of the catalog", async () => {
+    render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => (
+          <section className="transcode-automation-tab-content" data-testid="capability-matrix">
+            <div className="compatibility-profile-list">{tabControls}</div>
+          </section>
+        )}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+      />,
+    );
+
+    const tabList = await screen.findByRole("tablist", { name: "Transcoding presets and rules" });
+    expect(tabList).toHaveClass("transcode-automation-tab-list");
+    expect(tabList.querySelector(".library-history-range-pill")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Accelerators" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Presets" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Accelerators" }));
+    expect(screen.getByRole("button", { name: "Explain accelerators" })).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Accelerators" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Presets" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("capability-matrix")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Presets" }));
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Presets" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Reusable stream plans and automatic matching rules.")).not.toBeInTheDocument();
+    const descriptionTooltip = screen.getByRole("button", { name: "Explain transcoding presets" });
+    expect(descriptionTooltip).toHaveClass("tooltip-trigger");
+    fireEvent.click(descriptionTooltip);
+    const descriptionPortal = await screen.findByRole("tooltip");
+    expect(descriptionPortal).toHaveClass("transcode-automation-description-tooltip-portal-compact");
+    expect(descriptionPortal).toHaveStyle({ maxWidth: "300px" });
+    fireEvent.pointerDown(document.body);
+    expect((await screen.findByRole("button", { name: "New preset" })).closest(".settings-profile-toggle-row")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Compatibility" })).not.toBeInTheDocument();
+    expect(screen.queryByText("v1 · built-in")).not.toBeInTheDocument();
+
+    const editButton = screen.getByRole("button", { name: "Edit My preset" });
+    expect(editButton).toHaveClass("compatibility-profile-quick-action");
+
+    fireEvent.click(editButton);
+    expect(await screen.findByDisplayValue("My preset")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("My custom stream plan.").tagName).toBe("TEXTAREA");
+    expect(screen.getByRole("tablist", { name: "Stream types" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete My preset" }));
+    await waitFor(() => expect(api.deleteTranscodePreset).toHaveBeenCalledWith(custom.id));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Rules" }));
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Rules" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Explain transcoding rules" })).toBeInTheDocument();
+    expect(screen.queryByText("Rules are evaluated from top to bottom. A blocked winning rule does not fall through.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start inventory" })).not.toBeInTheDocument();
+  });
+
+  it("uses the profile catalog layout and filters standalone presets", async () => {
+    const { container } = render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={() => null}
+        acceleratorsTooltip={null}
+        standaloneTab="presets"
+        standalonePresetTabs={(
+          <div className="transcode-automation-tab-list" role="tablist" aria-label="Transcoding preset categories">
+            <button type="button" role="tab" className="transcode-automation-tab-button active" aria-selected="true">Presets</button>
+          </div>
+        )}
+      />,
+    );
+
+    const search = await screen.findByRole("searchbox", { name: "Search presets" });
+    expect(container.querySelector(".compatibility-profile-list.compatibility-profile-catalog-list")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "New preset" }).closest(".settings-profile-toggle-row")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Customize Compatibility" })).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "custom" } });
+    expect(screen.getByRole("button", { name: "Edit My preset" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Customize Compatibility" })).not.toBeInTheDocument();
+  });
+
+  it("lists paired members before discovered peers and marks new pairing entries with plus icons", async () => {
+    const { container } = render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => <section className="transcode-automation-tab-content">{tabControls}</section>}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+        federation={federationFixture}
+      />,
+    );
+
+    await screen.findByRole("tablist", { name: "Transcoding presets and rules" });
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+    const memberArticle = screen.getByText("Worker 02").closest("article");
+    const discoveredArticle = screen.getByText("Worker 01").closest("article");
+    expect(memberArticle).not.toBeNull();
+    expect(discoveredArticle).not.toBeNull();
+    expect(memberArticle!.compareDocumentPosition(discoveredArticle!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(memberArticle!.querySelector(".transcode-federation-entry-marker.transcode-federation-status-marker")).not.toBeNull();
+    expect(memberArticle!.querySelector(".transcode-federation-member-row")).not.toBeNull();
+    expect(memberArticle!.querySelector(".transcode-federation-member-trigger")).toHaveClass("compatibility-profile-list-trigger");
+    expect(memberArticle!.querySelector(".status-dot")).toHaveClass("is-online");
+    expect(memberArticle!.querySelector(".transcode-federation-status-trigger")).toHaveAttribute("aria-label", "Worker 02: Reachable");
+    expect(memberArticle!.querySelector(".transcode-federation-add-icon")).toBeNull();
+    expect(discoveredArticle!.querySelector(".transcode-federation-entry-marker.transcode-federation-add-icon")).not.toBeNull();
+    expect(discoveredArticle!.querySelector(".transcode-federation-peer-code-input")).toHaveAttribute("placeholder", "Pairing code");
+
+    expect(screen.queryByText("Add trusted installation")).not.toBeInTheDocument();
+    const manualItem = container.querySelector(".transcode-federation-manual-item");
+    const manualConnectControl = manualItem?.querySelector(".transcode-federation-peer-connect-control");
+    expect(manualConnectControl).not.toBeNull();
+    expect(manualConnectControl).toHaveClass("transcode-federation-manual-connect-control");
+    expect(manualConnectControl?.parentElement).toBe(manualItem);
+    expect(manualItem?.querySelector(":scope > .transcode-federation-add-icon")).not.toBeNull();
+    expect(manualItem?.querySelector(":scope > .transcode-federation-add-icon")?.parentElement).toBe(manualItem);
+    expect(manualConnectControl?.querySelector(":scope > .transcode-federation-add-icon")).toBeNull();
+    expect(manualConnectControl?.querySelector(':scope > input[type="url"]')).toHaveClass("transcode-federation-segment-input", "transcode-federation-manual-address-input");
+    expect(manualConnectControl?.querySelector(".transcode-federation-manual-code-input")).not.toBeNull();
+    expect(manualConnectControl?.querySelector(".transcode-federation-manual-code-input")).toHaveAttribute("placeholder", "Pairing code");
+    expect(manualConnectControl?.querySelector(".transcode-federation-connect-button")).not.toBeNull();
+    expect(manualConnectControl?.querySelector(".transcode-federation-manual-code-input")?.nextElementSibling).toBe(
+      manualConnectControl?.querySelector(".transcode-federation-connect-button"),
+    );
+  });
+
+  it("confirms disconnect and refreshes the installation as a discovered peer", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const disconnectedPeer = {
+      installation_id: federationFixture.members[0].installation_id,
+      federation_id: federationFixture.members[0].federation_id,
+      display_name: federationFixture.members[0].display_name,
+      endpoint_urls: federationFixture.members[0].endpoint_urls,
+      protocol_version: federationFixture.members[0].protocol_version,
+      application_version: federationFixture.members[0].application_version,
+      reachable: true,
+      last_seen_at: null,
+    };
+    const refreshedFederation: TranscodeFederation = {
+      ...federationFixture,
+      members: [],
+      discovered: [disconnectedPeer],
+    };
+    vi.spyOn(api, "excludeTranscodeFederationMember").mockResolvedValue(undefined);
+    vi.spyOn(api, "discoverTranscodeFederation").mockResolvedValue(refreshedFederation);
+    const onFederationData = vi.fn();
+    const { rerender } = render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => <section className="transcode-automation-tab-content">{tabControls}</section>}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+        federation={federationFixture}
+        onFederationData={onFederationData}
+      />,
+    );
+
+    await screen.findByRole("tablist", { name: "Transcoding presets and rules" });
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect Worker 02" }));
+
+    await waitFor(() => expect(api.excludeTranscodeFederationMember).toHaveBeenCalledWith("worker-02"));
+    await waitFor(() => expect(api.discoverTranscodeFederation).toHaveBeenCalledTimes(1));
+    expect(confirm).toHaveBeenCalledWith("Disconnect Worker 02? It will no longer receive automatic jobs.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Worker 02 disconnected.");
+    expect(onFederationData).toHaveBeenCalledWith(expect.objectContaining({ members: [] }));
+    expect(onFederationData).toHaveBeenLastCalledWith(refreshedFederation);
+
+    rerender(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => <section className="transcode-automation-tab-content">{tabControls}</section>}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+        federation={refreshedFederation}
+        onFederationData={onFederationData}
+      />,
+    );
+    const discoveredArticle = screen.getByText("Worker 02").closest("article");
+    expect(discoveredArticle?.querySelector(".transcode-federation-add-icon")).not.toBeNull();
+    expect(discoveredArticle?.querySelector(".transcode-federation-peer-code-input")).not.toBeNull();
+  });
+
+  it("shows tested member connections and exposes favorite and block actions", async () => {
+    const onFederationData = vi.fn();
+    const nextFederation = {
+      ...federationFixture,
+      members: [{
+        ...federationFixture.members[0],
+        favorite_endpoint_url: "http://worker-02:8091",
+        endpoint_metrics: {
+          ...federationFixture.members[0].endpoint_metrics,
+          "http://worker-02:8091": {
+            ...federationFixture.members[0].endpoint_metrics?.["http://worker-02:8091"],
+            blocked: true,
+          },
+        },
+      }],
+    } satisfies TranscodeFederation;
+    const updateEndpoint = vi.spyOn(api, "updateTranscodeFederationMemberEndpoint").mockResolvedValue(nextFederation);
+    const { container } = render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => <section className="transcode-automation-tab-content">{tabControls}</section>}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+        federation={federationFixture}
+        onFederationData={onFederationData}
+      />,
+    );
+
+    await screen.findByRole("tablist", { name: "Transcoding presets and rules" });
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    fireEvent.click(container.querySelector<HTMLButtonElement>(".transcode-federation-member-trigger")!);
+
+    expect(screen.getByText("Available connections")).toBeInTheDocument();
+    const endpointMetrics = container.querySelector(".transcode-federation-member-endpoint-metrics");
+    expect(endpointMetrics).toHaveTextContent(/4[.,]2 ms/);
+    expect(endpointMetrics).toHaveTextContent(/812[.,]5 Mbit\/s/);
+    expect(screen.getByText("Reachable")).toBeInTheDocument();
+    expect(screen.queryByText("Available accelerators")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use this connection as favorite: http://worker-02:8091" }));
+    await waitFor(() => expect(updateEndpoint).toHaveBeenCalledWith("worker-02", {
+      endpoint: "http://worker-02:8091",
+      favorite: true,
+    }));
+    expect(onFederationData).toHaveBeenCalledWith(nextFederation);
+
+    fireEvent.click(screen.getByRole("button", { name: "Block this connection: http://worker-02:8091" }));
+    await waitFor(() => expect(updateEndpoint).toHaveBeenCalledWith("worker-02", {
+      endpoint: "http://worker-02:8091",
+      blocked: true,
+    }));
+
+    const memberArticle = container.querySelector(".compatibility-profile-list-item");
+    expect(memberArticle?.querySelectorAll(".transcode-federation-member-endpoint-action")).toHaveLength(2);
+  });
+
+  it("uses the member status dot for warning details instead of an inline alert", async () => {
+    const member = {
+      ...federationFixture.members[0],
+      last_error: "timed out",
+      connection_status: "connected",
+    };
+    const { container } = render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => <section className="transcode-automation-tab-content">{tabControls}</section>}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+        federation={{ ...federationFixture, members: [member], discovered: [] }}
+      />,
+    );
+
+    await screen.findByRole("tablist", { name: "Transcoding presets and rules" });
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+    const memberArticle = container.querySelector(".compatibility-profile-list-item");
+    const statusTrigger = memberArticle?.querySelector<HTMLButtonElement>(".transcode-federation-status-trigger");
+    expect(statusTrigger).not.toBeNull();
+    expect(statusTrigger?.querySelector(".status-dot")).toHaveClass("is-warning");
+
+    fireEvent.focus(statusTrigger!);
+    expect(await screen.findByText("Last error")).toBeInTheDocument();
+    expect(screen.getByText("timed out")).toBeInTheDocument();
+
+    fireEvent.click(memberArticle!.querySelector<HTMLButtonElement>(".compatibility-profile-list-trigger")!);
+    expect(memberArticle?.querySelector(".notice.error")).toBeNull();
+  });
+
+  it("marks unreachable members as offline", async () => {
+    const member = {
+      ...federationFixture.members[0],
+      reachable: false,
+      connection_status: "offline",
+      last_error: "Connection refused",
+    };
+    const { container } = render(
+      <TranscodePresetsRulesPanel
+        capabilityMatrix={(tabControls) => <section className="transcode-automation-tab-content">{tabControls}</section>}
+        acceleratorsTooltip={<div data-testid="accelerators-tooltip" />}
+        federation={{ ...federationFixture, members: [member], discovered: [] }}
+      />,
+    );
+
+    await screen.findByRole("tablist", { name: "Transcoding presets and rules" });
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+    const statusDot = container.querySelector(".transcode-federation-status-trigger .status-dot");
+    expect(statusDot).toHaveClass("is-offline");
+  });
+});

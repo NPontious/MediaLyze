@@ -1,0 +1,380 @@
+import "../i18n";
+
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router";
+
+import { api, type AppSettings, type TranscodeCapabilities, type TranscodeJob, type TranscodePlan } from "../lib/api";
+import { TRANSCODING_COLUMN_WIDTHS_STORAGE_KEY } from "../lib/transcoding-column-widths";
+import { TranscodingPage } from "./TranscodingPage";
+
+const appDataMock = vi.hoisted(() => ({
+  value: {
+    appSettings: {
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      transcoding: {
+        execution_mode: "hardware_required",
+        cpu_budget_percent: 90,
+        cpu_parallel_jobs: 1,
+        gpu_parallel_jobs_per_device: 2,
+        selected_devices: "auto",
+        default_output_mode: "transcode_output",
+        on_error: "continue",
+        retry_count: 0,
+        existing_output: "fail",
+        remove_partial_output: true,
+      },
+      feature_flags: {
+        show_analyzed_files_csv_export: false,
+        show_full_width_app_shell: false,
+        hide_quality_score_meter: false,
+        show_music_quality_score: false,
+        unlimited_panel_size: false,
+        in_depth_dolby_vision_profiles: false,
+        show_all_playbacks_when_unstacked: false,
+      },
+    } as AppSettings,
+    libraries: [
+      { id: 1, name: "Movies" },
+      { id: 2, name: "Series" },
+    ],
+  },
+}));
+
+vi.mock("../lib/app-data", () => ({
+  useAppData: () => appDataMock.value,
+}));
+
+const plan: TranscodePlan = {
+  version: 1,
+  profile: "storage",
+  container: "mkv",
+  video_streams: [
+    { stream_index: 0, action: "encode", codec: "hevc", encoder: "hevc_nvenc", width: 3840, height: 2160, crf: 20 },
+  ],
+  audio_streams: [],
+  subtitle_streams: [],
+  external_subtitles: [],
+  dynamic_range: "hdr10",
+  chapters: "keep",
+  metadata: "keep",
+  cover: "keep",
+  attachments: "keep",
+  filename_template: "[{resolution}, {codec}]",
+  output_mode: "transcode_output",
+  execution_mode: "hardware_required",
+};
+
+function createJob(id: number, overrides: Partial<TranscodeJob> = {}): TranscodeJob {
+  return {
+    id,
+    group_id: id,
+    library_id: 1,
+    source_file_id: id,
+    source_video_codec: "h264",
+    source_dynamic_range: "sdr",
+    result_file_id: null,
+    status: "running",
+    profile: "storage",
+    plan_version: 1,
+    plan,
+    ffmpeg_arguments: [],
+    ffmpeg_command: "ffmpeg -i source.mkv -c:v hevc_nvenc output.mkv",
+    warnings: [],
+    source_path_snapshot: `/media/movies/Naturefilm-${id}.mkv`,
+    output_path_snapshot: `/media/Transcode_Output/Naturefilm-${id}.mkv`,
+    output_relative_path: `Naturefilm-${id}.mkv`,
+    output_mode: "transcode_output",
+    output_storage_root: "/media/Transcode_Output",
+    retry_count: 0,
+    attempt: 1,
+    cpu_budget_percent: 90,
+    cpu_thread_budget: 4,
+    device_id: "cuda:0",
+    hardware_backend: "cuda",
+    ffmpeg_version: "7.0",
+    remove_partial_output: true,
+    on_error: "continue",
+    progress_percent: 64,
+    processed_seconds: 1721,
+    speed: "3.2x",
+    eta_seconds: 720,
+    error: null,
+    created_at: "2026-09-07T12:00:00Z",
+    updated_at: "2026-09-07T12:28:41Z",
+    started_at: "2026-09-07T12:00:00Z",
+    finished_at: null,
+    ...overrides,
+  };
+}
+
+const capabilities: TranscodeCapabilities = {
+  ffmpeg_available: true,
+  ffmpeg_path: "ffmpeg",
+  version: "7.0",
+  containers: ["mkv", "mp4", "webm"],
+  encoders: [],
+  devices: [
+    {
+      id: "cuda:0",
+      name: "NVIDIA RTX 3080",
+      vendor: "nvidia",
+      backend: "cuda",
+      driver_version: null,
+      compute_capability: null,
+      memory_total_bytes: null,
+      decoder_codecs: ["hevc"],
+      encoder_codecs: ["hevc"],
+      supported_pixel_formats: [],
+      supported_filters: [],
+      status: "available",
+      failure_reason: null,
+      last_tested_at: "2026-09-07T11:00:00Z",
+    },
+  ],
+  dolby_vision_passthrough: false,
+  error: null,
+};
+
+function renderPage() {
+  return render(
+    <MemoryRouter initialEntries={["/transcoding"]}>
+      <Routes>
+        <Route path="/transcoding" element={<TranscodingPage />} />
+        <Route path="/files/:fileId" element={<div>File detail destination</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+  vi.spyOn(api, "activeTranscodeJobs").mockResolvedValue({
+    items: [
+      createJob(1, { started_at: "2026-09-07T12:20:00Z", updated_at: "2026-09-07T12:29:00Z" }),
+      createJob(2, {
+        status: "queued",
+        created_at: "2026-09-07T12:10:00Z",
+        started_at: null,
+        speed: null,
+        device_id: null,
+        hardware_backend: null,
+        progress_percent: 0,
+        updated_at: "2026-09-07T12:35:00Z",
+      }),
+    ],
+    total: 2,
+  });
+  vi.spyOn(api, "transcodeJobs").mockResolvedValue({ items: [createJob(3, { status: "completed", result_file_id: 33, progress_percent: 100, speed: null, eta_seconds: null, finished_at: "2026-09-07T12:40:00Z" })], total: 1 });
+  vi.spyOn(api, "transcodeCapabilities").mockResolvedValue(capabilities);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+describe("TranscodingPage", () => {
+  it("shows live progress, speed, hardware, and the expandable job details", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Transcoding" })).toBeInTheDocument();
+    expect(screen.queryByText("Start several jobs together and keep an eye on their live throughput, hardware path, and queue state.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Transcoding job summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 running")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 queued")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 completed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add jobs" })).not.toBeInTheDocument();
+    const viewToggle = screen.getByRole("tablist", { name: "Transcoding views" });
+    expect(viewToggle).toHaveClass("library-history-range-toggle");
+    expect(within(viewToggle).getByRole("tab", { name: /Active/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(viewToggle).getByRole("tab", { name: /History/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Reset filters" })).toHaveClass("icon-button", "icon-button-borderless", "icon-button-static");
+    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
+    expect(screen.getByText("Naturefilm-1.mkv")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Naturefilm-1.mkv" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("NVIDIA RTX 3080").length).toBeGreaterThan(0);
+    const hardwareLoad = screen.getByRole("region", { name: "Hardware load" });
+    expect(hardwareLoad.closest("header")).not.toBeNull();
+    expect(within(hardwareLoad).queryByText("Hardware load")).not.toBeInTheDocument();
+    const hardwareTrigger = screen.getByRole("button", { name: "Show hardware load details for NVIDIA RTX 3080" });
+    fireEvent.click(hardwareTrigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Encoder codecs");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Decoder codecs");
+    expect(screen.getByText("3.2×")).toBeInTheDocument();
+    expect(screen.getByText("64%")).toBeInTheDocument();
+    const progressCell = screen.getByText("64%").closest("td");
+    expect(progressCell).not.toBeNull();
+    expect(within(progressCell!).getByText("Progress")).toBeInTheDocument();
+    expect(within(progressCell!).getByText("Time left")).toBeInTheDocument();
+    expect(within(progressCell!).getByText("Speed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel Naturefilm-1.mkv" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Open source file" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Close job details" })).not.toBeInTheDocument();
+    const firstRow = screen.getByTestId("transcode-job-1");
+    const secondRow = screen.getByTestId("transcode-job-2");
+    expect(firstRow).toHaveAttribute("aria-expanded", "false");
+    expect(secondRow).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(firstRow);
+    await waitFor(() => expect(screen.getByTestId("transcode-job-1")).toHaveAttribute("aria-expanded", "true"));
+    expect(screen.queryByText("Time range")).not.toBeInTheDocument();
+    expect(screen.queryByText("Source → output")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hardware status")).not.toBeInTheDocument();
+    expect(screen.getByText("Start time")).toBeInTheDocument();
+    expect(screen.getByText("Duration so far")).toBeInTheDocument();
+    expect(screen.getByText("ETA")).toBeInTheDocument();
+    expect(screen.getByText("Codec")).toBeInTheDocument();
+    expect(screen.getByText("Dynamic range")).toBeInTheDocument();
+    expect(screen.getByText("H.264 / AVC")).toBeInTheDocument();
+    expect(screen.getAllByText("H.265 / HEVC").length).toBeGreaterThan(0);
+    expect(screen.getByText("SDR")).toBeInTheDocument();
+    expect(screen.getAllByText("HDR10").length).toBeGreaterThan(0);
+    const logDetails = screen.getByText("FFmpeg log").closest("details");
+    expect(logDetails).toBeInTheDocument();
+    expect(logDetails).not.toHaveAttribute("open");
+    expect(screen.queryByText("Speed · last samples")).not.toBeInTheDocument();
+    expect(screen.queryByText("Samples are collected while this page is open")).not.toBeInTheDocument();
+    expect(screen.queryByText("/media/movies/Naturefilm-1.mkv")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("echarts-react").length).toBeGreaterThan(0);
+    const statusChart = screen.getAllByTestId("echarts-react").find((chart) => chart.getAttribute("data-tooltip-confine") === "true");
+    expect(statusChart?.getAttribute("data-tooltip")).toMatch(/^3[,.]2×$/);
+    expect(statusChart).toHaveAttribute("data-tooltip-render-mode", "html");
+  });
+
+  it("opens the clicked row and keeps the previous row closed", async () => {
+    renderPage();
+
+    const firstRow = await screen.findByTestId("transcode-job-1");
+    const secondRow = screen.getByTestId("transcode-job-2");
+    expect(firstRow).toHaveAttribute("aria-expanded", "false");
+    expect(secondRow).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(secondRow);
+
+    expect(secondRow).toHaveAttribute("aria-expanded", "true");
+    expect(firstRow).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(secondRow);
+
+    expect(secondRow).toHaveAttribute("aria-expanded", "false");
+    expect(firstRow).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps the default start-time order until a column header is selected", async () => {
+    renderPage();
+
+    const table = screen.getByRole("table");
+    const jobRows = () => within(table).getAllByRole("row")
+      .map((row) => row.getAttribute("data-testid"))
+      .filter((testId): testId is string => Boolean(testId));
+
+    await screen.findByTestId("transcode-job-1");
+    expect(jobRows()).toEqual(["transcode-job-1", "transcode-job-2"]);
+    expect(within(table).getByRole("columnheader", { name: "Progress" })).toHaveAttribute("aria-sort", "none");
+
+    const progressHeader = within(table).getByRole("columnheader", { name: "Progress" });
+    fireEvent.click(within(progressHeader).getByRole("button", { name: "Progress" }));
+
+    expect(progressHeader).toHaveAttribute("aria-sort", "descending");
+    expect(jobRows()).toEqual(["transcode-job-1", "transcode-job-2"]);
+
+    fireEvent.click(within(progressHeader).getByRole("button", { name: /^Progress/ }));
+
+    expect(progressHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(jobRows()).toEqual(["transcode-job-2", "transcode-job-1"]);
+  });
+
+  it("opens the source preview with the completed variant comparison", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: /History/ }));
+
+    const comparisonLink = await screen.findByRole("link", { name: "Open synchronized preview" });
+    expect(comparisonLink).toHaveAttribute("href", "/files/3/preview?compare=33");
+
+    fireEvent.click(screen.getByTestId("transcode-job-3"));
+    expect(screen.getAllByRole("link", { name: "Open synchronized preview" })).toHaveLength(2);
+  });
+
+  it("offers deletion only for past runs and keeps history when confirmation is declined", async () => {
+    const remove = vi.spyOn(api, "deleteTranscodeJob").mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    await screen.findByTestId("transcode-job-1");
+    expect(screen.queryByRole("button", { name: /^Delete run for/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete run for/ }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByTestId("transcode-job-3")).toBeInTheDocument();
+  });
+
+  it("deletes a confirmed history run and removes its expanded details", async () => {
+    const remove = vi.spyOn(api, "deleteTranscodeJob").mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: /History/ }));
+    const button = await screen.findByRole("button", { name: /^Delete run for/ });
+    fireEvent.click(screen.getByTestId("transcode-job-3"));
+    vi.mocked(api.transcodeJobs).mockResolvedValue({ items: [], total: 0 });
+    fireEvent.click(button);
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(3));
+    await waitFor(() => expect(screen.queryByTestId("transcode-job-3")).not.toBeInTheDocument());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Source and output files are kept"));
+    expect(screen.queryByRole("link", { name: "Open synchronized preview" })).not.toBeInTheDocument();
+  });
+
+  it("retains the history run and displays an error when deletion fails", async () => {
+    vi.spyOn(api, "deleteTranscodeJob").mockRejectedValue(new Error("Cannot delete run"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: /History/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete run for/ }));
+    expect(await screen.findByText("Cannot delete run")).toBeInTheDocument();
+    expect(screen.getByTestId("transcode-job-3")).toBeInTheDocument();
+  });
+
+  it("restores and persists resizable transcoding column widths", async () => {
+    window.localStorage.setItem(
+      TRANSCODING_COLUMN_WIDTHS_STORAGE_KEY,
+      JSON.stringify({ file: 340 }),
+    );
+    renderPage();
+
+    const resizeHandle = await screen.findByRole("button", { name: "Resize column File" });
+    const headerCell = resizeHandle.closest("th") as HTMLTableCellElement | null;
+    expect(headerCell).not.toBeNull();
+    expect(headerCell).toHaveStyle({ width: "340px" });
+    headerCell!.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 340,
+        height: 42,
+        top: 0,
+        right: 340,
+        bottom: 42,
+        left: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    fireEvent.pointerDown(resizeHandle, { clientX: 340 });
+    fireEvent.pointerMove(window, { clientX: 420 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() =>
+      expect(window.localStorage.getItem(TRANSCODING_COLUMN_WIDTHS_STORAGE_KEY)).toContain("\"file\":420"),
+    );
+  });
+
+  it("cancels an active job through the existing runtime endpoint", async () => {
+    const cancel = vi.spyOn(api, "cancelTranscodeJob").mockResolvedValue(createJob(1, { status: "canceled" }));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel Naturefilm-1.mkv" }));
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(1));
+  });
+
+});

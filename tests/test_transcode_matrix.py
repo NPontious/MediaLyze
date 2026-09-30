@@ -1,0 +1,367 @@
+from pathlib import Path
+
+from backend.app.core.config import RuntimeMode, Settings
+from backend.app.schemas.transcoding import (
+    TranscodeCapabilitiesRead,
+    TranscodeCapabilityMatrixRead,
+    TranscodeEncoderCapability,
+    TranscodeHardwareDevice,
+)
+from backend.app.services import transcode_matrix
+
+
+def _settings(tmp_path: Path) -> Settings:
+    return Settings(
+        runtime_mode=RuntimeMode.desktop,
+        config_path=tmp_path / "config",
+        media_root=tmp_path / "media",
+        frontend_dist_path=tmp_path / "frontend",
+        ffmpeg_path="ffmpeg-test",
+    )
+
+
+def _capabilities() -> TranscodeCapabilitiesRead:
+    return TranscodeCapabilitiesRead(
+        ffmpeg_available=True,
+        ffmpeg_path="ffmpeg-test",
+        version="ffmpeg test",
+        ffmpeg_version="ffmpeg test",
+        encoders=[
+            TranscodeEncoderCapability(name="libx264", codec="h264"),
+            TranscodeEncoderCapability(name="libx265", codec="hevc"),
+            TranscodeEncoderCapability(
+                name="h264_nvenc",
+                codec="h264",
+                hardware=True,
+                tested=True,
+                device_ids=["cuda0"],
+            ),
+            TranscodeEncoderCapability(
+                name="hevc_nvenc",
+                codec="hevc",
+                hardware=True,
+                tested=True,
+                device_ids=["cuda0"],
+            ),
+        ],
+        devices=[
+            TranscodeHardwareDevice(
+                id="cuda0",
+                name="Test GPU",
+                vendor="nvidia",
+                backend="cuda",
+                device_class="dedicated",
+                encoder_names=["h264_nvenc", "hevc_nvenc"],
+                encoder_codecs=["h264", "hevc"],
+                status="available",
+            )
+        ],
+    )
+
+
+def test_missing_matrix_result_stays_unmeasured_until_a_test_runs(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    result = transcode_matrix.load_transcode_matrix(settings)
+
+    assert result.status == "not_run"
+    assert result.tested_at is None
+    assert result.matrices == []
+    assert not (settings.config_path / "transcoding-tests" / "capability-matrix.json").exists()
+
+
+def test_matrix_uses_hardware_only_after_complete_pair_passes_and_persists(tmp_path, monkeypatch) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(transcode_matrix, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    fixture_progress = []
+
+    def create_fixture(_ffmpeg, codec, directory):
+        fixture_progress.append(transcode_matrix.transcode_matrix_test_progress())
+        return directory / f"source-{codec}.mkv", f"fixture-{codec}"
+
+    monkeypatch.setattr(transcode_matrix, "_create_fixture", create_fixture)
+
+    def fake_run(arguments: list[str], *, timeout: int = 25) -> tuple[bool, str | None]:
+        if "-hwaccel" in arguments:
+            if "hwdownload,format=nv12" in arguments:
+                return "source-h264.mkv" in " ".join(arguments), None
+            return (
+                "source-h264.mkv" in " ".join(arguments) and "hevc_nvenc" in arguments,
+                None,
+            )
+        return True, None
+
+    monkeypatch.setattr(transcode_matrix, "_run_command", fake_run)
+    monkeypatch.setattr(transcode_matrix, "MAX_PARALLEL_PROBE_JOBS", 4)
+    monkeypatch.setattr(
+        transcode_matrix,
+        "_timed_run_command",
+        lambda *_args, **_kwargs: (True, 1.0, None),
+    )
+
+    result = transcode_matrix.run_transcode_matrix_test(settings)
+
+    assert result.status == "completed"
+    matrix = result.matrices[0]
+    assert matrix.device_class == "dedicated"
+    hardware = next(
+        cell for cell in matrix.cells
+        if cell.decode_codec == "h264" and cell.encode_codec == "hevc"
+    )
+    fallback = next(
+        cell for cell in matrix.cells
+        if cell.decode_codec == "hevc" and cell.encode_codec == "h264"
+    )
+    assert hardware.status == "hardware"
+    assert hardware.max_parallel_jobs == 4
+    assert hardware.max_parallel_jobs_is_lower_bound is True
+    assert hardware.parallel_benchmark is not None
+    assert hardware.parallel_benchmark.baseline_median_seconds == 1.0
+    assert [level.concurrency for level in hardware.parallel_benchmark.levels] == [1, 2, 4]
+    assert fallback.status == "software"
+    assert result.capability_fingerprint
+    assert transcode_matrix.load_transcode_matrix(settings) == result
+    assert any(progress.running and 0 < progress.completed < progress.total for progress in fixture_progress)
+    progress = transcode_matrix.transcode_matrix_test_progress()
+    assert progress.running is False
+    assert progress.completed == progress.total
+
+
+def test_matrix_refreshes_only_after_capability_fingerprint_changes(tmp_path, monkeypatch) -> None:
+    settings = _settings(tmp_path)
+    capabilities = _capabilities()
+    build_calls = 0
+
+    monkeypatch.setattr(
+        transcode_matrix,
+        "get_transcode_capabilities",
+        lambda *_args, **_kwargs: capabilities,
+    )
+
+    def fake_build(
+        _settings,
+        _capabilities,
+        *,
+        on_work_completed=None,
+        on_work_total_changed=None,
+        benchmark_work_estimates=None,
+    ):
+        del on_work_completed, on_work_total_changed, benchmark_work_estimates
+        nonlocal build_calls
+        build_calls += 1
+        return TranscodeCapabilityMatrixRead(
+            status="completed",
+            ffmpeg_version=_capabilities.ffmpeg_version,
+        )
+
+    monkeypatch.setattr(transcode_matrix, "_build_matrices", fake_build)
+
+    first = transcode_matrix.run_transcode_matrix_test_if_changed(settings)
+    second = transcode_matrix.run_transcode_matrix_test_if_changed(settings)
+
+    assert build_calls == 1
+    assert second == first
+
+    capabilities.devices[0].driver_version = "new-driver"
+    third = transcode_matrix.run_transcode_matrix_test_if_changed(settings)
+
+    assert build_calls == 2
+    assert third.capability_fingerprint != first.capability_fingerprint
+
+
+def test_parallel_capacity_reports_highest_level_before_repeatable_slowdown(monkeypatch) -> None:
+    monkeypatch.setattr(transcode_matrix, "MAX_PARALLEL_PROBE_JOBS", 8)
+    calls = 0
+
+    def fake_timed_run(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        # Baseline (3), level 2 (6), and level 4 (12) retain full speed.
+        # The exponential level 8 and the intervening boundary checks are slower.
+        return True, 1.0 if calls <= 21 else 1.3, None
+
+    monkeypatch.setattr(transcode_matrix, "_timed_run_command", fake_timed_run)
+    reported_work = []
+
+    maximum, lower_bound, benchmark = transcode_matrix._parallel_capacity(
+        ["ffmpeg-test"],
+        on_work_completed=reported_work.append,
+    )
+
+    assert (maximum, lower_bound) == (4, False)
+    assert benchmark.baseline_median_seconds == 1.0
+    assert benchmark.slowdown_limit_seconds == 1.2
+    assert [level.concurrency for level in benchmark.levels] == [1, 2, 4, 5, 8]
+    assert all(len(level.runs) == 3 for level in benchmark.levels)
+    assert benchmark.levels[-1].passed is False
+    frame_weight = transcode_matrix.PARALLEL_PROBE_FRAMES // transcode_matrix.MATRIX_CELL_FRAMES
+    assert len(reported_work) == calls
+    assert set(reported_work) == {frame_weight}
+    assert sum(reported_work) == transcode_matrix._benchmark_work_units(benchmark)
+
+
+def test_matrix_progress_plan_reserves_weight_for_possible_hardware_benchmarks(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(transcode_matrix, "MAX_PARALLEL_PROBE_JOBS", 4)
+
+    total, estimates = transcode_matrix._matrix_test_work_plan(_capabilities())
+
+    # Seven fixture steps + one step per matrix cell, plus one 30-run
+    # worst-case benchmark reservation for each of the fourteen hardware pairs.
+    assert len(estimates) == 14
+    assert set(estimates.values()) == {240}
+    assert total == 7 + 49 + 14 * 240
+
+
+def test_matrix_does_not_accept_zero_exit_hardware_pair_without_hardware_decode(
+    tmp_path, monkeypatch
+) -> None:
+    capabilities = _capabilities()
+    monkeypatch.setattr(
+        transcode_matrix,
+        "_create_fixture",
+        lambda _ffmpeg, codec, directory: (directory / f"source-{codec}.mkv", f"fixture-{codec}"),
+    )
+
+    def fake_run(arguments: list[str], *, timeout: int = 25) -> tuple[bool, str | None]:
+        if "hwdownload,format=nv12" in arguments:
+            return False, "No decoder device for codec found"
+        return True, None
+
+    monkeypatch.setattr(transcode_matrix, "_run_command", fake_run)
+
+    result = transcode_matrix._build_matrices(_settings(tmp_path), capabilities)
+
+    cell = next(
+        cell
+        for cell in result.matrices[0].cells
+        if cell.decode_codec == "h264" and cell.encode_codec == "hevc"
+    )
+    assert cell.status == "software"
+    assert cell.decoder == "software:auto"
+
+
+def test_matrix_uses_available_software_mpeg2_and_mjpeg_encoders(tmp_path, monkeypatch) -> None:
+    capabilities = _capabilities()
+    capabilities.encoders.extend(
+        [
+            TranscodeEncoderCapability(name="mpeg2video", codec="mpeg2video"),
+            TranscodeEncoderCapability(name="mjpeg", codec="mjpeg"),
+        ]
+    )
+    monkeypatch.setattr(
+        transcode_matrix,
+        "_create_fixture",
+        lambda _ffmpeg, codec, directory: (directory / f"source-{codec}.mkv", f"fixture-{codec}"),
+    )
+    monkeypatch.setattr(
+        transcode_matrix,
+        "_run_command",
+        lambda arguments, **_kwargs: (False, "hardware failed") if "-hwaccel" in arguments else (True, None),
+    )
+
+    result = transcode_matrix._build_matrices(_settings(tmp_path), capabilities)
+    cells = {cell.encode_codec: cell for cell in result.matrices[0].cells if cell.decode_codec == "h264"}
+
+    assert cells["mpeg2video"].status == "software"
+    assert cells["mpeg2video"].encoder == "mpeg2video"
+    assert cells["mjpeg"].status == "software"
+    assert cells["mjpeg"].encoder == "mjpeg"
+
+
+def test_matrix_marks_missing_synthetic_source_as_not_tested(tmp_path, monkeypatch) -> None:
+    capabilities = _capabilities()
+    monkeypatch.setattr(
+        transcode_matrix,
+        "_create_fixture",
+        lambda _ffmpeg, codec, directory: (
+            (None, "missing") if codec == "hevc" else (directory / f"source-{codec}.mkv", "libx264")
+        ),
+    )
+    monkeypatch.setattr(transcode_matrix, "_run_command", lambda *_args, **_kwargs: (False, "failed"))
+
+    result = transcode_matrix._build_matrices(_settings(tmp_path), capabilities)
+
+    assert all(
+        cell.status == "not_tested"
+        for cell in result.matrices[0].cells
+        if cell.decode_codec == "hevc"
+    )
+
+
+def test_matrix_keeps_distinct_hardware_devices_separate(tmp_path, monkeypatch) -> None:
+    settings = _settings(tmp_path)
+    capabilities = _capabilities()
+    capabilities.devices.append(
+        TranscodeHardwareDevice(
+            id="cuda1",
+            name="Second GPU",
+            vendor="nvidia",
+            backend="cuda",
+            encoder_names=["h264_nvenc", "hevc_nvenc"],
+            encoder_codecs=["h264", "hevc"],
+            status="available",
+        )
+    )
+    for encoder in capabilities.encoders:
+        if encoder.hardware:
+            encoder.device_ids = ["cuda0", "cuda1"]
+
+    monkeypatch.setattr(transcode_matrix, "_create_fixture", lambda _ffmpeg, codec, directory: (
+        directory / f"source-{codec}.mkv",
+        f"fixture-{codec}",
+    ))
+    monkeypatch.setattr(transcode_matrix, "_run_command", lambda *_args, **_kwargs: (True, None))
+
+    result = transcode_matrix._build_matrices(settings, capabilities)
+
+    assert result.status == "completed"
+    assert {matrix.device_name for matrix in result.matrices} == {"Test GPU", "Second GPU"}
+    assert len(result.matrices) == 2
+
+
+def test_linux_backend_paths_with_same_render_node_share_one_physical_device() -> None:
+    qsv = TranscodeHardwareDevice(
+        id="qsv-renderD128",
+        name="Intel GPU (renderD128) · 8086:56A6 · Quick Sync",
+        vendor="intel",
+        backend="qsv",
+        render_node="/dev/dri/renderD128",
+        status="available",
+    )
+    vaapi = qsv.model_copy(
+        update={
+            "id": "vaapi-renderD128",
+            "name": "Intel GPU (renderD128) · 8086:56A6 · VAAPI",
+            "backend": "vaapi",
+        }
+    )
+
+    assert transcode_matrix._device_group_key(qsv) == transcode_matrix._device_group_key(vaapi)
+    assert transcode_matrix._device_group_name([qsv, vaapi]) == "Intel GPU (renderD128) · 8086:56A6"
+
+
+def test_windows_amf_matrix_command_binds_native_d3d11_adapter() -> None:
+    device = TranscodeHardwareDevice(
+        id="amf0",
+        name="AMD Radeon(TM) Graphics · AMF",
+        vendor="amd",
+        backend="amf",
+        native_device_index=1,
+        status="available",
+    )
+
+    command = transcode_matrix._hardware_pair_command(
+        "ffmpeg-test",
+        Path("source-h264.mkv"),
+        device,
+        "h264_amf",
+    )
+
+    assert command is not None
+    init_index = command.index("-init_hw_device")
+    filter_index = command.index("-filter_hw_device")
+    hwaccel_index = command.index("-hwaccel")
+    assert ["-init_hw_device", "d3d11va=amf:1"] == command[init_index : init_index + 2]
+    assert ["-filter_hw_device", "amf"] == command[filter_index : filter_index + 2]
+    assert ["-hwaccel", "d3d11va", "-hwaccel_device", "amf"] == command[hwaccel_index : hwaccel_index + 4]

@@ -180,6 +180,8 @@ describe("StorageMapPage", () => {
       </MemoryRouter>,
     );
 
+    expect(document.querySelector(".storage-map-header-cards")).not.toBeInTheDocument();
+
     const selects = [
       screen.getByRole("combobox", { name: "Library" }),
       screen.getByRole("combobox", { name: "Color" }),
@@ -187,8 +189,8 @@ describe("StorageMapPage", () => {
     ];
     expect(selects[0]).toHaveValue("1");
     selects.forEach((select) => {
-      expect(select.parentElement).toHaveClass("storage-map-select-wrap");
-      expect(select.parentElement?.querySelector("svg")).toBeInTheDocument();
+      expect(select.parentElement).toHaveClass("storage-map-field");
+      expect(select.parentElement?.querySelector("svg")).not.toBeInTheDocument();
     });
     expect(screen.queryByText("Folders")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Up one level" })).not.toBeInTheDocument();

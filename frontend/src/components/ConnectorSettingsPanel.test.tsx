@@ -75,9 +75,11 @@ describe("ConnectorSettingsPanel", () => {
     render(<ConnectorSettingsPanel />);
 
     const addConnection = await screen.findByRole("button", { name: "Add connection" });
-    expect(addConnection).toHaveClass("settings-panel-header-action", "connector-action-button");
+    expect(addConnection).toHaveClass("secondary", "small", "settings-panel-header-action");
+    expect(addConnection).not.toHaveClass("connector-action-button");
     expect(addConnection.closest(".panel-title-row")).toBeInTheDocument();
-    expect(screen.getByText("Connect MediaLyze to one or more media servers and map each external library location to a stable MediaLyze root.")).toHaveClass("subtitle");
+    expect(screen.getByRole("button", { name: "Explain connector setup" })).toBeInTheDocument();
+    expect(screen.queryByText("Connect MediaLyze to one or more media servers and map each external library location to a stable MediaLyze root.")).not.toBeInTheDocument();
     fireEvent.click(addConnection);
 
     expect(screen.getByRole("heading", { name: "Add connector" })).toBeInTheDocument();
@@ -195,16 +197,37 @@ describe("ConnectorSettingsPanel", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<ConnectorSettingsPanel />);
 
-    const testButton = await screen.findByRole("button", { name: "Test connection" });
+    const testButton = await screen.findByRole("button", { name: "Test" });
     expect(testButton).toHaveClass("connector-action-button");
+    expect(testButton.querySelector("svg")).toHaveClass("lucide-network");
     fireEvent.click(testButton);
     await waitFor(() => expect(testConnection).toHaveBeenCalledWith(CONNECTION.id, { base_url: CONNECTION.base_url }));
-    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    const enabledSwitch = screen.getByRole("switch", { name: "Disable" });
+    expect(enabledSwitch).toBeChecked();
+    expect(enabledSwitch.closest(".connector-enabled-switch")).toBeInTheDocument();
+    fireEvent.click(enabledSwitch);
     await waitFor(() => expect(update).toHaveBeenCalledWith(CONNECTION.id, { enabled: false }));
     fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
     await waitFor(() => expect(sync).toHaveBeenCalledWith(CONNECTION.id));
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith(CONNECTION.id));
+  });
+
+  it("sets and replaces a connector API key from a dialog", async () => {
+    mockApi();
+    const update = vi.spyOn(api, "updateConnector").mockResolvedValue({ ...CONNECTION, has_secret: true });
+    render(<ConnectorSettingsPanel />);
+
+    const replaceButton = await screen.findByRole("button", { name: "Replace key" });
+    expect(screen.queryByLabelText("API key / secret")).not.toBeInTheDocument();
+    fireEvent.click(replaceButton);
+
+    expect(await screen.findByRole("dialog", { name: "Set API key" })).toBeInTheDocument();
+    expect(screen.getByText("An API key is already configured and can be replaced.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("API key / secret"), { target: { value: "new-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save key" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(CONNECTION.id, { secret: "new-secret" }));
   });
 
   it("shows and invokes cancellation for an active generic job", async () => {

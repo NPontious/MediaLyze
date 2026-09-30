@@ -8,6 +8,7 @@ import re
 from backend.app.models.entities import LibraryType
 from backend.app.schemas.app_settings import (
     BonusContentPatternSettings,
+    DuplicateMatchingSettings,
     PatternRecognitionSettings,
     ShowSeasonRecognitionMode,
     ShowSeasonPatternSettings,
@@ -42,6 +43,10 @@ DEFAULT_SHOW_SEASON_PATTERNS = ShowSeasonPatternSettings(
         r"^(?:Season|Staffel)\s*(?P<season>\d{1,3})(?:\s+\([^)]*\))?(?:\s+\[[^\]]+\])*$",
     ],
     episode_file_regexes=[],
+)
+
+DEFAULT_DUPLICATE_FILENAME_SUFFIX_REGEXES: tuple[str, ...] = (
+    r"(?:\s+\(\d{4}\)|\s+\[[^\]]*\])+\s*$",
 )
 
 EPISODE_METADATA_PATTERNS: tuple[str, ...] = (
@@ -128,9 +133,18 @@ def default_bonus_content_patterns() -> BonusContentPatternSettings:
     )
 
 
+def default_duplicate_matching_settings() -> DuplicateMatchingSettings:
+    default_suffix_regexes = list(DEFAULT_DUPLICATE_FILENAME_SUFFIX_REGEXES)
+    return DuplicateMatchingSettings(
+        default_filename_suffix_regexes=default_suffix_regexes,
+        effective_filename_suffix_regexes=default_suffix_regexes,
+    )
+
+
 def default_pattern_recognition_settings() -> PatternRecognitionSettings:
     return PatternRecognitionSettings(
         analyze_bonus_content=True,
+        duplicate_matching=default_duplicate_matching_settings(),
         show_season_patterns=DEFAULT_SHOW_SEASON_PATTERNS.model_copy(deep=True),
         bonus_content=default_bonus_content_patterns(),
     )
@@ -151,6 +165,14 @@ def validate_pattern_recognition_settings(settings: PatternRecognitionSettings) 
     if show_settings.recognition_mode == ShowSeasonRecognitionMode.regex:
         validate_regex_patterns(show_settings.series_folder_regexes, "series folder")
         validate_regex_patterns(show_settings.season_folder_regexes, "season folder")
+    validate_regex_patterns(
+        settings.duplicate_matching.user_filename_suffix_regexes,
+        "duplicate filename suffix",
+    )
+    validate_regex_patterns(
+        settings.duplicate_matching.default_filename_suffix_regexes,
+        "duplicate filename suffix",
+    )
 
 
 def _candidate_paths(relative_path: str, *, is_dir: bool = False) -> set[str]:

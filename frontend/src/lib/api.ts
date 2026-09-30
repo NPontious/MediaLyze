@@ -453,6 +453,9 @@ export type FileConnectorSource = {
   original_title: string | null;
   series_name: string | null;
   season_name: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
+  episode_title?: string | null;
   date_created: string | null;
   premiere_date: string | null;
   production_year: number | null;
@@ -1114,6 +1117,7 @@ export type VideoStream = {
   bit_rate: number | null;
   bit_depth?: number | null;
   hdr_type: string | null;
+  language?: string | null;
 };
 
 export type AudioStream = {
@@ -1155,6 +1159,7 @@ export type SubtitleStream = {
 };
 
 export type ExternalSubtitle = {
+  id: number;
   path: string;
   language: string | null;
   format: string | null;
@@ -1314,6 +1319,614 @@ export type MediaFileDetail = MediaFileRow &
   raw_ffprobe_json: Record<string, unknown> | null;
 };
 
+export type TranscodeStreamAction = "keep" | "drop" | "copy" | "encode";
+
+export type TranscodeStreamPlan = {
+  stream_index: number;
+  action: TranscodeStreamAction;
+  default_flag?: boolean | null;
+  codec?: string | null;
+  encoder?: string | null;
+  bitrate?: number | null;
+  crf?: number | null;
+  cq?: number | null;
+  width?: number | null;
+  height?: number | null;
+  frame_rate?: number | null;
+  pixel_format?: string | null;
+  profile?: string | null;
+  level?: string | null;
+  preset?: string | null;
+  gop_size?: number | null;
+  language?: string | null;
+  title?: string | null;
+};
+
+export type FilenameCleanupPreset =
+  | "none"
+  | "square_brackets"
+  | "round_brackets"
+  | "square_and_round_brackets"
+  | "all_brackets"
+  | "custom";
+
+export type TranscodeFormattingDefinition = {
+  enabled: boolean;
+  template: string;
+  source_name_explicit?: boolean;
+  metadata_separator: string;
+  cleanup_preset: FilenameCleanupPreset;
+  cleanup_regex: string | null;
+  include_subtitle_languages: boolean;
+  language_code_format: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47";
+};
+
+export type TranscodeFormattingPreset = {
+  id: number;
+  kind: "filename" | "folder";
+  name: string;
+  definition: TranscodeFormattingDefinition;
+  is_default: boolean;
+};
+
+export type TranscodePlan = {
+  version: 1;
+  profile: "compatibility" | "storage" | "modern" | "expert";
+  container: "mkv" | "mp4" | "webm";
+  video_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  audio_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  subtitle_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  video_streams: TranscodeStreamPlan[];
+  audio_streams: TranscodeStreamPlan[];
+  subtitle_streams: TranscodeStreamPlan[];
+  external_subtitles: Array<{
+    subtitle_id: number;
+    action: "drop" | "copy" | "encode";
+    codec?: string | null;
+    language?: string | null;
+    title?: string | null;
+  }>;
+  dynamic_range: "preserve" | "sdr" | "hdr10" | "hlg" | "dolby_vision";
+  chapters: "keep" | "drop";
+  metadata: "keep" | "drop";
+  cover: "keep" | "drop";
+  attachments: "keep" | "drop";
+  filename_template: string;
+  filename_template_override?: boolean | null;
+  filename_template_explicit_source?: boolean;
+  filename_format_enabled?: boolean;
+  include_subtitle_languages?: boolean;
+  filename_metadata_separator?: string | null;
+  filename_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
+  folder_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
+  filename_release_year?: number | null;
+  filename_movie_title?: string | null;
+  filename_series_name?: string | null;
+  filename_season_number?: number | null;
+  filename_episode_number?: number | null;
+  filename_episode_title?: string | null;
+  filename_cleanup_preset?: FilenameCleanupPreset | null;
+  filename_cleanup_regex?: string | null;
+  folder_format_enabled?: boolean;
+  folder_template?: string;
+  folder_template_override?: boolean | null;
+  folder_metadata_separator?: string | null;
+  folder_cleanup_preset?: FilenameCleanupPreset | null;
+  folder_cleanup_regex?: string | null;
+  output_mode?: "transcode_output" | "same_directory" | "replace_original" | null;
+  execution_mode?: "hardware_required" | "cpu_only" | null;
+  replacement_confirmed?: boolean;
+  target_mode?: "local" | "automatic" | "member";
+  target_member_id?: string | null;
+  target_device_id?: string | null;
+};
+
+export type TranscodePresetStreamRule = {
+  match_codecs: string[];
+  match_languages: string[];
+  match_default: boolean | null;
+  action: "copy" | "convert" | "remove";
+  codec?: string | null;
+  encoder?: string | null;
+  bitrate?: number | null;
+  crf?: number | null;
+  cq?: number | null;
+  width?: number | null;
+  height?: number | null;
+  frame_rate?: number | null;
+  pixel_format?: string | null;
+  profile?: string | null;
+  level?: string | null;
+  preset?: string | null;
+  gop_size?: number | null;
+  language?: string | null;
+  title?: string | null;
+};
+
+export type TranscodePresetDefinition = {
+  version: 1;
+  container: "source" | "mkv" | "mp4" | "webm";
+  video_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  audio_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  subtitle_language_code_format?: "container_default" | "iso_639_2" | "iso_639_2_region" | "iso_639_2_t";
+  video_rules: TranscodePresetStreamRule[];
+  audio_rules: TranscodePresetStreamRule[];
+  subtitle_rules: TranscodePresetStreamRule[];
+  external_subtitle_rules: TranscodePresetStreamRule[];
+  default_video_action: "copy" | "convert" | "remove";
+  default_audio_action: "copy" | "convert" | "remove";
+  default_subtitle_action: "copy" | "convert" | "remove";
+  default_external_subtitle_action: "copy" | "convert" | "remove";
+  dynamic_range: TranscodePlan["dynamic_range"];
+  chapters: "keep" | "drop";
+  metadata: "keep" | "drop";
+  cover: "keep" | "drop";
+  attachments: "keep" | "drop";
+  filename_template: string;
+  filename_template_override: boolean;
+  filename_template_explicit_source?: boolean;
+  include_subtitle_languages: boolean;
+  filename_metadata_separator?: string | null;
+  filename_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
+  folder_language_code_format?: "iso_639_1" | "iso_639_2" | "iso_639_2_t" | "iso_639_3" | "bcp_47" | null;
+  filename_cleanup_preset?: FilenameCleanupPreset | null;
+  filename_cleanup_regex?: string | null;
+  execution_mode: "inherit" | "hardware_required" | "cpu_only";
+};
+
+export type TranscodePreset = {
+  id: number;
+  name: string;
+  description: string;
+  version: number;
+  is_builtin: boolean;
+  builtin_key: string | null;
+  definition: TranscodePresetDefinition;
+  used_by_rule_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TranscodePresetPlan = {
+  preset?: TranscodePreset;
+  /** Legacy response property retained until older API payloads age out. */
+  profile?: TranscodePreset;
+  plan: TranscodePlan;
+};
+
+export type TranscodeProfileStreamRule = TranscodePresetStreamRule;
+export type TranscodeProfileDefinition = TranscodePresetDefinition;
+export type TranscodeProfile = TranscodePreset;
+export type TranscodeProfilePlan = TranscodePresetPlan;
+
+export type TranscodeCondition = {
+  type: "condition";
+  field: string;
+  operator: string;
+  value: unknown;
+};
+
+export type TranscodeConditionGroup = {
+  type: "group";
+  operator: "and" | "or";
+  children: Array<TranscodeCondition | TranscodeConditionGroup>;
+};
+
+export type TranscodeRule = {
+  id: number;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  version: number;
+  library_ids: number[];
+  conditions: TranscodeConditionGroup | null;
+  profile_id: number;
+  profile_name: string;
+  profile_version: number;
+  output_mode: "transcode_output" | "same_directory" | "replace_original";
+  output_subfolder: string;
+  replacement_approved: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TranscodeAutomationScope = {
+  rule_ids?: number[];
+  library_ids?: number[];
+  source_file_ids?: number[];
+  retry_failed?: boolean;
+  limit?: number;
+};
+
+export type TranscodeAutomationDecision = {
+  file_id: number;
+  library_id: number;
+  relative_path: string;
+  filename: string;
+  status: "matched" | "queued" | "blocked" | "skipped" | "unmatched";
+  reason: string | null;
+  rule_id: number | null;
+  rule_name: string | null;
+  rule_version: number | null;
+  profile_id: number | null;
+  profile_name: string | null;
+  profile_version: number | null;
+  output_path: string | null;
+  output_relative_path: string | null;
+  plan: TranscodePlan | null;
+};
+
+export type TranscodeAutomationPreview = {
+  generated_at: string;
+  total_files: number;
+  matched: number;
+  queued: number;
+  blocked: number;
+  skipped: number;
+  unmatched: number;
+  items: TranscodeAutomationDecision[];
+};
+
+export type TranscodeAutomationRun = {
+  id: number;
+  status: "queued" | "running" | "completed" | "failed" | "canceled";
+  trigger: string;
+  rule_ids: number[];
+  library_ids: number[];
+  source_file_ids: number[];
+  retry_failed: boolean;
+  page_size: number;
+  files_total: number;
+  matched: number;
+  queued: number;
+  blocked: number;
+  skipped: number;
+  unmatched: number;
+  completed: number;
+  failed: number;
+  canceled: number;
+  current_page: number;
+  summary: Record<string, unknown>;
+  error: string | null;
+  cancellation_requested: boolean;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type TranscodeEncoderCapability = {
+  name: string;
+  codec: string;
+  hardware: boolean;
+  available: boolean;
+  tested: boolean;
+  test_error: string | null;
+  device_ids?: string[];
+  options: string[];
+  quality_mode?: "crf" | "cq" | "qp" | "global_quality" | null;
+  quality_min?: number | null;
+  quality_max?: number | null;
+  quality_default?: number | null;
+  quality_step?: number | null;
+};
+
+export type TranscodeHardwareDevice = {
+  id: string;
+  name: string;
+  vendor: string;
+  backend: string;
+  driver_version: string | null;
+  compute_capability: string | null;
+  memory_total_bytes: number | null;
+  render_node?: string | null;
+  native_device_index?: number | null;
+  device_class?: "integrated" | "dedicated" | "unknown";
+  decoder_codecs: string[];
+  encoder_names?: string[];
+  encoder_codecs: string[];
+  supported_pixel_formats: string[];
+  supported_filters: string[];
+  status: "available" | "unavailable" | "not_detected";
+  failure_reason: string | null;
+  last_tested_at: string | null;
+};
+
+export type TranscodeCapabilities = {
+  ffmpeg_available: boolean;
+  ffmpeg_path: string;
+  version: string | null;
+  ffmpeg_version?: string | null;
+  containers: Array<"mkv" | "mp4" | "webm">;
+  encoders: TranscodeEncoderCapability[];
+  devices?: TranscodeHardwareDevice[];
+  decoder_codecs?: string[];
+  platform?: string | null;
+  last_tested_at?: string | null;
+  dolby_vision_passthrough: boolean;
+  error: string | null;
+};
+
+export type TranscodeMatrixBenchmarkRun = {
+  run: number;
+  duration_seconds: number | null;
+  success: boolean;
+  error: string | null;
+};
+
+export type TranscodeMatrixBenchmarkLevel = {
+  concurrency: number;
+  runs: TranscodeMatrixBenchmarkRun[];
+  median_seconds: number | null;
+  slowdown_percent: number | null;
+  passed: boolean;
+  error: string | null;
+};
+
+export type TranscodeMatrixBenchmark = {
+  tolerance_percent: number;
+  test_ceiling: number;
+  repetitions: number;
+  width: number;
+  height: number;
+  frame_rate: number;
+  frames: number;
+  stream_loops: number;
+  baseline_median_seconds: number | null;
+  slowdown_limit_seconds: number | null;
+  levels: TranscodeMatrixBenchmarkLevel[];
+};
+
+export type TranscodeMatrixCell = {
+  decode_codec: string;
+  encode_codec: string;
+  status: "hardware" | "software" | "unsupported" | "not_tested";
+  decoder: string | null;
+  encoder: string | null;
+  max_parallel_jobs: number | null;
+  max_parallel_jobs_is_lower_bound: boolean;
+  parallel_benchmark?: TranscodeMatrixBenchmark | null;
+  detail: string | null;
+};
+
+export type TranscodeDeviceMatrix = {
+  device_id: string;
+  device_name: string;
+  backend: string;
+  device_class?: "integrated" | "dedicated" | "unknown";
+  tested_at: string;
+  decode_codecs: string[];
+  encode_codecs: string[];
+  cells: TranscodeMatrixCell[];
+};
+
+export type TranscodeCapabilityMatrix = {
+  status: "not_run" | "completed" | "failed";
+  tested_at: string | null;
+  ffmpeg_version: string | null;
+  capability_fingerprint?: string | null;
+  matrices: TranscodeDeviceMatrix[];
+  error: string | null;
+};
+
+export type TranscodeMatrixTestProgress = {
+  running: boolean;
+  completed: number;
+  total: number;
+};
+
+export type TranscodeFederationSettings = {
+  enabled: boolean;
+  federation_id: string;
+  installation_id: string;
+  federation_name: string;
+  display_name: string;
+  pairing_code: string;
+  pairing_code_from_environment: boolean;
+  pairing_code_expires_at: number;
+  discovery_enabled: boolean;
+  accept_jobs: boolean;
+  endpoint_urls: string[];
+  hostname_urls: string[];
+  ip_urls: string[];
+  resource_policy: Record<string, unknown>;
+  protocol_version: number;
+  temp_budget_bytes: number;
+  result_retention_hours: number;
+  listener_status?: "unknown" | "disabled" | "starting" | "running" | "error";
+  listener_port?: number | null;
+  listener_error?: string | null;
+};
+
+export type TranscodeFederationMember = {
+  id: number;
+  installation_id: string;
+  federation_id: string;
+  display_name: string;
+  endpoint_urls: string[];
+  protocol_version: number;
+  application_version?: string | null;
+  status: string;
+  connection_status: string;
+  reachable: boolean;
+  accept_jobs: boolean;
+  resources: Record<string, unknown>;
+  capabilities: TranscodeCapabilities | null;
+  capability_matrix: TranscodeCapabilityMatrix | null;
+  active_jobs: number;
+  network_mbps: number;
+  preferred_endpoint_url?: string | null;
+  favorite_endpoint_url?: string | null;
+  endpoint_metrics?: Record<string, Record<string, unknown>>;
+  network_latency_ms?: number | null;
+  network_probe_at?: string | null;
+  last_seen_at: string | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+};
+
+export type TranscodeFederationPeer = {
+  installation_id: string;
+  federation_id: string | null;
+  display_name: string;
+  endpoint_urls: string[];
+  protocol_version: number;
+  application_version?: string | null;
+  reachable: boolean;
+  last_seen_at: string | null;
+};
+
+export type TranscodeFederation = {
+  settings: TranscodeFederationSettings;
+  members: TranscodeFederationMember[];
+  discovered: TranscodeFederationPeer[];
+};
+
+export type TranscodeValidation = {
+  valid: boolean;
+  output_path: string;
+  output_filename: string;
+  normalized_plan: TranscodePlan;
+  ffmpeg_arguments: string[];
+  ffmpeg_command: string;
+  kept_streams: string[];
+  changed_streams: string[];
+  removed_streams: string[];
+  added_streams: string[];
+  warnings: string[];
+  errors: string[];
+  detected_hardware_encoders: string[];
+  output_mode?: string;
+  execution_mode?: string | null;
+  device_id?: string | null;
+  hardware_backend?: string | null;
+  ffmpeg_version?: string | null;
+  cpu_thread_budget?: number | null;
+  cpu_budget_percent?: number | null;
+};
+
+export type TranscodeFileSummary = {
+  id: number | null;
+  filename: string;
+  relative_path: string;
+  library_type?: LibraryType | string | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  dynamic_range: string | null;
+  video_codec: string | null;
+  audio_codecs: string[];
+  audio_languages: string[];
+};
+
+export type TranscodeJob = {
+  id: number;
+  group_id: number;
+  library_id: number;
+  source_file_id: number | null;
+  source_video_codec?: string | null;
+  source_dynamic_range?: string | null;
+  result_file_id: number | null;
+  status: "queued" | "running" | "completed" | "canceled" | "failed";
+  profile: string;
+  profile_id?: number | null;
+  profile_version?: number | null;
+  rule_id?: number | null;
+  rule_version?: number | null;
+  rule_snapshot?: Record<string, unknown> | null;
+  automation_run_id?: number | null;
+  automation_trigger?: string | null;
+  plan_version: number;
+  plan: TranscodePlan;
+  ffmpeg_arguments: string[];
+  ffmpeg_command: string;
+  warnings: string[];
+  source_path_snapshot: string;
+  output_path_snapshot: string;
+  output_relative_path: string;
+  output_mode?: string;
+  output_storage_root?: string | null;
+  retry_count?: number;
+  attempt?: number;
+  cpu_budget_percent?: number | null;
+  cpu_thread_budget?: number | null;
+  device_id?: string | null;
+  hardware_backend?: string | null;
+  ffmpeg_version?: string | null;
+  remove_partial_output?: boolean;
+  on_error?: string;
+  progress_percent: number;
+  processed_seconds: number;
+  speed: string | null;
+  eta_seconds: number | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  global_job_id?: string | null;
+  origin_installation_id?: string | null;
+  target_installation_id?: string | null;
+  target_member_id?: string | null;
+  target_member_name?: string | null;
+  assignment_mode?: "local" | "automatic" | "member";
+  processing_phase?: string;
+  phase_detail?: string | null;
+  execution_attempt?: number;
+  remote_attempt_id?: string | null;
+  source_transfer_id?: string | null;
+  result_transfer_id?: string | null;
+  source_transfer_bytes?: number;
+  source_transfer_total_bytes?: number;
+  result_transfer_bytes?: number;
+  result_transfer_total_bytes?: number;
+  transfer_speed_bytes_per_second?: number | null;
+  transfer_eta_seconds?: number | null;
+};
+
+export type TranscodeVariant = {
+  id: number;
+  group_id: number;
+  job_id: number | null;
+  original_file_id: number | null;
+  output_file_id: number | null;
+  library_root_id: number | null;
+  output_relative_path: string;
+  output_filename: string;
+  output_mode?: string;
+  source_path_snapshot: string;
+  output_path_snapshot: string;
+  analysis_status: string;
+  created_at: string;
+  updated_at: string;
+  file: TranscodeFileSummary | null;
+};
+
+export type FileTranscode = {
+  original: TranscodeFileSummary;
+  presets?: Record<"compatibility" | "storage" | "modern", TranscodePlan>;
+  /** Legacy built-in-plan field retained for existing servers and clients. */
+  profiles: Record<"compatibility" | "storage" | "modern", TranscodePlan>;
+  saved_presets?: TranscodePresetPlan[];
+  /** Legacy saved-preset field returned during the API compatibility window. */
+  saved_profiles?: TranscodePresetPlan[];
+  attachments: Array<{
+    stream_index: number;
+    codec?: string | null;
+    filename?: string | null;
+    mimetype?: string | null;
+    title?: string | null;
+  }>;
+  variants: TranscodeVariant[];
+  jobs: TranscodeJob[];
+};
+
+export type TranscodeJobPage = {
+  items: TranscodeJob[];
+  total: number;
+};
+
 export type MediaFileRawProbe = {
   id: number;
   raw_ffprobe_json: Record<string, unknown> | null;
@@ -1447,6 +2060,12 @@ export type AppSettings = {
   default_ignore_patterns: string[];
   pattern_recognition?: {
     analyze_bonus_content: boolean;
+    duplicate_matching: {
+      duration_tolerance_seconds: number;
+      user_filename_suffix_regexes: string[];
+      default_filename_suffix_regexes: string[];
+      effective_filename_suffix_regexes: string[];
+    };
     show_season_patterns: {
       recognition_mode: "folder_depth" | "regex";
       series_folder_depth: number;
@@ -1470,6 +2089,7 @@ export type AppSettings = {
     parallel_scan_jobs: number;
     comparison_scatter_point_limit: number;
   };
+  transcoding?: TranscodingSettings;
   history_retention?: {
     file_history: {
       days: number;
@@ -1480,6 +2100,10 @@ export type AppSettings = {
       storage_limit_gb: number;
     };
     scan_history: {
+      days: number;
+      storage_limit_gb: number;
+    };
+    transcode_history: {
       days: number;
       storage_limit_gb: number;
     };
@@ -1507,6 +2131,18 @@ export type AppSettings = {
     in_depth_dolby_vision_profiles: boolean;
     show_all_playbacks_when_unstacked: boolean;
   };
+};
+
+export type TranscodingSettings = {
+  execution_mode: "hardware_required" | "cpu_only";
+  cpu_budget_percent: number;
+  cpu_parallel_jobs: "auto" | number;
+  gpu_parallel_jobs_per_device: number;
+  default_output_mode: "transcode_output" | "same_directory" | "replace_original";
+  on_error: "continue" | "stop_queue";
+  retry_count: number;
+  existing_output: "fail" | "skip";
+  remove_partial_output: boolean;
 };
 
 export type TelemetryPreviewMode = "none" | "minimal" | "enabled";
@@ -1538,6 +2174,7 @@ export type HistoryStorage = {
     file_history: HistoryStorageCategory;
     library_history: HistoryStorageCategory;
     scan_history: HistoryStorageCategory;
+    transcode_history: HistoryStorageCategory;
   };
 };
 
@@ -2179,6 +2816,7 @@ export const api = {
       filename: extractFilenameFromDisposition(response.headers.get("Content-Disposition")),
     };
   },
+  transcodeVariantMediaUrl: (id: number) => `${API_PREFIX}/transcode-variants/${id}/media`,
   fileMediaUrl: (id: string | number, options: { download?: boolean } = {}) => `${API_PREFIX}${buildFileMediaPath(id, options)}`,
   libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
   file: (
@@ -2199,6 +2837,193 @@ export const api = {
   fileQualityScore: (id: string | number) => request<MediaFileQualityScoreDetail>(`/files/${id}/quality-score`),
   fileHistory: (id: string | number, signal?: AbortSignal) =>
     request<MediaFileHistory>(`/files/${id}/history`, { signal }),
+  transcodeCapabilities: (refresh = false) =>
+    request<TranscodeCapabilities>(`/transcoding/capabilities${refresh ? "?refresh=true" : ""}`),
+  transcodeCapabilityMatrix: () =>
+    request<TranscodeCapabilityMatrix>("/transcoding/capability-matrix"),
+  transcodeCapabilityMatrixTestProgress: () =>
+    request<TranscodeMatrixTestProgress>("/transcoding/capability-matrix/test/progress"),
+  testTranscodeCapabilityMatrix: () =>
+    request<TranscodeCapabilityMatrix>("/transcoding/capability-matrix/test", { method: "POST" }),
+  transcodeFederation: () => request<TranscodeFederation>("/transcoding/federation"),
+  updateTranscodeFederation: (payload: Partial<Pick<TranscodeFederationSettings, "enabled" | "federation_name" | "display_name" | "discovery_enabled" | "accept_jobs" | "resource_policy">> & { endpoint_urls?: string[] }) =>
+    request<TranscodeFederationSettings>("/transcoding/federation", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  testTranscodeFederationNetwork: () =>
+    request<TranscodeFederation>("/transcoding/federation/network/test", { method: "POST" }),
+  resetTranscodeFederationPasscode: () =>
+    request<{ pairing_code: string; pairing_code_from_environment: boolean; pairing_code_expires_at: number }>("/transcoding/federation/passcode/reset", { method: "POST" }),
+  discoverTranscodeFederation: () =>
+    request<TranscodeFederation>("/transcoding/federation/discover", { method: "POST" }),
+  pairTranscodeFederation: (payload: { endpoint: string; pairing_code: string }) =>
+    request<TranscodeFederation>("/transcoding/federation/members/pair", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  testTranscodeFederationMemberCapabilityMatrix: (installationId: string) => {
+    const encodedInstallationId = encodeURIComponent(installationId);
+    return request<TranscodeFederation>(
+      `/transcoding/federation/members/${encodedInstallationId}/capability-matrix/test`,
+      { method: "POST" },
+    );
+  },
+  transcodeFederationMemberCapabilityMatrixTestProgress: (installationId: string) => {
+    const encodedInstallationId = encodeURIComponent(installationId);
+    return request<TranscodeMatrixTestProgress>(
+      `/transcoding/federation/members/${encodedInstallationId}/capability-matrix/test/progress`,
+    );
+  },
+  syncTranscodeFederationMember: (installationId: string) =>
+    request<TranscodeFederation>(`/transcoding/federation/members/${encodeURIComponent(installationId)}/sync`, { method: "POST" }),
+  updateTranscodeFederationMemberEndpoint: (
+    installationId: string,
+    payload: { endpoint: string; favorite?: boolean; blocked?: boolean },
+  ) =>
+    request<TranscodeFederation>(
+      `/transcoding/federation/members/${encodeURIComponent(installationId)}/endpoints`,
+      { method: "PATCH", body: JSON.stringify(payload) },
+    ),
+  excludeTranscodeFederationMember: (installationId: string) =>
+    request<void>(`/transcoding/federation/members/${encodeURIComponent(installationId)}`, { method: "DELETE" }),
+  transcodeFormattingPresets: () => request<TranscodeFormattingPreset[]>("/transcoding/formatting-presets"),
+  createTranscodeFormattingPreset: (payload: Pick<TranscodeFormattingPreset, "kind" | "name" | "definition">) =>
+    request<TranscodeFormattingPreset>("/transcoding/formatting-presets", { method: "POST", body: JSON.stringify(payload) }),
+  updateTranscodeFormattingPreset: (id: number, payload: Partial<Pick<TranscodeFormattingPreset, "name" | "definition" | "is_default">>) =>
+    request<TranscodeFormattingPreset>(`/transcoding/formatting-presets/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteTranscodeFormattingPreset: (id: number) =>
+    request<void>(`/transcoding/formatting-presets/${id}`, { method: "DELETE" }),
+  transcodePresets: () => request<TranscodePreset[]>("/transcoding/presets"),
+  createTranscodePreset: (payload: {
+    name: string;
+    description?: string;
+    definition?: TranscodePresetDefinition;
+  }) => request<TranscodePreset>("/transcoding/presets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  updateTranscodePreset: (id: number, payload: Partial<{
+    name: string;
+    description: string;
+    definition: TranscodePresetDefinition;
+  }>) => request<TranscodePreset>(`/transcoding/presets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }),
+  duplicateTranscodePreset: (id: number, name?: string) => request<TranscodePreset>(`/transcoding/presets/${id}/duplicate`, {
+    method: "POST",
+    body: JSON.stringify(name ? { name } : {}),
+  }),
+  deleteTranscodePreset: (id: number) => request<void>(`/transcoding/presets/${id}`, { method: "DELETE" }),
+  // Deprecated client aliases intentionally continue to target the supported
+  // legacy routes for callers that still use the old method names.
+  transcodeProfiles: () => request<TranscodePreset[]>("/transcoding/profiles"),
+  createTranscodeProfile: (payload: {
+    name: string;
+    description?: string;
+    definition?: TranscodePresetDefinition;
+  }) => request<TranscodePreset>("/transcoding/profiles", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  updateTranscodeProfile: (id: number, payload: Partial<{
+    name: string;
+    description: string;
+    definition: TranscodePresetDefinition;
+  }>) => request<TranscodePreset>(`/transcoding/profiles/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }),
+  duplicateTranscodeProfile: (id: number, name?: string) => request<TranscodePreset>(`/transcoding/profiles/${id}/duplicate`, {
+    method: "POST",
+    body: JSON.stringify(name ? { name } : {}),
+  }),
+  deleteTranscodeProfile: (id: number) => request<void>(`/transcoding/profiles/${id}`, { method: "DELETE" }),
+  transcodeRules: () => request<TranscodeRule[]>("/transcoding/rules"),
+  createTranscodeRule: (payload: {
+    name: string;
+    enabled?: boolean;
+    priority?: number;
+    library_ids: number[];
+    conditions?: TranscodeConditionGroup | null;
+    profile_id: number;
+    output_mode?: TranscodeRule["output_mode"];
+    output_subfolder?: string;
+  }) => request<TranscodeRule>("/transcoding/rules", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  updateTranscodeRule: (id: number, payload: Partial<{
+    name: string;
+    enabled: boolean;
+    priority: number;
+    library_ids: number[];
+    conditions: TranscodeConditionGroup | null;
+    profile_id: number;
+    output_mode: TranscodeRule["output_mode"];
+    output_subfolder: string;
+  }>) => request<TranscodeRule>(`/transcoding/rules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }),
+  deleteTranscodeRule: (id: number) => request<void>(`/transcoding/rules/${id}`, { method: "DELETE" }),
+  reorderTranscodeRules: (ruleIds: number[]) => request<TranscodeRule[]>("/transcoding/rules/reorder", {
+    method: "POST",
+    body: JSON.stringify({ rule_ids: ruleIds }),
+  }),
+  approveTranscodeRuleReplacement: (id: number, confirm = true) => request<TranscodeRule>(`/transcoding/rules/${id}/replacement-approval`, {
+    method: "POST",
+    body: JSON.stringify({ confirm }),
+  }),
+  previewTranscodeAutomation: (payload: TranscodeAutomationScope = {}) => request<TranscodeAutomationPreview>("/transcoding/automation/preview", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  startTranscodeAutomation: (payload: TranscodeAutomationScope = {}) => request<TranscodeAutomationRun>("/transcoding/automation/start", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  transcodeAutomationStatus: () => request<TranscodeAutomationRun | null>("/transcoding/automation/status"),
+  transcodeAutomationRuns: (limit = 100) => request<TranscodeAutomationRun[]>(`/transcoding/automation/runs?limit=${limit}`),
+  transcodeAutomation: (id: number) => request<TranscodeAutomationRun>(`/transcoding/automation/${id}`),
+  cancelTranscodeAutomation: (id: number) => request<TranscodeAutomationRun>(`/transcoding/automation/${id}/cancel`, { method: "POST" }),
+  fileTranscode: (id: string | number, signal?: AbortSignal) =>
+    request<FileTranscode>(`/files/${id}/transcode`, { signal }),
+  validateFileTranscode: (id: string | number, plan: TranscodePlan, signal?: AbortSignal) =>
+    request<TranscodeValidation>(`/files/${id}/transcode/validate`, {
+      method: "POST",
+      body: JSON.stringify(plan),
+      signal,
+    }),
+  startFileTranscode: (id: string | number, plan: TranscodePlan) =>
+    request<TranscodeJob>(`/files/${id}/transcode`, {
+      method: "POST",
+      body: JSON.stringify(plan),
+    }),
+  activeTranscodeJobs: () => request<TranscodeJobPage>("/transcode-jobs/active"),
+  transcodeJobs: (params: {
+    libraryId?: number;
+    status?: TranscodeJob["status"];
+    startedAfter?: string;
+    startedBefore?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.libraryId) query.set("library_id", String(params.libraryId));
+    if (params.status) query.set("status", params.status);
+    if (params.startedAfter) query.set("started_after", params.startedAfter);
+    if (params.startedBefore) query.set("started_before", params.startedBefore);
+    if (params.limit) query.set("limit", String(params.limit));
+    if (params.offset) query.set("offset", String(params.offset));
+    const suffix = query.toString();
+    return request<TranscodeJobPage>(`/transcode-jobs${suffix ? `?${suffix}` : ""}`);
+  },
+  transcodeJob: (id: string | number) => request<TranscodeJob>(`/transcode-jobs/${id}`),
+  deleteTranscodeJob: (id: string | number) => request<void>(`/transcode-jobs/${id}`, { method: "DELETE" }),
+  cancelTranscodeJob: (id: string | number) =>
+    request<TranscodeJob>(`/transcode-jobs/${id}/cancel`, { method: "POST" }),
   browse: (path = ".") => request<BrowseResponse>(`/browse?path=${encodeURIComponent(path)}`),
   telemetryPreview: (mode: TelemetryPreviewMode = "minimal") =>
     request<TelemetryPreview>(`/telemetry/preview?mode=${encodeURIComponent(mode)}`),
@@ -2405,6 +3230,11 @@ export const api = {
     default_ignore_patterns?: string[];
     pattern_recognition?: {
       analyze_bonus_content?: boolean;
+      duplicate_matching?: {
+        duration_tolerance_seconds?: number;
+        user_filename_suffix_regexes?: string[];
+        default_filename_suffix_regexes?: string[];
+      };
       show_season_patterns?: {
         recognition_mode?: "folder_depth" | "regex";
         series_folder_depth?: number;
@@ -2425,6 +3255,7 @@ export const api = {
       parallel_scan_jobs?: number;
       comparison_scatter_point_limit?: number;
     };
+    transcoding?: Partial<TranscodingSettings>;
     history_retention?: {
       file_history?: {
         days?: number;
@@ -2435,6 +3266,10 @@ export const api = {
         storage_limit_gb?: number;
       };
       scan_history?: {
+        days?: number;
+        storage_limit_gb?: number;
+      };
+      transcode_history?: {
         days?: number;
         storage_limit_gb?: number;
       };

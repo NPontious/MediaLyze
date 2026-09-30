@@ -1,6 +1,6 @@
 import i18n from "../i18n";
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildProfileIssue, CompatibilityProfilesPanel } from "./CompatibilityProfilesPanel";
@@ -97,8 +97,8 @@ describe("buildProfileIssue", () => {
 });
 
 describe("CompatibilityProfilesPanel", () => {
-  beforeEach(() => {
-    void i18n.changeLanguage("en");
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
     window.localStorage.clear();
   });
 
@@ -116,7 +116,25 @@ describe("CompatibilityProfilesPanel", () => {
 
     render(<CompatibilityProfilesPanel />);
 
-    expect(await screen.findByRole("button", { name: "Combination" })).toBeInTheDocument();
+    const developmentNote = await screen.findByRole("button", {
+      name: "Explain the compatibility profile catalog status",
+    });
+    expect(developmentNote.closest(".panel-title-row")).toContainElement(
+      screen.getByRole("heading", { name: "Hardware & software profiles" }),
+    );
+    expect(screen.queryByText("This is a very early version of the profile catalog and it still needs to grow.", { exact: false })).not.toBeInTheDocument();
+
+    fireEvent.click(developmentNote);
+    expect(await screen.findByText("This is a very early version of the profile catalog and it still needs to grow.", { exact: false })).toBeInTheDocument();
+
+    const tabs = await screen.findByRole("tablist", { name: "Hardware & software profiles" });
+    expect(tabs).toHaveClass("transcode-automation-tab-list");
+    expect(tabs.querySelector(".library-history-range-pill")).toBeNull();
+    expect(within(tabs).getAllByRole("tab")).toHaveLength(3);
+    expect(within(tabs).getByRole("tab", { name: "Hardware" })).toHaveClass("transcode-automation-tab-button", "active");
+    expect(await screen.findByRole("tab", { name: "Combination" })).toBeInTheDocument();
+    expect((await screen.findByRole("button", { name: "Profile" })).closest(".transcode-automation-toggle-row")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Add local profile" })).not.toBeInTheDocument();
     const trigger = await screen.findByRole("button", { name: "Test Device" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("Manufacturer")).not.toBeInTheDocument();
@@ -141,14 +159,14 @@ describe("CompatibilityProfilesPanel", () => {
     fireEvent.click(hardwareFavorite);
     expect(hardwareFavorite).toHaveAttribute("aria-pressed", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Software / Player" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Software / Player" }));
     const softwareFavorite = await screen.findByRole("button", {
       name: "Add Test Player to favorites",
     });
     fireEvent.click(softwareFavorite);
     expect(softwareFavorite).toHaveAttribute("aria-pressed", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Combination" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Combination" }));
     const combinationFavorite = await screen.findByRole("button", {
       name: "Add Test Combination to favorites",
     });
@@ -175,6 +193,7 @@ describe("CompatibilityProfilesPanel", () => {
 
     const manufacturer = await screen.findByLabelText("Manufacturer");
     expect(manufacturer).toHaveAttribute("readonly");
+    expect(manufacturer).toHaveClass("settings-choice-input");
 
     fireEvent.click(screen.getByRole("button", { name: "Edit profile Test Device" }));
 
@@ -278,6 +297,9 @@ describe("CompatibilityProfilesPanel", () => {
     expect(await screen.findByLabelText("Manufacturer")).not.toHaveAttribute("readonly");
     expect(screen.queryByLabelText("ID")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Propose on GitHub" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Propose on GitHub" })).toHaveClass("settings-panel-header-action", "small");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("settings-panel-header-action", "small");
+    expect(screen.getByRole("button", { name: "Save local copy" })).toHaveClass("transcode-action-button");
     fireEvent.click(screen.getByRole("button", { name: "Save local copy" }));
 
     await waitFor(() => expect(createProfile).toHaveBeenCalledWith(expect.objectContaining({
@@ -295,7 +317,7 @@ describe("CompatibilityProfilesPanel", () => {
     const createProfile = vi.spyOn(api, "createHardwareProfile").mockResolvedValue(profile());
 
     render(<CompatibilityProfilesPanel />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add local profile" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Profile" }));
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Living Room Device" } });
     expect(screen.queryByLabelText("ID")).not.toBeInTheDocument();

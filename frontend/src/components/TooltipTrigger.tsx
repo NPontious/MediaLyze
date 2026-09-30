@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEventHandler, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEventHandler, ReactNode } from "react";
 import {
   useEffect,
   useEffectEvent,
@@ -10,7 +10,7 @@ import {
 import { createPortal } from "react-dom";
 
 type TooltipAlign = "center" | "start";
-type TooltipPlacement = "below" | "auto";
+type TooltipPlacement = "below" | "auto" | "center";
 
 type TooltipTriggerProps = {
   content: ReactNode;
@@ -24,10 +24,16 @@ type TooltipTriggerProps = {
   hoverOpenDelay?: number;
   preserveLineBreaks?: boolean;
   onOpen?: () => void;
-  onClick?: MouseEventHandler<HTMLButtonElement>;
+  onMouseDown?: MouseEventHandler<HTMLElement>;
+  onClick?: MouseEventHandler<HTMLElement>;
   disabled?: boolean;
   pinOnClick?: boolean;
   ariaPressed?: boolean;
+  ariaExpanded?: boolean;
+  ariaControls?: string;
+  ariaDisabled?: boolean;
+  title?: string;
+  as?: "button" | "span";
   dataToggleKey?: string;
   children?: ReactNode;
 };
@@ -50,15 +56,21 @@ export function TooltipTrigger({
   hoverOpenDelay = TOOLTIP_HOVER_OPEN_DELAY,
   preserveLineBreaks = false,
   onOpen,
+  onMouseDown,
   onClick,
   disabled = false,
   pinOnClick = true,
   ariaPressed,
+  ariaExpanded,
+  ariaControls,
+  ariaDisabled,
+  title,
+  as = "button",
   dataToggleKey,
   children = "?",
 }: TooltipTriggerProps) {
   const tooltipId = useId();
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const openTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -116,8 +128,8 @@ export function TooltipTrigger({
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const availableWidth = Math.max(0, viewportWidth - TOOLTIP_VIEWPORT_MARGIN * 2);
-    const resolvedWidth = Math.min(maxWidth, availableWidth);
-    const tooltipWidth = Math.min(tooltip.offsetWidth || resolvedWidth, resolvedWidth);
+    const resolvedMaxWidth = Math.min(maxWidth, availableWidth);
+    const tooltipWidth = Math.min(tooltip.offsetWidth || resolvedMaxWidth, resolvedMaxWidth);
     const tooltipHeight = tooltip.offsetHeight;
     const idealLeft =
       align === "center"
@@ -140,19 +152,29 @@ export function TooltipTrigger({
       placement === "auto" &&
       availableAbove > availableBelow &&
       tooltipHeight > availableBelow;
-    const maxHeight = Math.max(64, placeAbove ? availableAbove : availableBelow);
-    const top = placeAbove
-      ? Math.max(
-          TOOLTIP_VIEWPORT_MARGIN,
-          triggerRect.top - TOOLTIP_GAP - Math.min(tooltipHeight, maxHeight),
+    const maxHeight = placement === "center"
+      ? Math.max(64, viewportHeight - TOOLTIP_VIEWPORT_MARGIN * 2)
+      : Math.max(64, placeAbove ? availableAbove : availableBelow);
+    const visibleTooltipHeight = Math.min(tooltipHeight, maxHeight);
+    const centeredTop = triggerRect.top + triggerRect.height / 2 - visibleTooltipHeight / 2;
+    const top = placement === "center"
+      ? Math.min(
+          Math.max(TOOLTIP_VIEWPORT_MARGIN, centeredTop),
+          Math.max(TOOLTIP_VIEWPORT_MARGIN, viewportHeight - TOOLTIP_VIEWPORT_MARGIN - visibleTooltipHeight),
         )
-      : belowTop;
+      : placeAbove
+        ? Math.max(
+            TOOLTIP_VIEWPORT_MARGIN,
+            triggerRect.top - TOOLTIP_GAP - visibleTooltipHeight,
+          )
+        : belowTop;
 
     setTooltipStyle((current) => {
       if (
         current?.left === left &&
         current.top === top &&
-        current.width === resolvedWidth &&
+        current.width === "max-content" &&
+        current.maxWidth === resolvedMaxWidth &&
         current.maxHeight === maxHeight &&
         current.visibility === "visible"
       ) {
@@ -161,7 +183,8 @@ export function TooltipTrigger({
       return {
         left,
         top,
-        width: resolvedWidth,
+        width: "max-content",
+        maxWidth: resolvedMaxWidth,
         maxHeight,
         visibility: "visible",
       };
@@ -274,7 +297,7 @@ export function TooltipTrigger({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [isPinned, closeTooltip]);
 
-  const handleClick: MouseEventHandler<HTMLButtonElement> = (event) => {
+  const handleClick: MouseEventHandler<HTMLElement> = (event) => {
     onClick?.(event);
     if (event.defaultPrevented || !pinOnClick) {
       return;
@@ -296,44 +319,97 @@ export function TooltipTrigger({
     .filter(Boolean)
     .join(" ");
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (as === "span" && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      handleClick(event as unknown as Parameters<MouseEventHandler<HTMLElement>>[0]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeTooltip();
+      triggerRef.current?.blur();
+    }
+  };
+
+  const triggerClassName = ["tooltip-trigger", className ?? ""].filter(Boolean).join(" ");
+  const assignTriggerRef = (node: HTMLElement | null) => {
+    triggerRef.current = node;
+  };
+
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label={ariaLabel}
-        aria-describedby={isOpen ? tooltipId : undefined}
-        aria-expanded={isOpen}
-        aria-pressed={ariaPressed}
-        data-toggle-key={dataToggleKey}
-        disabled={disabled}
-        className={["tooltip-trigger", className ?? ""].filter(Boolean).join(" ")}
-        style={style}
-        onMouseEnter={() => {
-          scheduleHoverOpen();
-        }}
-        onMouseLeave={() => scheduleHoverClose()}
-        onFocus={() => {
-          clearOpenTimer();
-          clearCloseTimer();
-          setIsFocused(true);
-        }}
-        onBlur={() => {
-          clearOpenTimer();
-          setIsFocused(false);
-          setIsPinned(false);
-        }}
-        onClick={handleClick}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            closeTooltip();
-            triggerRef.current?.blur();
-          }
-        }}
-      >
-        {children}
-      </button>
+      {as === "span" ? (
+        <span
+          ref={triggerRef}
+          role="group"
+          tabIndex={0}
+          aria-label={ariaLabel}
+          aria-describedby={isOpen ? tooltipId : undefined}
+          aria-expanded={ariaExpanded ?? isOpen}
+          aria-controls={ariaControls}
+          aria-disabled={ariaDisabled ?? (disabled || undefined)}
+          aria-pressed={ariaPressed}
+          title={title}
+          data-toggle-key={dataToggleKey}
+          className={triggerClassName}
+          style={style}
+          onMouseEnter={() => {
+            scheduleHoverOpen();
+          }}
+          onMouseLeave={() => scheduleHoverClose()}
+          onMouseDown={onMouseDown}
+          onFocus={() => {
+            clearOpenTimer();
+            clearCloseTimer();
+            setIsFocused(true);
+          }}
+          onBlur={() => {
+            clearOpenTimer();
+            setIsFocused(false);
+            setIsPinned(false);
+          }}
+          onClick={handleClick}
+          onKeyDown={handleKeyDown}
+        >
+          {children}
+        </span>
+      ) : (
+        <button
+          ref={assignTriggerRef}
+          type="button"
+          aria-label={ariaLabel}
+          aria-describedby={isOpen ? tooltipId : undefined}
+          aria-expanded={ariaExpanded ?? isOpen}
+          aria-controls={ariaControls}
+          aria-disabled={ariaDisabled}
+          aria-pressed={ariaPressed}
+          title={title}
+          data-toggle-key={dataToggleKey}
+          disabled={disabled}
+          className={triggerClassName}
+          style={style}
+          onMouseEnter={() => {
+            scheduleHoverOpen();
+          }}
+          onMouseLeave={() => scheduleHoverClose()}
+          onMouseDown={onMouseDown as MouseEventHandler<HTMLButtonElement> | undefined}
+          onFocus={() => {
+            clearOpenTimer();
+            clearCloseTimer();
+            setIsFocused(true);
+          }}
+          onBlur={() => {
+            clearOpenTimer();
+            setIsFocused(false);
+            setIsPinned(false);
+          }}
+          onClick={handleClick as MouseEventHandler<HTMLButtonElement>}
+          onKeyDown={handleKeyDown}
+        >
+          {children}
+        </button>
+      )}
       {isOpen && typeof document !== "undefined"
         ? createPortal(
             <div

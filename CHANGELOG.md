@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Bug fixes
+
+- Collapse transcode validation by default, highlight the existing Transcoding navigation control after starting a job, and compare linked output versions below Preview with left/right version selectors, including separate Transcode_Output files.
+
+- Release resource reservations for finished or startup-canceled transcodes immediately, preventing stale GPU reservations from leaving subsequent jobs queued after a development reload or process restart.
+
+- Distinguish installed software codec support from unavailable hardware encoders, explain CPU-only AV1 support, and omit generated commands when encoder resolution fails instead of treating codec names as encoders.
+
+- Add compact action buttons, halve transcoding column-header height, provide a borderless filter reset in Active and History, and deletion of terminal transcoding runs from history while retaining source files, output files, and linked variants.
+
+- Select a jointly compatible, probed hardware device for all encoded video streams, honor NVIDIA NVENC preferences, and use current codec-pair benchmark measurements to refine automatic device selection. Validate explicit device choices against encoder probes.
+
+- Keep transcoding progress, estimated speed and time remaining updating from video frame counts when FFmpeg reports unavailable output timestamps, and overlay progress metrics on the compact speed graph. Center the phase label on the thin progress bar with a white gap behind its text.
+- Translate inherited H.264/HEVC profile names such as `Main`, `High` and `Main 10` into encoder-compatible FFmpeg values, fixing VideoToolbox transcoding failures.
+- Move stream language-code formatting into compact Metadata settings rows in File Detail and transcoding presets, with one choice for video, audio and subtitles, Container default as the initial value, and automatic container-compatible fallback when applying presets.
+- Reduce scan memory usage by loading stored raw metadata only when needed and releasing persisted analysis payloads and stream data during scans. Bound ffprobe output and execution time so excessive output or stalled probes fail per file instead of exhausting backend memory or blocking scan workers ([#184](https://github.com/frederikemmer/MediaLyze/issues/184)).
+- Persist newly replaced streams and subtitle sidecars before capturing file history, avoiding false analysis failures from missing database IDs.
+
+## v0.19.0
+
+>2026-09-29
+
+This release brings ffmpeg transcoding to MediaLyze!
+
+validated plans with stream controls, hardware capability tests, reusable presets, flexible filename and folder formatting and linked variants that can be played side by side against the original for direct comparison. Alongside it, the interface gets denser and more consistent, with compact library navigation in the header and more compact settings tables. See the following release notes for a complete picture.
+
+### ✨ New
+
+- **Video transcoding** — build validated FFmpeg plans with stream controls, tested hardware acceleration, explicit CPU-only mode, configurable output, and linked variants for comparison.
+- **Transcoding overview** — queue files, track progress, cancel or retry jobs, and review completed work.
+- **Transcoding presets** — save reusable stream settings for later use.
+- **Filename and folder formatting** — configure each separately, rearrange or remove metadata tokens, include connector metadata, and save presets with language-code options.
+- **Synchronized video comparison** — play two versions in sync and drag the divider across the image to compare them directly.
+
+### ✨ Enhancements
+
+- **Compact header navigation** — group libraries under a hover and touch accessible Library icon, show page names after two seconds of icon hover, and show the MediaLyze icon instead of its name on phones.
+- **More compact Storage Map** — remove redundant summary cards and subtitle, match the Transcoding page's icon heading, bring filters closer to the title, and keep the treemap evenly inset from the panel edges.
+- **Connector setup guidance** — move the explanatory text into a tooltip beside the Connectors heading and match its Add connection button to Libraries.
+- **Compact history retention tables** — tighten row spacing and shorten storage forecast headings.
+- **Hardware test progress** — scale live progress to codec work and benchmark frame volume so longer parallel tests keep moving the Test Hardware indicator proportionally.
+
+### 🔒 Security
+
+- Updated dependencies, including AnyIO 4.14.2 for security fixes, and strengthened desktop packaging safeguards.
+
+### 🐛 Bug fixes
+
+- remove stale, unassigned default profiles copied across media types at startup, while preserving profiles assigned to libraries.
+
 ## v0.18.1
 
 >2026-09-25
@@ -21,6 +71,7 @@ New Storage map to view your entire library at once!
 
 ### ✨ New
 
+- add official hardware profiles for AMD Ryzen 7 7840HS (Radeon 780M), Google Pixel 9, and Google TV Streamer (4K)
 - add a Storage Map which can be sorted/colored in different ways
 - add a provider-neutral, multi-connection connector layer (for later implementation of Plex, ...)
 - add conservative corpus-based automatic connector path inference (manual path mapping shouldn't be necessary now)
@@ -69,12 +120,17 @@ This release adds a read-only Jellyfin integration with catalog synchronization,
 
 ### 🐛 Fixed
 
+- **Reliable local restarts on Windows** — stop orphaned reload workers so stale API and federation sockets cannot survive a restart; align runtime settings with custom development ports.
+- **Full-width profile hover** — highlight the complete profile catalog row, including its actions, in light and dark themes.
+- **Consistent page headings** — Dashboard and Compare files share the Transcoding and Storage Map heading sizes and icon treatment; remove the comparison subtitle and tighten vertical spacing around library media sources.
+
 - restore comfortable responsive search-field widths in the library Analyzed files panel and wrap the search toolbar before adjacent header controls collide
 - open every file detail view on Overview instead of carrying the previously selected subsection across files
 - align protected quality-profile controls and hardware/software profile lists with MediaLyze's dark-mode palette
 
 ### 🔒 Security
 
+- update transitive desktop `fast-uri` and `@xmldom/xmldom` dependencies to patched releases to remediate the current host-confusion, SSRF, and XML-fragment-injection advisories
 - pin all transitive desktop `brace-expansion` branches to their patched releases to prevent exponential-time brace-pattern expansion during Electron packaging
 - update the transitive desktop `tar` package to 7.5.22 to prevent crafted PAX metadata from crashing Electron packaging
 - override the desktop icon pipeline to `sharp` 0.35.3 so packaged libvips binaries include the latest upstream security fixes

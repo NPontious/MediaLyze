@@ -1,3 +1,4 @@
+import pytest
 from datetime import UTC, datetime, timedelta
 import subprocess
 
@@ -47,6 +48,7 @@ from pathlib import Path
 from backend.app.schemas.app_settings import AppSettingsUpdate
 from backend.app.services.app_settings import update_app_settings
 from backend.app.services.media_service import COVER_PNG_CACHE
+from backend.app.services.quality import default_quality_profile_for_media_type
 from backend.app.services.update_status import UPDATE_STATUS_KEY
 from backend.app.services.runtime import ScanCancelPersistenceError
 
@@ -277,6 +279,39 @@ def test_quality_profiles_keep_user_default_and_refresh_builtin_defaults() -> No
         assert any(profile["name"] == "Default audiobook custom" for profile in profiles)
 
 
+def test_quality_profiles_migrate_unassigned_cross_media_default_copies_idempotently() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    with session_factory() as db:
+        legacy_default = QualityProfileDefinition(
+            name="Default audiobook",
+            media_type=QualityProfileMediaType.music,
+            profile=default_quality_profile_for_media_type("audiobook"),
+            is_default=True,
+            is_builtin=False,
+        )
+        stale_copy = QualityProfileDefinition(
+            name="Default audiobook custom",
+            media_type=QualityProfileMediaType.music,
+            profile=default_quality_profile_for_media_type("audiobook"),
+            is_default=False,
+            is_builtin=False,
+        )
+        db.add_all([legacy_default, stale_copy])
+        db.commit()
+
+        client = _build_test_app(db)
+        first_profiles = client.get("/api/quality-profiles").json()
+        second_profiles = client.get("/api/quality-profiles").json()
+
+        assert [profile["name"] for profile in first_profiles if profile["media_type"] == "music"] == ["Default music"]
+        assert [profile["name"] for profile in first_profiles if profile["media_type"] == "audiobook"] == ["Default audiobook"]
+        assert [profile["name"] for profile in second_profiles if profile["media_type"] == "music"] == ["Default music"]
+        assert [profile["name"] for profile in second_profiles if profile["media_type"] == "audiobook"] == ["Default audiobook"]
+
+
 def test_quality_profile_names_are_global_case_insensitive_and_default_names_reserved() -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -408,7 +443,7 @@ def test_file_cover_returns_png_from_embedded_cover(tmp_path, monkeypatch) -> No
     captured: dict[str, object] = {}
     run_count = 0
 
-    def fake_run(command, *, check, capture_output, timeout):
+    def fake_run(command, *, check, capture_output, timeout, **_kwargs):
         nonlocal run_count
         run_count += 1
         captured["command"] = command
@@ -2612,3 +2647,36 @@ def test_library_duplicate_suppression_routes_validate_inputs() -> None:
     assert unknown_response.status_code == 404
     assert empty_response.status_code == 400
     assert invalid_mode_response.status_code == 400
+
+
+@pytest.mark.parametrize("analysis_status", ["external", "awaiting_analysis"])
+def test_transcode_variant_media_serves_output_and_rejects_escaping_path(tmp_path, analysis_status):
+    from backend.app.core.config import Settings
+    from backend.app.models.entities import TranscodeVariant, TranscodeVariantGroup
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        library = Library(name="Movies", path=str(tmp_path), type=LibraryType.movies, scan_mode=ScanMode.manual, scan_config={})
+        db.add(library)
+        db.flush()
+        group = TranscodeVariantGroup(library_id=library.id, original_relative_path="movie.mkv", original_filename="movie.mkv")
+        db.add(group)
+        db.flush()
+        output = tmp_path / "output"
+        output.mkdir()
+        path = output / "variant.mp4"
+        path.write_bytes(b"variant-bytes")
+        variant = TranscodeVariant(group_id=group.id, output_relative_path="variant.mp4", output_filename="variant.mp4",
+            output_mode="transcode_output", source_path_snapshot="movie.mkv", output_path_snapshot=str(path), analysis_status=analysis_status)
+        db.add(variant)
+        db.commit()
+        client = _build_test_app(db)
+        client.app.dependency_overrides[get_app_settings] = lambda: Settings(config_path=tmp_path, transcode_output_root=output)
+        response = client.get(f"/api/transcode-variants/{variant.id}/media", headers={"Range": "bytes=0-6"})
+        assert response.status_code == 206
+        assert response.content == b"variant"
+        assert response.headers["content-type"].startswith("video/mp4")
+        variant.output_path_snapshot = str(tmp_path / "outside.mp4")
+        (tmp_path / "outside.mp4").write_bytes(b"outside")
+        db.commit()
+        assert client.get(f"/api/transcode-variants/{variant.id}/media").status_code == 404
