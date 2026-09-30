@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## vUnreleased
 
+### 🐛 Bug fixes
+
+- Reduce scan memory usage by loading stored raw metadata only when needed and releasing persisted analysis payloads and stream data during scans. Bound ffprobe output and execution time so excessive output or stalled probes fail per file instead of exhausting backend memory or blocking scan workers ([#184](https://github.com/frederikemmer/MediaLyze/issues/184)).
+- Persist newly replaced streams and subtitle sidecars before capturing file history, avoiding false analysis failures from missing database IDs.
+
 ## v0.19.0
 
 >2026-09-29

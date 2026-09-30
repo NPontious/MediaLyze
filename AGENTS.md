@@ -193,6 +193,7 @@ Actual implementation:
 * jobs are queued and deduplicated per library
 * execution is backed by a `ThreadPoolExecutor`
 * file discovery stays single-threaded, while worker threads are used for per-file analysis and duplicate processing only
+* scans defer stored raw ffprobe payloads and release persisted per-file analysis data during processing; ffprobe has a 120-second timeout and bounded output (16 MiB metadata, 1 MiB diagnostics), with limit failures recorded per file
 * APScheduler manages scheduled work
 * watchdog observers feed filesystem-triggered scans
 * active jobs can be canceled globally or per library

@@ -14,7 +14,7 @@ import traceback
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, defer, selectinload
 
 from backend.app.core.config import Settings, get_allowed_media_extensions
 from backend.app.db.session import SessionLocal
@@ -1195,7 +1195,13 @@ def run_scan(
         for media_file in db.scalars(
             select(MediaFile)
             .where(MediaFile.library_id == library_id)
-            .options(selectinload(MediaFile.external_subtitles), selectinload(MediaFile.library_root))
+            .options(
+                defer(MediaFile.raw_ffprobe_json),
+                defer(MediaFile.quality_score_breakdown),
+                defer(MediaFile.analysis_failure_detail),
+                selectinload(MediaFile.external_subtitles),
+                selectinload(MediaFile.library_root),
+            )
         ).all()
     }
     same_directory_variant_paths = {
@@ -1578,6 +1584,9 @@ def run_scan(
                                     library,
                                     app_settings.resolution_categories,
                                 )
+                                # History serialization requires IDs on newly
+                                # replaced streams and subtitle sidecars.
+                                db.flush()
                                 create_media_file_history_entry_if_changed(
                                     db,
                                     work.media_file,
@@ -1625,6 +1634,15 @@ def run_scan(
                             )
 
                     db.flush()
+                    # existing_by_path retains files until discovery finishes. Release
+                    # persisted analysis data so a full scan does not retain every
+                    # raw payload and stream graph with expire_on_commit=False.
+                    if work.needs_analysis:
+                        db.expire(work.media_file, [
+                            "raw_ffprobe_json", "quality_score_breakdown", "analysis_failure_detail",
+                            "media_format", "video_streams", "audio_streams", "subtitle_streams",
+                            "external_subtitles", "chapters",
+                        ])
                     job.files_scanned += 1
                     processing_progress_counter += 1
                     processed_count += 1

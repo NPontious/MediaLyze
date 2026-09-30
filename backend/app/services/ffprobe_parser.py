@@ -6,10 +6,68 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 from backend.app.services.languages import normalize_language_code, normalize_language_tag
 from backend.app.utils.processes import get_hidden_subprocess_kwargs
+
+FFPROBE_TIMEOUT_SECONDS = 120
+FFPROBE_STDOUT_LIMIT_BYTES = 16 * 1024 * 1024
+FFPROBE_STDERR_LIMIT_BYTES = 1024 * 1024
+
+
+def _run_bounded_ffprobe(command: list[str]) -> str:
+    # Drain both pipes concurrently; communicate()/capture_output would retain
+    # unlimited output from malformed media in the backend process.
+    with subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **get_hidden_subprocess_kwargs(),
+    ) as process:
+        stdout = bytearray()
+        stderr = bytearray()
+        exceeded_limits: list[str] = []
+
+        def read_output(pipe, output: bytearray, limit: int, name: str) -> None:
+            while chunk := pipe.read1(64 * 1024):
+                remaining = limit - len(output)
+                output.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    exceeded_limits.append(name)
+                    process.kill()
+                    return
+
+        readers = [
+            Thread(target=read_output, args=(process.stdout, stdout, FFPROBE_STDOUT_LIMIT_BYTES, "metadata")),
+            Thread(target=read_output, args=(process.stderr, stderr, FFPROBE_STDERR_LIMIT_BYTES, "error output")),
+        ]
+        for reader in readers:
+            reader.start()
+        timed_out = False
+        try:
+            process.wait(timeout=FFPROBE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            for reader in readers:
+                reader.join()
+
+        if timed_out:
+            raise RuntimeError(f"ffprobe timed out after {FFPROBE_TIMEOUT_SECONDS} seconds")
+        if exceeded_limits:
+            raise RuntimeError(f"ffprobe {exceeded_limits[0]} exceeded the safety limit")
+        if process.returncode:
+            error = subprocess.CalledProcessError(
+                process.returncode, command, stderr=stderr.decode("utf-8", errors="replace"),
+            )
+            raise RuntimeError(_ffprobe_error_message(error)) from error
+        return stdout.decode("utf-8", errors="replace")
 
 
 @dataclass(slots=True)
@@ -487,17 +545,7 @@ def run_ffprobe(file_path: Path, ffprobe_path: str) -> dict[str, Any]:
         "-show_chapters",
         _ffprobe_input_path(file_path),
     ]
-    run_kwargs: dict[str, Any] = {
-        "capture_output": True,
-        "text": True,
-        "check": True,
-    }
-    run_kwargs.update(get_hidden_subprocess_kwargs())
-    try:
-        completed = subprocess.run(command, **run_kwargs)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_ffprobe_error_message(exc)) from exc
-    return json.loads(completed.stdout or "{}")
+    return json.loads(_run_bounded_ffprobe(command) or "{}")
 
 
 def normalize_ffprobe_payload(payload: dict[str, Any]) -> ProbeResult:

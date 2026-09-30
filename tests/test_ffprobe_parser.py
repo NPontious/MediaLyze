@@ -1,9 +1,59 @@
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import backend.app.services.ffprobe_parser as ffprobe_parser
 from backend.app.services.ffprobe_parser import _ffprobe_error_message, _ffprobe_input_path, normalize_ffprobe_payload
+
+
+def test_bounded_ffprobe_reads_both_pipes_and_preserves_unicode() -> None:
+    output = ffprobe_parser._run_bounded_ffprobe([
+        sys.executable, "-X", "utf8", "-c",
+        "import sys; sys.stderr.write('warning\\n' * 10000); print('{\"title\": \"Grüße\"}')",
+    ])
+    assert output.strip() == '{"title": "Grüße"}'
+
+
+def test_bounded_ffprobe_preserves_corrupt_file_reason() -> None:
+    with pytest.raises(RuntimeError, match="moov atom not found"):
+        ffprobe_parser._run_bounded_ffprobe([
+            sys.executable, "-c",
+            "import sys; sys.stderr.write('moov atom not found\\n'); sys.exit(1)",
+        ])
+
+
+@pytest.mark.parametrize("stream,limit,reason", [
+    ("stdout", "FFPROBE_STDOUT_LIMIT_BYTES", "metadata"),
+    ("stderr", "FFPROBE_STDERR_LIMIT_BYTES", "error output"),
+])
+def test_bounded_ffprobe_stops_excessive_output(monkeypatch, stream, limit, reason) -> None:
+    monkeypatch.setattr(ffprobe_parser, limit, 1024)
+    with pytest.raises(RuntimeError, match=f"{reason} exceeded the safety limit"):
+        ffprobe_parser._run_bounded_ffprobe([
+            sys.executable, "-c",
+            f"import sys; sys.{stream}.write('x' * 1000000); sys.{stream}.flush()",
+        ])
+
+
+def test_bounded_ffprobe_timeout_reaps_process(monkeypatch) -> None:
+    monkeypatch.setattr(ffprobe_parser, "FFPROBE_TIMEOUT_SECONDS", 0.1)
+    processes = []
+    real_popen = subprocess.Popen
+
+    def record_process(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(ffprobe_parser.subprocess, "Popen", record_process)
+    with pytest.raises(RuntimeError, match="ffprobe timed out"):
+        ffprobe_parser._run_bounded_ffprobe([sys.executable, "-c", "import time; time.sleep(30)"])
+    assert processes[0].poll() is not None
+    assert processes[0].stdout.closed
+    assert processes[0].stderr.closed
 
 
 def test_normalize_ffprobe_payload_extracts_streams() -> None:
