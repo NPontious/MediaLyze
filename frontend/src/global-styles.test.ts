@@ -377,6 +377,9 @@ describe("global theme styles", () => {
     const metadataList = componentStyles.match(/\.transcode-metadata-option-list\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(languageFirst).toMatch(/font-size:\s*0\.96rem/);
     expect(metadataList).toMatch(/display:\s*grid/);
+    expect(metadataList).toMatch(/gap:\s*0/);
+    expect(componentStyles).toMatch(/\.transcode-metadata-settings \.transcode-global-options\s*\{[^}]*gap:\s*0/s);
+    expect(componentStyles).toMatch(/\.transcode-metadata-option-list \.transcode-global-option-label\s*\{[^}]*flex:\s*0 1 auto/s);
     expect(metadataList).toMatch(/border-radius:\s*10px/);
     expect(componentStyles).toMatch(/\.transcode-metadata-option-list \.transcode-global-option \+ \.transcode-global-option\s*\{[^}]*border-top:/s);
 

@@ -247,6 +247,31 @@ def test_reordering_keeps_approved_replace_version(tmp_path: Path) -> None:
         assert current.replacement_approved is True
 
 
+@pytest.mark.parametrize("container,format,expected", [
+    ("mp4", "iso_639_2_region", "container_default"),
+    ("mkv", "iso_639_2_t", "container_default"),
+    ("source", "iso_639_2_t", "container_default"),
+    ("mkv", "iso_639_2_region", "iso_639_2_region"),
+    ("mp4", "iso_639_2_t", "iso_639_2_t"),
+])
+def test_preset_stream_language_formats_fall_back_to_container_default(tmp_path: Path, container, format, expected) -> None:
+    settings = _settings(tmp_path)
+    with _session_factory()() as db:
+        media_file = _media_file(db, tmp_path)
+        definition = _profile_definition()
+        definition.container = container
+        definition.video_language_code_format = format
+        definition.audio_language_code_format = format
+        definition.subtitle_language_code_format = format
+        profile = TranscodePreset(name="Language format", definition=definition.model_dump(mode="json"))
+        plan = automation.materialize_transcode_preset(profile, media_file, _capabilities(), get_app_settings(db, settings))
+        assert plan.video_language_code_format == expected
+        assert plan.audio_language_code_format == expected
+        assert plan.subtitle_language_code_format == expected
+        # Applying a preset leaves the saved preference available for other containers.
+        assert profile.definition["video_language_code_format"] == format
+
+
 def test_profile_materialization_copies_unmatched_internal_and_external_is_opt_in(tmp_path: Path) -> None:
     factory = _session_factory()
     settings = _settings(tmp_path)

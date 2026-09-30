@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { Ban, Clock3, Copy, Gauge, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, Power, RefreshCw, Save, Search, ShieldCheck, Star, Trash2, Unplug, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { releaseVisibility } from "../lib/release-visibility";
-import { formatLanguageName, languageOptions, normalizeLanguageTag, streamLanguageCodeFormats } from "../lib/language";
+import { formatLanguageName, languageOptions, normalizeLanguageTag, sharedStreamLanguageCodeFormat, streamLanguageCodeFormats } from "../lib/language";
 
 import {
   api,
@@ -698,7 +698,6 @@ function PresetDefinitionEditor({
         }}>
           {(["source", "mkv", "mp4", "webm"] as const).map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}
         </select></label>
-        <LanguageCodeFormatField value={definition.filename_language_code_format ?? "iso_639_1"} onChange={(filename_language_code_format) => onChange({ ...definition, filename_language_code_format })} />
       </div>
       <section className="transcode-streams">
         <div className="compatibility-profile-list transcode-stream-catalog">
@@ -724,7 +723,15 @@ function PresetDefinitionEditor({
       </section>
       <section className={`media-card library-settings-card transcode-filename-section transcode-metadata-settings${metadataSettingsOpen ? " is-expanded" : " is-collapsed"}`}>
         <header className="transcode-filename-header"><button type="button" className="transcode-filename-toggle" aria-expanded={metadataSettingsOpen} aria-controls={metadataSettingsId} onClick={() => setMetadataSettingsOpen((open) => !open)}><span className="transcode-filename-chevron" aria-hidden="true">{metadataSettingsOpen ? <ChevronDown className="nav-icon" /> : <ChevronRight className="nav-icon" />}</span><span className="transcode-filename-heading"><h3>{t("transcoding.metadataSettings")}</h3></span></button></header>
-        {metadataSettingsOpen ? <div className="transcode-filename-body" id={metadataSettingsId}><div className="transcode-global-options transcode-metadata-option-list" role="group" aria-label={t("transcoding.metadataSettings")}>{(["chapters", "metadata", "cover", "attachments"] as const).map((option) => <label className="transcode-global-option" key={option}><input type="checkbox" aria-label={t(`transcoding.options.${option}`)} checked={definition[option] === "keep"} onChange={(event) => onChange({ ...definition, [option]: event.target.checked ? "keep" : "drop" })} /><span className="transcode-global-option-label">{t(`transcoding.options.${option}`)}</span><TooltipTrigger ariaLabel={t(`transcoding.optionHelpAria.${option}`)} content={t(`transcoding.optionHelp.${option}`)} pinOnClick={false} /></label>)}</div></div> : null}
+        {metadataSettingsOpen ? <div className="transcode-filename-body" id={metadataSettingsId}><div className="transcode-global-options transcode-metadata-option-list" role="group" aria-label={t("transcoding.metadataSettings")}>{(["chapters", "metadata", "cover", "attachments"] as const).map((option) => <label className="transcode-global-option" key={option}><input type="checkbox" aria-label={t(`transcoding.options.${option}`)} checked={definition[option] === "keep"} onChange={(event) => onChange({ ...definition, [option]: event.target.checked ? "keep" : "drop" })} /><span className="transcode-global-option-label">{t(`transcoding.options.${option}`)}</span><TooltipTrigger ariaLabel={t(`transcoding.optionHelpAria.${option}`)} content={t(`transcoding.optionHelp.${option}`)} pinOnClick={false} /></label>)}
+          <LanguageCodeFormatField
+            className="transcode-global-option transcode-metadata-language-option"
+            container={definition.container}
+            ariaLabel={`${t("transcoding.languageCodeFormat")} (${t("transcoding.metadataSettings")})`}
+            value={sharedStreamLanguageCodeFormat(definition)}
+            onChange={(format) => onChange({ ...definition, video_language_code_format: format, audio_language_code_format: format, subtitle_language_code_format: format })}
+          />
+        </div></div> : null}
       </section>
     </div>
   );

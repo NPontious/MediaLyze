@@ -1749,6 +1749,8 @@
     "catalog": { "metadataOnly": "Solo metadatos de Jellyfin", "library": "Biblioteca de Jellyfin", "libraries": "Bibliotecas", "item": "Elemento de Jellyfin", "items": "Elementos", "lastSync": "Última sincronización: {{date}}", "configureAccess": "Configurar acceso a la ruta", "limitedTitle": "Análisis de catálogo limitado", "limitedDescription": "MediaLyze solo puede analizar los metadatos proporcionados por Jellyfin. Concede acceso al sistema de archivos y mapea esta biblioteca para habilitar análisis técnicos completos.", "itemScopeDescription": "Esta vista contiene metadatos de catálogo y reproducción de Jellyfin, no un análisis técnico del archivo.", "overview": "Resumen del catálogo Jellyfin", "knownStorage": "Almacenamiento conocido", "knownDuration": "Duración conocida", "coverage": "Cobertura de duración", "itemTypes": "Tipos", "productionYears": "Años de producción", "addedTimeline": "Cronología de adición", "playback": "Estado de reproducción", "played": "Reproducido", "unplayed": "No reproducido", "catalog": "Catálogo", "resultCount": "{{count}} elementos", "search": "Buscar en Jellyfin", "typeFilter": "Filtrar tipo", "allTypes": "Todos los tipos", "userFilter": "Usuario", "allUsers": "Todos los usuarios", "playedFilter": "Filtrar reproducción", "allPlayback": "Todos los estados", "sortBy": "Ordenar catálogo", "toggleSort": "Cambiar dirección", "title": "Título", "type": "Tipo", "year": "Año", "added": "Añadido", "duration": "Duración", "size": "Tamaño", "plays": "Reproducciones", "release": "Estreno", "empty": "Ningún elemento coincide con los filtros.", "loading": "Cargando catálogo Jellyfin…", "previous": "Página anterior", "next": "Página siguiente", "back": "Atrás", "openFullAnalysis": "Abrir análisis completo de MediaLyze", "dashboardTitle": "Catálogo Jellyfin", "notIncluded": "Separado de los totales técnicos de MediaLyze" }
   },
   "transcoding": {
+    "streamLanguageFormatSharedHint": "Se aplica a vídeo, audio y subtítulos. Si el contenedor de destino no admite el formato seleccionado, se usa el predeterminado del contenedor.",
+    "mixedStreamLanguageCodeFormats": "Formatos de pista existentes distintos",
     "presetsSettingsTitle": "Presets de transcodificación",
     "presetsSettingsDescription": "Gestiona planes de transcodificación reutilizables y presets de formato para nombres de archivo y carpeta.",
     "presetsSettingsDescriptionAria": "Explicar los presets de transcodificación",
@@ -1784,6 +1786,8 @@
       "waitingForSlot": "Esperando un recurso",
       "progressAria": "{{value}} por ciento completado",
       "cancelJob": "Cancelar {{filename}}",
+      "deleteJob": "Eliminar ejecución de {{filename}}",
+      "deleteJobConfirm": "¿Eliminar del historial la ejecución de {{filename}}? Los archivos de origen y salida se conservan.",
       "retryJob": "Reintentar {{filename}}",
       "now": "Ahora",
       "startTime": "Hora de inicio",
@@ -1856,6 +1860,8 @@
     "validation": { "title": "Validación del plan", "kept_streams": "Conservado", "changed_streams": "Cambiado", "removed_streams": "Eliminado", "added_streams": "Añadido" }, "command": "Comando FFmpeg generado",
     "status": { "queued": "En cola", "running": "En curso", "completed": "Completado", "canceled": "Cancelado", "failed": "Fallido" }, "eta": "unos {{seconds}} s restantes", "variants": "Variantes vinculadas", "noVariants": "Aún no hay variantes transcodificadas.",
     "analysisStatus": { "awaiting_analysis": "Esperando análisis", "pending": "Análisis pendiente", "analyzing": "Analizando", "ready": "Analizado", "failed": "Análisis fallido" },
+    "previewLeft": "Versión izquierda",
+    "previewRight": "Versión derecha",
     "previewComparison": "Comparación de vistas previas sincronizada", "openPreviewComparison": "Abrir vista previa sincronizada", "openTranscodingCenter": "Abrir centro de transcodificación", "wipeComparison": "Comparación Wipe sincronizada", "openVariant": "Abrir variante", "openComparison": "Abrir comparación de metadatos", "openSource": "Abrir archivo fuente", "sourcePath": "Ruta de origen", "outputPath": "Ruta de salida", "device": "Dispositivo", "hardwareBackend": "Backend de hardware", "ffmpegVersion": "Versión de FFmpeg", "threads": "Hilos de FFmpeg", "progress": "Progreso", "speed": "Velocidad", "etaLabel": "Tiempo restante", "retryAttempts": "Intentos / reintentos",
     "history": { "title": "Historial de transcodificación", "empty": "No hay trabajos de transcodificación.", "plan": "Plan de transcodificación completo" },
     "filenameFormatting": "Formato del nombre de archivo",

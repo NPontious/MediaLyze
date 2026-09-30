@@ -82,8 +82,18 @@ export function streamLanguageCodeFormats(container: "source" | "mkv" | "mp4" | 
   return container === "mp4"
     ? ["container_default", "iso_639_2_t"]
     : container === "source"
-      ? ["container_default"]
+      ? ["container_default", "iso_639_2", "iso_639_2_region", "iso_639_2_t"]
       : ["container_default", "iso_639_2", "iso_639_2_region"];
+}
+
+export function sharedStreamLanguageCodeFormat(settings: {
+  video_language_code_format?: StreamLanguageCodeFormat;
+  audio_language_code_format?: StreamLanguageCodeFormat;
+  subtitle_language_code_format?: StreamLanguageCodeFormat;
+}): StreamLanguageCodeFormat | "mixed" {
+  const formats = [settings.video_language_code_format, settings.audio_language_code_format, settings.subtitle_language_code_format]
+    .map((format) => format ?? "container_default");
+  return formats.every((format) => format === formats[0]) ? formats[0] : "mixed";
 }
 
 // ISO 639-2/B is the bibliographic/media convention used for three-letter

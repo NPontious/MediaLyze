@@ -10,13 +10,14 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
-from math import floor
+from math import floor, isfinite
 from pathlib import Path
 from threading import Lock
+from time import monotonic
 from typing import Callable
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings
@@ -42,6 +43,7 @@ from backend.app.schemas.transcoding import (
     ExternalSubtitlePlan,
     FileTranscodeRead,
     TranscodeCapabilitiesRead,
+    TranscodeCapabilityMatrixRead,
     TranscodeAttachmentSummary,
     TranscodeEncoderCapability,
     TranscodeFileSummary,
@@ -1432,7 +1434,7 @@ def _preferred_hardware_encoders(codec: str, *, platform: str | None = None) -> 
     else:
         backends = ("cuda", "qsv", "vaapi", "amf", "videotoolbox")
     encoder_prefix = "mpeg2" if codec == "mpeg2video" else codec
-    return tuple(f"{encoder_prefix}_{backend}" for backend in backends)
+    return tuple(f"{encoder_prefix}_{'nvenc' if backend == 'cuda' else backend}" for backend in backends)
 
 
 def _listed_encoder(capabilities: TranscodeCapabilitiesRead, *preferred: str) -> str | None:
@@ -2189,6 +2191,17 @@ def _quote_command(arguments: list[str]) -> str:
     return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
 
 
+def _encoder_profile(encoder: str, profile: str) -> str:
+    """Translate common ffprobe display names to case-sensitive encoder values."""
+    codec = VIDEO_ENCODER_CODECS.get(encoder)
+    aliases = {
+        "h264": {"baseline": "baseline", "main": "main", "high": "high"},
+        "hevc": {"main": "main", "main 10": "main10", "main10": "main10"},
+    }
+    # Leave numeric values and encoder-specific expert options untouched.
+    return aliases.get(codec, {}).get(" ".join(profile.lower().split()), profile)
+
+
 def _append_stream_options(
     arguments: list[str],
     kind_letter: str,
@@ -2271,7 +2284,7 @@ def _append_stream_options(
         if effective_pixel_format and not uses_uploaded_hardware_surface:
             arguments.extend([f"-pix_fmt:{specifier}", effective_pixel_format])
         if decision.profile:
-            arguments.extend([f"-profile:{specifier}", decision.profile])
+            arguments.extend([f"-profile:{specifier}", _encoder_profile(encoder or "", decision.profile)])
         if decision.level:
             arguments.extend([f"-level:{specifier}", decision.level])
         if decision.preset and hardware_backend not in {"vaapi", "videotoolbox"}:
@@ -2405,6 +2418,7 @@ def _automatic_encoder_candidates(
             item
             for item in capabilities.encoders
             if item.available
+            and item.tested
             and (item.hardware or _hardware_backend(item.name) is not None)
             and _encoder_matches_codec(item, codec)
             and _encoder_can_use_device(
@@ -2441,6 +2455,70 @@ def _automatic_encoder_candidates(
     ordered = [by_name[name] for name in preferred if name in by_name]
     ordered.extend(item for item in candidates if item.name not in {entry.name for entry in ordered})
     return ordered
+
+
+def _automatic_plan_device(
+    plan: TranscodePlan,
+    capabilities: TranscodeCapabilitiesRead,
+    *,
+    source_codecs: dict[int, str | None],
+    matrix: TranscodeCapabilityMatrixRead | None = None,
+) -> str | None:
+    """Choose one probed device supporting every encoded video stream.
+
+    Comparable, current hardware-test measurements refine the platform order.
+    Explicit encoders remain constraints; automatic selections remain automatic
+    in the stored plan so another worker can resolve its own hardware.
+    """
+    if matrix is not None:
+        from backend.app.services.transcode_matrix import transcode_capability_fingerprint
+
+        if matrix.status != "completed" or matrix.capability_fingerprint != transcode_capability_fingerprint(capabilities):
+            matrix = None
+    decisions = [item for item in plan.video_streams if item.action == TranscodeStreamAction.encode]
+    if not decisions:
+        return None
+    ranked = []
+    for device in capabilities.devices:
+        if device.status != "available":
+            continue
+        preferences = []
+        timings = []
+        for decision in decisions:
+            codec = _canonical_transcode_codec(decision.codec) or _encoder_codec(decision.encoder)
+            candidates = _automatic_encoder_candidates(
+                capabilities, kind="video", codec=codec or "",
+                execution_mode="hardware_required", target_device_id=device.id,
+            )
+            if decision.encoder and plan.target_mode == "local":
+                candidates = [item for item in candidates if item.name == decision.encoder]
+            if not candidates:
+                break
+            encoder = candidates[0]
+            preferred = _preferred_hardware_encoders(codec or "", platform=capabilities.platform)
+            preferences.append(preferred.index(encoder.name) if encoder.name in preferred else len(preferred))
+            group_id = f"render:{device.render_node}" if device.render_node else f"device:{device.id}"
+            source_codec = _canonical_transcode_codec(source_codecs.get(decision.stream_index))
+            measurement = next((
+                cell.parallel_benchmark
+                for group in (matrix.matrices if matrix is not None else [])
+                if group.device_id == group_id
+                for cell in group.cells
+                if cell.status == "hardware" and cell.encoder == encoder.name
+                and cell.decode_codec == source_codec and cell.encode_codec == codec
+                and cell.parallel_benchmark is not None
+                and cell.parallel_benchmark.baseline_median_seconds
+            ), None)
+            if measurement is not None:
+                # Normalize differing benchmark sizes to time per pixel/frame.
+                timings.append(measurement.baseline_median_seconds / (
+                    measurement.frames * measurement.width * measurement.height
+                ))
+        else:
+            measured = len(timings) == len(decisions)
+            ranked.append(((not measured, sum(timings) if measured else 0,
+                            sum(preferences), device.id), device.id))
+    return min(ranked)[1] if ranked else None
 
 
 def resolve_transcode_plan_encoders(
@@ -2498,10 +2576,21 @@ def resolve_transcode_plan_encoders(
                     if kind == "video" and mode == "hardware_required"
                     else "software"
                 )
-                errors.append(
+                message = (
                     f"No available {path} encoder for {kind} stream {decision.stream_index} "
                     f"targeting codec {codec} on this worker"
                 )
+                if path == "hardware":
+                    software = _automatic_encoder_candidates(
+                        capabilities, kind=kind, codec=codec,
+                        execution_mode="cpu_only", target_device_id=None,
+                    )
+                    if software:
+                        message += (
+                            f". This FFmpeg build supports {codec} through software encoder "
+                            f"{software[0].name}; choose CPU-only mode to use it"
+                        )
+                errors.append(message)
                 decision.encoder = None
                 continue
             previous_encoder = decision.encoder
@@ -2603,6 +2692,17 @@ def validate_transcode_plan(
         plan.output_mode = output_mode
     execution_mode = plan.execution_mode or app_settings.transcoding.execution_mode
     plan.execution_mode = execution_mode
+    device_id_override = device_id_override or plan.target_device_id
+    if execution_mode == "hardware_required" and not device_id_override:
+        # Import locally: the hardware-test service itself uses this module.
+        from backend.app.services.transcode_matrix import load_transcode_matrix
+
+        matrix = load_transcode_matrix(settings)
+        device_id_override = _automatic_plan_device(
+            plan, capabilities,
+            source_codecs={item.stream_index: item.codec for item in media_file.video_streams},
+            matrix=matrix,
+        )
     plan, encoder_errors = resolve_transcode_plan_encoders(
         plan,
         capabilities,
@@ -2771,6 +2871,8 @@ def validate_transcode_plan(
                     if device.id == device_id_override
                     and device.backend == backend
                     and device.status == "available"
+                    and encoder in available_encoders
+                    and _encoder_can_use_device(capabilities, available_encoders[encoder], target_device_id=device.id)
                 ),
                 None,
             )
@@ -2779,6 +2881,8 @@ def validate_transcode_plan(
         )
         if selected_device is not None:
             selected_hardware_devices.append(selected_device)
+        elif device_id_override:
+            errors.append(f"Encoder {encoder} has no successful capability probe on device {device_id_override}")
     selected_device_ids = {device.id for device in selected_hardware_devices}
     if len(selected_device_ids) > 1:
         errors.append("All encoded video streams must use the same automatically selected hardware device")
@@ -2926,8 +3030,12 @@ def validate_transcode_plan(
             source_codec = (source.codec or "").lower()
             output_codec = _output_codec(kind, decision, source_codec)
             if decision.action == TranscodeStreamAction.encode:
-                encoder = decision.encoder or decision.codec
+                encoder = decision.encoder
                 capability = available_encoders.get(encoder or "")
+                if encoder is None:
+                    # Resolution already explains why the codec cannot be used
+                    # in this mode. Never report a codec name as a missing encoder.
+                    continue
                 if capability is None:
                     errors.append(f"Requested encoder is not provided by this FFmpeg build: {encoder or 'none'}")
                 elif not capability.available:
@@ -3058,6 +3166,10 @@ def validate_transcode_plan(
     arguments.extend(["-map_chapters", "0" if plan.chapters == "keep" else "-1"])
     arguments.extend(["-progress", "pipe:1", "-stats_period", "0.5", "-f", CONTAINER_FORMATS[plan.container], str(output_path)])
 
+    # There is no executable command when codec-to-encoder resolution failed.
+    # Showing a partial command would let FFmpeg pick unintended defaults.
+    if encoder_errors:
+        arguments = []
     hardware = [item.name for item in capabilities.encoders if item.hardware and item.available]
     return TranscodeValidationRead(
         valid=not errors,
@@ -3268,24 +3380,41 @@ def _verify_job_paths(db: Session, job: TranscodeJob, source: Path, output: Path
         raise ValueError("Source and temporary output paths must be different")
 
 
-def _update_progress(job: TranscodeJob, key: str, value: str, duration: float) -> None:
-    if key in {"out_time_us", "out_time_ms"}:
+def _update_progress(
+    job: TranscodeJob,
+    report: dict[str, str],
+    duration: float,
+    *,
+    frame_rate: float = 0.0,
+    elapsed: float = 0.0,
+) -> None:
+    def number(value: str | None) -> float | None:
         try:
-            raw = float(value)
+            parsed = float(value or "")
         except ValueError:
-            return
-        seconds = raw / 1_000_000
+            return None
+        return parsed if isfinite(parsed) and parsed >= 0 else None
+
+    raw_time = number(report.get("out_time_us"))
+    if raw_time is None:
+        raw_time = number(report.get("out_time_ms"))
+    seconds = raw_time / 1_000_000 if raw_time is not None else None
+    # Some multi-stream outputs report N/A timestamps throughout the encode,
+    # even though FFmpeg continues reporting the first video output's frames.
+    frames = number(report.get("frame"))
+    if seconds is None and frames is not None and frame_rate > 0:
+        seconds = frames / frame_rate
+    if seconds is not None:
         job.processed_seconds = max(job.processed_seconds, seconds)
         if duration > 0:
-            job.progress_percent = min(99.9, max(0.0, seconds / duration * 100))
-    elif key == "speed":
-        job.speed = value or None
-        try:
-            multiplier = float(value.rstrip("x"))
-        except (TypeError, ValueError):
-            multiplier = 0.0
-        remaining = max(0.0, duration - job.processed_seconds)
-        job.eta_seconds = remaining / multiplier if multiplier > 0 else None
+            job.progress_percent = min(99.9, job.processed_seconds / duration * 100)
+
+    multiplier = number((report.get("speed") or "").strip().removesuffix("x"))
+    if not multiplier and job.processed_seconds > 0 and elapsed > 0:
+        multiplier = job.processed_seconds / elapsed
+    job.speed = f"{multiplier:.2f}x" if multiplier else None
+    remaining = max(0.0, duration - job.processed_seconds)
+    job.eta_seconds = remaining / multiplier if multiplier and duration > 0 else None
 
 
 def execute_transcode_job(
@@ -3326,6 +3455,14 @@ def execute_transcode_job(
         source = db.get(MediaFile, job.source_file_id) if job.source_file_id else None
         if source is not None:
             duration = float(source.duration_seconds or 0.0)
+        frame_rate = 0.0
+        if source is not None:
+            video = next((item for item in (job.plan or {}).get("video_streams", []) if item.get("action") != "drop"), None)
+            if video is not None:
+                stream = next((item for item in source.video_streams if item.stream_index == video.get("stream_index")), None)
+                frame_rate = float(video.get("frame_rate") or (stream.frame_rate if stream else 0) or 0)
+        encode_started = monotonic()
+        report: dict[str, str] = {}
         process = subprocess.Popen(
             list(job.ffmpeg_arguments),
             stdout=subprocess.PIPE,
@@ -3349,7 +3486,10 @@ def execute_transcode_job(
                 if "=" not in line:
                     continue
                 key, value = line.split("=", 1)
-                _update_progress(job, key, value, duration)
+                report[key] = value
+                if key == "progress":
+                    _update_progress(job, report, duration, frame_rate=frame_rate, elapsed=monotonic() - encode_started)
+                    report.clear()
                 now = utc_now()
                 if (now - last_commit).total_seconds() >= 0.5 or key == "progress":
                     db.commit()
@@ -3442,6 +3582,18 @@ def execute_transcode_job(
         db.close()
 
 
+def delete_transcode_job(db: Session, job_id: int) -> None:
+    """Remove terminal run history while retaining media and linked variants."""
+    job = db.get(TranscodeJob, job_id)
+    if job is None:
+        raise LookupError("Transcoding job not found")
+    if job.status not in {JobStatus.completed, JobStatus.failed, JobStatus.canceled}:
+        raise ValueError("Active transcoding jobs cannot be deleted")
+    db.execute(update(TranscodeVariant).where(TranscodeVariant.job_id == job_id).values(job_id=None))
+    db.execute(delete(TranscodeJob).where(TranscodeJob.id == job_id))
+    db.commit()
+
+
 def cancel_transcode_job(db: Session, job_id: int) -> TranscodeJob:
     job = db.get(TranscodeJob, job_id)
     if job is None:
@@ -3471,6 +3623,11 @@ def recover_orphaned_transcode_jobs(db: Session) -> int:
             _remove_temporary_output(Path(job.temporary_path), Path(job.output_path_snapshot))
     if jobs:
         db.commit()
+    # Process restarts can bypass the worker's finally block. Terminal jobs
+    # must stop holding resource slots even when their lease is still valid.
+    from backend.app.services.transcode_federation import expire_resource_reservations
+
+    expire_resource_reservations(db)
     return len(jobs)
 
 

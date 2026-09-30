@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Search,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -288,6 +289,8 @@ function JobRow({
   onToggle,
   onCancel,
   onRetry,
+  deleting,
+  onDelete,
   t,
 }: {
   job: TranscodeJob;
@@ -300,6 +303,8 @@ function JobRow({
   onToggle: () => void;
   onCancel: () => void;
   onRetry: () => void;
+  deleting: boolean;
+  onDelete: () => void;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const target = targetForJob(job, t);
@@ -371,7 +376,7 @@ function JobRow({
               className="secondary icon-only-button transcoding-job-action"
               aria-label={t("transcoding.center.retryJob", { filename: fileLabel })}
               title={t("transcoding.center.retryJob", { filename: fileLabel })}
-              disabled={retrying || !job.source_file_id}
+              disabled={retrying || deleting || !job.source_file_id}
               onClick={(event) => { event.stopPropagation(); onRetry(); }}
             >
               {retrying ? <LoaderCircle className="spin" aria-hidden="true" /> : <RotateCcw aria-hidden="true" />}
@@ -387,6 +392,15 @@ function JobRow({
             >
               <ExternalLink aria-hidden="true" />
             </Link>
+          ) : null}
+          {!canCancel ? (
+            <button type="button" className="secondary icon-only-button transcoding-job-action"
+              aria-label={t("transcoding.center.deleteJob", { filename: fileLabel })}
+              title={t("transcoding.center.deleteJob", { filename: fileLabel })}
+              disabled={deleting || retrying}
+              onClick={(event) => { event.stopPropagation(); onDelete(); }}>
+              {deleting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+            </button>
           ) : null}
         </td>
       </tr>
@@ -672,6 +686,7 @@ export function TranscodingPage() {
   const [expandedJobId, setExpandedJobId] = useState<number | null>(null);
   const [sortKey, setSortKey] = useState<TranscodingSortKey>("start_time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
   const [cancelingIds, setCancelingIds] = useState<Set<number>>(new Set());
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -856,6 +871,22 @@ export function TranscodingPage() {
     };
   }, []);
 
+  async function deleteJob(job: TranscodeJob) {
+    if (!window.confirm(t("transcoding.center.deleteJobConfirm", { filename: basename(job.source_path_snapshot) }))) return;
+    setDeletingIds((current) => new Set(current).add(job.id));
+    setNotice(null);
+    try {
+      await api.deleteTranscodeJob(job.id);
+      setHistoryJobs((current) => current.filter((item) => item.id !== job.id));
+      setExpandedJobId((current) => current === job.id ? null : current);
+      await refreshJobs();
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDeletingIds((current) => { const next = new Set(current); next.delete(job.id); return next; });
+    }
+  }
+
   async function cancelJob(job: TranscodeJob) {
     setCancelingIds((current) => new Set(current).add(job.id));
     setNotice(null);
@@ -929,7 +960,7 @@ export function TranscodingPage() {
           <TooltipTrigger
             ariaLabel={t("transcoding.center.resetFilters")}
             content={t("transcoding.center.resetFilters")}
-            className="secondary icon-only-button transcoding-reset-button"
+            className="icon-button icon-button-borderless icon-button-static transcoding-reset-button"
             pinOnClick={false}
             onClick={resetFilters}
           >
@@ -991,6 +1022,8 @@ export function TranscodingPage() {
                   expanded={expandedJobId === job.id}
                   canceling={cancelingIds.has(job.id)}
                   retrying={retryingIds.has(job.id)}
+                  deleting={deletingIds.has(job.id)}
+                  onDelete={() => void deleteJob(job)}
                   onToggle={() => setExpandedJobId((current) => (current === job.id ? null : job.id))}
                   onCancel={() => void cancelJob(job)}
                   onRetry={() => void retryJob(job)}

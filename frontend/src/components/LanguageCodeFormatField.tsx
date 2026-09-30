@@ -11,7 +11,7 @@ type SharedProps = {
 
 type Props = SharedProps & (
   | { container?: undefined; value: FilenameLanguageCodeFormat; onChange: (value: FilenameLanguageCodeFormat) => void }
-  | { container: "source" | "mkv" | "mp4" | "webm"; value: StreamLanguageCodeFormat; onChange: (value: StreamLanguageCodeFormat) => void }
+  | { container: "source" | "mkv" | "mp4" | "webm"; value: StreamLanguageCodeFormat | "mixed"; onChange: (value: StreamLanguageCodeFormat) => void }
 );
 
 const examples: Record<FilenameLanguageCodeFormat | StreamLanguageCodeFormat, string> = {
@@ -38,6 +38,7 @@ export function LanguageCodeFormatField({
       <div className="transcode-matrix-tooltip-workload">
         {t(container ? "transcoding.streamLanguageFormatIntro" : "transcoding.filenameLanguageFormatIntro")}
       </div>
+      {container ? <div className="transcode-matrix-tooltip-workload">{t("transcoding.streamLanguageFormatSharedHint")}</div> : null}
       {formats.map((format) => <div className="transcode-matrix-tooltip-row" key={format}>
         <div className="transcode-matrix-tooltip-level-head">
           <strong>{t(`transcoding.languageCodeFormats.${format}`)}</strong>
@@ -59,6 +60,7 @@ export function LanguageCodeFormatField({
       <TooltipTrigger ariaLabel={t("transcoding.languageCodeFormatHelpAria")} content={tooltip} tooltipClassName="transcode-matrix-tooltip-portal transcode-language-format-tooltip-portal" placement="auto" pinOnClick={false} maxWidth={480} />
     </span>
     <select className={controlClassName} aria-label={ariaLabel ?? t("transcoding.languageCodeFormat")} value={value} onChange={(event) => onChange(event.target.value as never)}>
+      {value === "mixed" ? <option value="mixed" disabled>{t("transcoding.mixedStreamLanguageCodeFormats")}</option> : null}
       {formats.map((format) => <option key={format} value={format}>{t(`transcoding.languageCodeFormats.${format}`)}</option>)}
     </select>
   </label>;

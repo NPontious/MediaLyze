@@ -578,6 +578,17 @@ Frontend design decision history:
 * Each entry should include the decision, rationale, canonical implementation and catalog references, deprecated selectors or patterns, migration scope, status, and remaining intentional exceptions.
 * Update the entry when the canonical pattern or migration status changes. The history must not keep legacy CSS alive; after migration, retain only identifiers needed to explain intentional exceptions.
 
+### 2026-09-30 — Overlay transcoding metrics on the speed graph
+
+* Decision: progress, time remaining, and speed share the 30px graph area instead of adding a separate metrics row. The phase overlays the progress bar in the same small muted type as metric labels, with a white backdrop that interrupts the thin 6px bar behind the centered label, keeping the summary near the density of adjacent target columns.
+* Canonical references: `TranscodeProgressSummary`, `.transcoding-progress-summary`, and the real component in `/ui-elements` Transcoding job center. Migration: Transcoding and File Detail share the compact layout; the stacked metrics/graph pattern is retired. Status: active.
+
+### 2026-09-30 — Share stream language formatting in Metadata settings
+
+* Decision: File Detail and transcoding presets place one language-code format control in Metadata settings for video, audio, and subtitle streams. New settings use Container default; source-container presets fall back to the actual container default when their selected format is unsupported. Previously stored mixed stream formats remain visible until explicitly replaced.
+* Canonical references: `TranscodingPanel`, `TranscodePresetsRulesPanel`, `LanguageCodeFormatField`, `.transcode-metadata-option-list`, and the shared metadata examples in `/ui-elements`.
+* Metadata options use contiguous 36px rows with centered content, help icons directly beside option labels, and an inline language-format dropdown. Removed the per-stream `.transcode-stream-language-format-row` and the preset editor's misplaced filename-language control. Filename and folder formatting controls remain independent in their own sections. Migration: both editors and catalog; status: active.
+
 ### 2026-09-25 — Place filename source as an editable token
 
 * Decision: new filename templates include `{sourceName}` explicitly; users may move or remove it. Existing stored templates without this token retain their implicit source name until edited. `{movieTitle}` uses matched connector film metadata, and unavailable tokens remain visible but inactive.

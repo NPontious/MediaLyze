@@ -4,6 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -324,6 +325,34 @@ def test_cpu_budget_is_shared_across_parallel_jobs(monkeypatch, tmp_path) -> Non
     assert capacity["cpu_threads"] == 7
     assert capacity["cpu_parallel_jobs"] == 2
     assert capacity["cpu_threads_per_job"] == 3
+
+
+@pytest.mark.parametrize("encoder, profile, expected", [
+    ("hevc_videotoolbox", "Main", "main"),
+    ("hevc_videotoolbox", "Main 10", "main10"),
+    ("hevc_nvenc", "Main 10", "main10"),
+    ("hevc_vaapi", "Main", "main"),
+    ("hevc_vaapi", "Main 10", "main10"),
+    ("libx265", "Main", "main"),
+    ("h264_videotoolbox", "High", "high"),
+    ("libx264", "Baseline", "baseline"),
+    ("h264_qsv", "Main", "main"),
+    ("hevc_videotoolbox", "1", "1"),
+    ("libx265", "main444-10", "main444-10"),
+])
+def test_command_translates_source_profile_for_encoder(encoder, profile, expected) -> None:
+    arguments = []
+    decision = TranscodeStreamPlan(stream_index=0, action="encode", encoder=encoder, profile=profile)
+    transcoding._append_stream_options(arguments, "v", 0, decision, VideoStream(), "preserve")
+    assert arguments[arguments.index("-profile:v:0") + 1] == expected
+    assert decision.profile == profile
+
+
+def test_copy_stream_does_not_emit_encoder_profile() -> None:
+    arguments = []
+    decision = TranscodeStreamPlan(stream_index=0, action="copy", profile="Main")
+    transcoding._append_stream_options(arguments, "v", 0, decision, VideoStream(), "preserve")
+    assert "-profile:v:0" not in arguments
 
 
 def test_validation_forwards_video_speed_preset(monkeypatch, tmp_path) -> None:
@@ -1644,6 +1673,42 @@ def test_dolby_vision_generation_is_not_pretended(monkeypatch, tmp_path) -> None
     assert any("does not synthesize Dolby Vision" in error for error in validation.errors)
 
 
+def test_progress_falls_back_to_video_frames_when_ffmpeg_time_is_unavailable() -> None:
+    job = TranscodeJob(processed_seconds=0, progress_percent=0)
+    transcoding._update_progress(job, {"frame": "240", "out_time_us": "N/A", "out_time_ms": "N/A", "speed": "N/A"}, 100, frame_rate=24, elapsed=5)
+    assert job.processed_seconds == 10
+    assert job.progress_percent == 10
+    assert job.speed == "2.00x"
+    assert job.eta_seconds == 45
+
+
+def test_progress_prefers_reported_time_and_speed_over_frame_estimate() -> None:
+    job = TranscodeJob(processed_seconds=0, progress_percent=0)
+    transcoding._update_progress(job, {"frame": "240", "out_time_us": "20000000", "speed": "4.0x"}, 100, frame_rate=24, elapsed=10)
+    assert job.processed_seconds == 20
+    assert job.progress_percent == 20
+    assert job.speed == "4.00x"
+    assert job.eta_seconds == 20
+
+
+def test_progress_handles_invalid_values_and_never_regresses() -> None:
+    job = TranscodeJob(processed_seconds=10, progress_percent=10)
+    transcoding._update_progress(job, {"out_time_us": "nan", "out_time_ms": "-1", "frame": "120", "speed": "inf"}, 100, frame_rate=24, elapsed=5)
+    assert job.processed_seconds == 10
+    assert job.progress_percent == 10
+    assert job.eta_seconds == 45
+    transcoding._update_progress(job, {"frame": "999999", "speed": "N/A"}, 100, frame_rate=24, elapsed=5)
+    assert job.progress_percent == 99.9
+
+
+def test_progress_without_time_or_frame_rate_remains_unknown() -> None:
+    job = TranscodeJob(processed_seconds=0, progress_percent=0)
+    transcoding._update_progress(job, {"frame": "240", "speed": "N/A"}, 100, elapsed=5)
+    assert job.progress_percent == 0
+    assert job.speed is None
+    assert job.eta_seconds is None
+
+
 def test_successful_execution_publishes_variant_without_touching_source(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     monkeypatch.setattr(transcoding, "SessionLocal", factory)
@@ -1655,7 +1720,15 @@ def test_successful_execution_publishes_variant_without_touching_source(monkeypa
             self.text = text
 
         def __iter__(self):
-            return iter(self.lines)
+            for line in self.lines:
+                yield line
+                if line == "progress=continue\n":
+                    with factory() as progress_db:
+                        running = progress_db.get(TranscodeJob, job_id)
+                        assert running.progress_percent == 50
+                        assert running.processed_seconds == 60
+                        assert running.speed is not None
+                        assert running.eta_seconds is not None
 
         def read(self):
             return self.text
@@ -1664,7 +1737,7 @@ def test_successful_execution_publishes_variant_without_touching_source(monkeypa
         def __init__(self, arguments, **kwargs) -> None:
             assert kwargs["shell"] is False
             Path(arguments[-1]).write_bytes(b"transcoded-result")
-            self.stdout = FakePipe(["out_time_us=60000000\n", "speed=2.0x\n", "progress=end\n"])
+            self.stdout = FakePipe(["frame=720\n", "out_time_us=N/A\n", "speed=N/A\n", "progress=continue\n", "progress=end\n"])
             self.stderr = FakePipe(text="")
             self.returncode = 0
 
@@ -1686,7 +1759,9 @@ def test_successful_execution_publishes_variant_without_touching_source(monkeypa
         media_file = _media_file(db, tmp_path)
         source_path = Path(media_file.library_root.path) / media_file.relative_path
         source_before = source_path.read_bytes()
-        job, _validation = transcoding.queue_transcode_job(db, _settings(tmp_path), media_file, _compatibility_plan())
+        plan = _compatibility_plan()
+        plan.video_streams[0].frame_rate = 12
+        job, _validation = transcoding.queue_transcode_job(db, _settings(tmp_path), media_file, plan)
         job_id = job.id
         output_path = Path(job.output_path_snapshot)
 
@@ -1860,3 +1935,208 @@ def test_transcode_job_listing_includes_source_video_metadata(monkeypatch, tmp_p
     assert len(page.items) == 1
     assert page.items[0].source_video_codec == "hevc"
     assert page.items[0].source_dynamic_range == "HDR10"
+
+
+def _selection_capabilities():
+    return TranscodeCapabilitiesRead(
+        ffmpeg_available=True, ffmpeg_path="ffmpeg", platform="linux",
+        devices=[
+            TranscodeHardwareDevice(id="intel", name="Intel", vendor="intel", backend="qsv", status="available", encoder_names=["h264_qsv"]),
+            TranscodeHardwareDevice(id="nvidia", name="NVIDIA", vendor="nvidia", backend="cuda", status="available", encoder_names=["h264_nvenc", "hevc_nvenc"]),
+        ],
+        encoders=[
+            TranscodeEncoderCapability(name=name, codec=codec, hardware=True, tested=True, available=True, device_ids=[device])
+            for name, codec, device in [("h264_qsv", "h264", "intel"), ("h264_nvenc", "h264", "nvidia"), ("hevc_nvenc", "hevc", "nvidia")]
+        ],
+    )
+
+
+def test_automatic_device_supports_all_output_codecs():
+    capabilities = _selection_capabilities()
+    plan = TranscodePlan(container="mkv", video_streams=[
+        TranscodeStreamPlan(stream_index=0, action="encode", codec="h264"),
+        TranscodeStreamPlan(stream_index=1, action="encode", codec="hevc"),
+    ])
+    device = transcoding._automatic_plan_device(plan, capabilities, source_codecs={0: "h264", 1: "hevc"})
+    assert device == "nvidia"
+    resolved, errors = transcoding.resolve_transcode_plan_encoders(plan, capabilities, target_device_id=device)
+    assert not errors
+    assert [item.encoder for item in resolved.video_streams] == ["h264_nvenc", "hevc_nvenc"]
+    assert resolved.target_device_id is None
+    capabilities.encoders[-1].available = False
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={}) is None
+
+
+def test_automatic_selection_prefers_nvenc_and_respects_explicit_encoder():
+    capabilities = _selection_capabilities()
+    plan = TranscodePlan(container="mkv", video_streams=[TranscodeStreamPlan(stream_index=0, action="encode", codec="h264")])
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={}) == "nvidia"
+    plan.video_streams[0].encoder = "h264_qsv"
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={}) == "intel"
+
+
+def test_automatic_selection_uses_matching_benchmark_not_other_codec():
+    from backend.app.schemas.transcoding import TranscodeCapabilityMatrixRead
+    capabilities = _selection_capabilities()
+    plan = TranscodePlan(container="mkv", video_streams=[TranscodeStreamPlan(stream_index=0, action="encode", codec="h264")])
+    from backend.app.services.transcode_matrix import transcode_capability_fingerprint
+    matrix = TranscodeCapabilityMatrixRead(status="completed", capability_fingerprint=transcode_capability_fingerprint(capabilities), matrices=[
+        dict(device_id=f"device:{device}", device_name=device, backend=backend, tested_at=utc_now(), cells=[
+            dict(decode_codec="hevc", encode_codec="h264", status="hardware", encoder=encoder,
+                 parallel_benchmark=dict(baseline_median_seconds=seconds)),
+        ]) for device, backend, encoder, seconds in [("intel", "qsv", "h264_qsv", 1), ("nvidia", "cuda", "h264_nvenc", 3)]
+    ])
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={0: "hevc"}, matrix=matrix) == "intel"
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={0: "av1"}, matrix=matrix) == "nvidia"
+
+    matrix.capability_fingerprint = "outdated-environment"
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={0: "hevc"}, matrix=matrix) == "nvidia"
+
+
+@pytest.mark.parametrize("explicit_device, expected_valid", [(None, True), ("intel", False)])
+def test_validation_uses_common_device_and_rejects_unprobed_explicit_choice(tmp_path, monkeypatch, explicit_device, expected_valid):
+    capabilities = _selection_capabilities()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args: capabilities)
+    with _session_factory()() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = TranscodePlan(container="mkv", execution_mode="hardware_required", target_device_id=explicit_device,
+            video_streams=[TranscodeStreamPlan(stream_index=0, action="encode", codec="hevc", profile="Main")])
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+        assert validation.valid is expected_valid
+        if expected_valid:
+            assert validation.device_id == "nvidia"
+            assert "hevc_nvenc" in validation.ffmpeg_arguments
+            assert validation.ffmpeg_arguments[validation.ffmpeg_arguments.index("-profile:v:0") + 1] == "main"
+        else:
+            assert any("No available hardware encoder" in error for error in validation.errors)
+
+
+def test_automatic_selection_rejects_unprobed_encoder():
+    capabilities = _selection_capabilities()
+    for encoder in capabilities.encoders:
+        encoder.tested = False
+    plan = TranscodePlan(container="mkv", video_streams=[TranscodeStreamPlan(stream_index=0, action="encode", codec="h264")])
+    assert transcoding._automatic_plan_device(plan, capabilities, source_codecs={}) is None
+
+
+@pytest.mark.parametrize("status", [JobStatus.completed, JobStatus.failed, JobStatus.canceled])
+def test_delete_terminal_transcode_job_preserves_variant_and_files(monkeypatch, tmp_path, status) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        job, _ = transcoding.queue_transcode_job(db, _settings(tmp_path), media_file, _compatibility_plan())
+        job.status = status
+        output_path = tmp_path / "Movie variant.mp4"
+        output_path.write_bytes(b"output-video")
+        variant = TranscodeVariant(
+            group_id=job.group_id, job_id=job.id, original_file_id=media_file.id,
+            library_root_id=media_file.library_root_id,
+            output_relative_path="Movie variant.mp4", output_filename="Movie variant.mp4",
+            source_path_snapshot=job.source_path_snapshot, output_path_snapshot=str(output_path),
+            analysis_status="ready", output_file_id=media_file.id,
+        )
+        db.add(variant)
+        db.commit()
+        job_id, variant_id, file_id = job.id, variant.id, media_file.id
+        source_path = Path(job.source_path_snapshot)
+        source_bytes = source_path.read_bytes()
+
+        transcoding.delete_transcode_job(db, job_id)
+
+        assert db.get(TranscodeJob, job_id) is None
+        retained = db.get(TranscodeVariant, variant_id)
+        assert retained is not None
+        assert retained.job_id is None
+        assert db.get(MediaFile, file_id) is not None
+        assert source_path.read_bytes() == source_bytes
+        assert output_path.read_bytes() == b"output-video"
+
+
+@pytest.mark.parametrize("status", [JobStatus.queued, JobStatus.running])
+def test_delete_transcode_job_rejects_active_runs(monkeypatch, tmp_path, status) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with factory() as db:
+        media_file = _media_file(db, tmp_path)
+        job, _ = transcoding.queue_transcode_job(db, _settings(tmp_path), media_file, _compatibility_plan())
+        job.status = status
+        db.commit()
+        with pytest.raises(ValueError, match="Active transcoding jobs cannot be deleted"):
+            transcoding.delete_transcode_job(db, job.id)
+        assert db.get(TranscodeJob, job.id) is not None
+
+
+def test_delete_transcode_job_rejects_unknown_run() -> None:
+    with _session_factory()() as db:
+        with pytest.raises(LookupError, match="Transcoding job not found"):
+            transcoding.delete_transcode_job(db, 999)
+
+
+@pytest.mark.parametrize("mode", ["hardware_required", "cpu_only"])
+def test_av1_software_support_does_not_claim_hardware_or_use_codec_as_encoder(tmp_path, monkeypatch, mode):
+    capabilities = _capabilities()
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args: capabilities)
+    with _session_factory()() as db:
+        media_file = _media_file(db, tmp_path)
+        plan = TranscodePlan(container="mkv", execution_mode=mode,
+            video_streams=[TranscodeStreamPlan(stream_index=0, action="encode", codec="av1")])
+        validation = transcoding.validate_transcode_plan(db, _settings(tmp_path), media_file, plan)
+        if mode == "cpu_only":
+            assert validation.valid
+            assert validation.normalized_plan.video_streams[0].encoder == "libsvtav1"
+            assert validation.ffmpeg_arguments[validation.ffmpeg_arguments.index("-c:v:0") + 1] == "libsvtav1"
+        else:
+            assert not validation.valid
+            assert any("software encoder libsvtav1; choose CPU-only" in error for error in validation.errors)
+            assert not any("Requested encoder is not provided" in error for error in validation.errors)
+            assert not validation.ffmpeg_arguments
+            assert not validation.ffmpeg_command
+
+
+def test_av1_hardware_selected_when_device_probe_passed():
+    capabilities = _selection_capabilities()
+    capabilities.devices[1].encoder_names.append("av1_nvenc")
+    capabilities.encoders.append(TranscodeEncoderCapability(
+        name="av1_nvenc", codec="av1", hardware=True, available=True, tested=True, device_ids=["nvidia"]))
+    plan = TranscodePlan(container="mkv", video_streams=[TranscodeStreamPlan(stream_index=0, action="encode", codec="av1")])
+    resolved, errors = transcoding.resolve_transcode_plan_encoders(plan, capabilities)
+    assert not errors
+    assert resolved.video_streams[0].encoder == "av1_nvenc"
+
+
+@pytest.mark.parametrize("status", [JobStatus.running, JobStatus.canceled, JobStatus.failed, JobStatus.completed])
+def test_recovery_frees_unexpired_reservations_of_terminal_jobs(tmp_path, monkeypatch, status):
+    from backend.app.services.transcode_federation import reserve_resource
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with _session_factory()() as db:
+        media_file = _media_file(db, tmp_path)
+        job, _ = transcoding.queue_transcode_job(db, _settings(tmp_path), media_file, _compatibility_plan())
+        job.status = status
+        db.commit()
+        reservation = reserve_resource(db, owner_installation_id="local", resource_type="gpu",
+            device_id="videotoolbox0", capacity=1, job_id=job.id, lease_seconds=3600)
+        db.commit()
+        transcoding.recover_orphaned_transcode_jobs(db)
+        db.refresh(reservation)
+        assert reservation.status == "expired"
+        replacement = reserve_resource(db, owner_installation_id="local", resource_type="gpu",
+            device_id="videotoolbox0", capacity=1)
+        assert replacement.status == "active"
+
+
+def test_active_job_reservation_still_blocks_second_job(tmp_path, monkeypatch):
+    from backend.app.services.transcode_federation import reserve_resource, FederationError
+    monkeypatch.setattr(transcoding, "get_transcode_capabilities", lambda *_args, **_kwargs: _capabilities())
+    with _session_factory()() as db:
+        media_file = _media_file(db, tmp_path)
+        job, _ = transcoding.queue_transcode_job(db, _settings(tmp_path), media_file, _compatibility_plan())
+        job.status = JobStatus.running
+        db.commit()
+        reservation = reserve_resource(db, owner_installation_id="local", resource_type="gpu",
+            device_id="videotoolbox0", capacity=1, job_id=job.id, lease_seconds=3600)
+        db.commit()
+        with pytest.raises(FederationError, match="busy"):
+            reserve_resource(db, owner_installation_id="local", resource_type="gpu", device_id="videotoolbox0", capacity=1)
+        db.refresh(reservation)
+        assert reservation.status == "active"

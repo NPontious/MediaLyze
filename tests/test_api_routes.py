@@ -1,3 +1,4 @@
+import pytest
 from datetime import UTC, datetime, timedelta
 import subprocess
 
@@ -2646,3 +2647,36 @@ def test_library_duplicate_suppression_routes_validate_inputs() -> None:
     assert unknown_response.status_code == 404
     assert empty_response.status_code == 400
     assert invalid_mode_response.status_code == 400
+
+
+@pytest.mark.parametrize("analysis_status", ["external", "awaiting_analysis"])
+def test_transcode_variant_media_serves_output_and_rejects_escaping_path(tmp_path, analysis_status):
+    from backend.app.core.config import Settings
+    from backend.app.models.entities import TranscodeVariant, TranscodeVariantGroup
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        library = Library(name="Movies", path=str(tmp_path), type=LibraryType.movies, scan_mode=ScanMode.manual, scan_config={})
+        db.add(library)
+        db.flush()
+        group = TranscodeVariantGroup(library_id=library.id, original_relative_path="movie.mkv", original_filename="movie.mkv")
+        db.add(group)
+        db.flush()
+        output = tmp_path / "output"
+        output.mkdir()
+        path = output / "variant.mp4"
+        path.write_bytes(b"variant-bytes")
+        variant = TranscodeVariant(group_id=group.id, output_relative_path="variant.mp4", output_filename="variant.mp4",
+            output_mode="transcode_output", source_path_snapshot="movie.mkv", output_path_snapshot=str(path), analysis_status=analysis_status)
+        db.add(variant)
+        db.commit()
+        client = _build_test_app(db)
+        client.app.dependency_overrides[get_app_settings] = lambda: Settings(config_path=tmp_path, transcode_output_root=output)
+        response = client.get(f"/api/transcode-variants/{variant.id}/media", headers={"Range": "bytes=0-6"})
+        assert response.status_code == 206
+        assert response.content == b"variant"
+        assert response.headers["content-type"].startswith("video/mp4")
+        variant.output_path_snapshot = str(tmp_path / "outside.mp4")
+        (tmp_path / "outside.mp4").write_bytes(b"outside")
+        db.commit()
+        assert client.get(f"/api/transcode-variants/{variant.id}/media").status_code == 404

@@ -191,7 +191,7 @@ describe("TranscodingPage", () => {
     expect(viewToggle).toHaveClass("library-history-range-toggle");
     expect(within(viewToggle).getByRole("tab", { name: /Active/ })).toHaveAttribute("aria-pressed", "true");
     expect(within(viewToggle).getByRole("tab", { name: /History/ })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Reset filters" })).toHaveClass("icon-only-button");
+    expect(screen.getByRole("button", { name: "Reset filters" })).toHaveClass("icon-button", "icon-button-borderless", "icon-button-static");
     expect(screen.getAllByRole("columnheader")).toHaveLength(5);
     expect(screen.getByText("Naturefilm-1.mkv")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Naturefilm-1.mkv" })).not.toBeInTheDocument();
@@ -296,6 +296,43 @@ describe("TranscodingPage", () => {
 
     fireEvent.click(screen.getByTestId("transcode-job-3"));
     expect(screen.getAllByRole("link", { name: "Open synchronized preview" })).toHaveLength(2);
+  });
+
+  it("offers deletion only for past runs and keeps history when confirmation is declined", async () => {
+    const remove = vi.spyOn(api, "deleteTranscodeJob").mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    await screen.findByTestId("transcode-job-1");
+    expect(screen.queryByRole("button", { name: /^Delete run for/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete run for/ }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByTestId("transcode-job-3")).toBeInTheDocument();
+  });
+
+  it("deletes a confirmed history run and removes its expanded details", async () => {
+    const remove = vi.spyOn(api, "deleteTranscodeJob").mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: /History/ }));
+    const button = await screen.findByRole("button", { name: /^Delete run for/ });
+    fireEvent.click(screen.getByTestId("transcode-job-3"));
+    vi.mocked(api.transcodeJobs).mockResolvedValue({ items: [], total: 0 });
+    fireEvent.click(button);
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(3));
+    await waitFor(() => expect(screen.queryByTestId("transcode-job-3")).not.toBeInTheDocument());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Source and output files are kept"));
+    expect(screen.queryByRole("link", { name: "Open synchronized preview" })).not.toBeInTheDocument();
+  });
+
+  it("retains the history run and displays an error when deletion fails", async () => {
+    vi.spyOn(api, "deleteTranscodeJob").mockRejectedValue(new Error("Cannot delete run"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: /History/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete run for/ }));
+    expect(await screen.findByText("Cannot delete run")).toBeInTheDocument();
+    expect(screen.getByTestId("transcode-job-3")).toBeInTheDocument();
   });
 
   it("restores and persists resizable transcoding column widths", async () => {

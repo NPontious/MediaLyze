@@ -172,6 +172,8 @@ from backend.app.models.entities import (
     ScanJob,
     ScanTriggerSource,
     TranscodeJob,
+    TranscodeVariant,
+    LibraryRoot,
     TranscodeAutomationRun,
 )
 from backend.app.services.connector_credentials import read_connector_secret
@@ -266,6 +268,7 @@ from backend.app.services.transcoding import (
     get_file_transcode,
     get_transcode_capabilities,
     list_transcode_jobs,
+    delete_transcode_job,
     serialize_transcode_job,
     validate_transcode_plan,
 )
@@ -3288,6 +3291,17 @@ def transcode_job_detail(
     return serialize_transcode_job(job, db.get(MediaFile, job.source_file_id) if job.source_file_id else None)
 
 
+@router.delete("/transcode-jobs/{job_id}", status_code=204)
+def transcode_job_delete(job_id: int, db: Session = Depends(get_db_session)) -> Response:
+    try:
+        delete_transcode_job(db, job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
 @router.post("/transcode-jobs/{job_id}/cancel", response_model=TranscodeJobRead)
 def transcode_job_cancel(
     job_id: int,
@@ -3994,6 +4008,28 @@ def file_cover(
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return StreamingResponse(io.BytesIO(content), media_type="image/png", headers=headers)
+
+
+@router.get("/transcode-variants/{variant_id}/media")
+def transcode_variant_media(
+    variant_id: int,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+) -> FileResponse:
+    variant = db.get(TranscodeVariant, variant_id)
+    if variant is None or variant.analysis_status not in {"external", "ready", "awaiting_analysis"}:
+        raise HTTPException(status_code=404, detail="Completed transcoding variant not found")
+    path = Path(variant.output_path_snapshot).resolve()
+    if variant.output_mode == "transcode_output":
+        root = Path(settings.transcode_output_root or settings.config_path / "Transcode_Output").resolve()
+    else:
+        library_root = db.get(LibraryRoot, variant.library_root_id) if variant.library_root_id else None
+        if library_root is None:
+            raise HTTPException(status_code=404, detail="Variant library root not found")
+        root = Path(library_root.path).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Variant media not found")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/files/{file_id}/media")

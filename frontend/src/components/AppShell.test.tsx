@@ -756,4 +756,11 @@ describe("AppShell", () => {
       expect(container.querySelector(".media-app-shell")).toHaveClass("media-app-shell-full-width"),
     );
   });
+  it("reuses navigation attention after a transcode starts", async () => {
+    renderShell();
+    const link = await screen.findByRole("link", { name: "Transcoding" });
+    fireEvent(window, new Event("medialyze:transcode-started"));
+    expect(link).toHaveClass("is-first-library-attention");
+  });
+
 });

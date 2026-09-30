@@ -25,7 +25,7 @@ import {
 } from "../lib/api";
 import { formatBytes, formatCodecLabel, formatDuration, formatSpatialAudioProfileLabel } from "../lib/format";
 import { releaseVisibility } from "../lib/release-visibility";
-import { formatFilenameLanguageCode, formatLanguageLabel, languageOptions, normalizeLanguageTag, streamLanguageCodeFormats, type FilenameLanguageCodeFormat } from "../lib/language";
+import { formatFilenameLanguageCode, formatLanguageLabel, languageOptions, normalizeLanguageTag, sharedStreamLanguageCodeFormat, streamLanguageCodeFormats, type FilenameLanguageCodeFormat } from "../lib/language";
 import { classifyResolutionCategory } from "../lib/resolution-categories";
 import { applyFormattingPreset, formattingDefinitionFromPlan, matchingFormattingPresetId, type FormattingKind } from "../lib/transcode-formatting-presets";
 import { FILENAME_METADATA_TOKENS, type FilenameMetadataToken } from "../lib/transcode-formatting-metadata";
@@ -1769,6 +1769,7 @@ export function TranscodingPanel({
     try {
       const nextJob = await api.startFileTranscode(file.id, releasePlan(result.normalized_plan));
       setJob(nextJob);
+      window.dispatchEvent(new Event("medialyze:transcode-started"));
       setValidation(result);
       setError(null);
     } catch (reason) {
@@ -2128,19 +2129,6 @@ export function TranscodingPanel({
             aria-labelledby={`transcode-stream-tab-${streamTabLabelKey(activeStreamTab)}`}
             tabIndex={0}
           >
-            <div className="transcode-configuration-grid transcode-stream-language-format-row">
-              <LanguageCodeFormatField
-                container={plan.container}
-                kind={activeStreamTab === "video_streams" ? "video" : activeStreamTab === "audio_streams" ? "audio" : "subtitle"}
-                controlClassName={transcodeControlClass}
-                ariaLabel={`${t("transcoding.languageCodeFormat")} (${t(`transcoding.streamTabs.${streamTabLabelKey(activeStreamTab)}`)})`}
-                value={plan[`${activeStreamTab.slice(0, -8)}_language_code_format` as "video_language_code_format" | "audio_language_code_format" | "subtitle_language_code_format"] ?? "container_default"}
-                onChange={(format) => {
-                  setExpertPlan({ ...plan, profile: "expert", [`${activeStreamTab.slice(0, -8)}_language_code_format`]: format });
-                  setValidation(null);
-                }}
-              />
-            </div>
             <div className="transcode-stream-list">
             <div className="compatibility-profile-search transcode-stream-search">
               <Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" />
@@ -2789,6 +2777,17 @@ export function TranscodingPanel({
                   />
                 </label>
               ))}
+              <LanguageCodeFormatField
+                className="transcode-global-option transcode-metadata-language-option"
+                container={plan.container}
+                controlClassName={transcodeControlClass}
+                ariaLabel={`${t("transcoding.languageCodeFormat")} (${t("transcoding.metadataSettings")})`}
+                value={sharedStreamLanguageCodeFormat(plan)}
+                onChange={(format) => {
+                  setExpertPlan({ ...plan, profile: "expert", video_language_code_format: format, audio_language_code_format: format, subtitle_language_code_format: format });
+                  setValidation(null);
+                }}
+              />
             </div>
           </div>
         ) : null}
@@ -2804,8 +2803,9 @@ export function TranscodingPanel({
       </div>
 
       {validation ? (
-        <section className={`transcode-validation ${validation.valid ? "is-valid" : "is-invalid"}`}>
-          <h3>{validation.valid ? <Check aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}{t("transcoding.validation.title")}</h3>
+        <details key={`${validation.output_path}-${job?.id ?? "validate"}`} className={`transcode-validation ${validation.valid ? "is-valid" : "is-invalid"}`}>
+          <summary>{validation.valid ? <Check aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}{t("transcoding.validation.title")}</summary>
+          <div className="transcode-validation-content">
           <strong>{validation.output_filename}</strong>
           <code>{validation.output_path}</code>
           <div className="transcode-diff-grid">
@@ -2815,8 +2815,9 @@ export function TranscodingPanel({
           </div>
           {validation.warnings.map((warning) => <p className="notice compact" key={warning}>{warning}</p>)}
           {validation.errors.map((validationError) => <p className="notice compact error" key={validationError}>{validationError}</p>)}
-          <details><summary>{t("transcoding.command")}</summary><code className="transcode-command">{validation.ffmpeg_command}</code></details>
-        </section>
+          {validation.ffmpeg_command ? <details><summary>{t("transcoding.command")}</summary><code className="transcode-command">{validation.ffmpeg_command}</code></details> : null}
+          </div>
+        </details>
       ) : null}
 
       {activeJob ? (

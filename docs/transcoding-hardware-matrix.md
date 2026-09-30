@@ -20,6 +20,25 @@ These paths are hardware-media encoding. `libx264`, `libx265`, SVT-AV1, and
 other software encoders remain available only in the explicit `cpu_only`
 execution mode.
 
+## Automatic selection
+
+Automatic codec plans select one available device whose runtime encoder probes
+cover every encoded video stream. Explicit encoder and device choices remain
+constraints. NVIDIA preferences use the actual `*_nvenc` encoder names.
+
+A completed hardware-test matrix refines device ranking only when its capability
+fingerprint matches the current FFmpeg and device inventory. Matching measured
+source/target codec pairs rank by normalized benchmark duration; without a
+complete comparable measurement, platform backend preferences and stable device
+IDs provide deterministic selection. These small decode/encode benchmarks are a
+ranking signal, not a guarantee of the fastest full-resolution job with filters.
+Actual job plans currently accelerate encoding; decoding and ordinary filters
+may still run on the CPU. Hardware-required mode reports unsupported output
+codecs rather than silently switching to software; CPU-only remains explicit.
+
+Inherited display profiles such as HEVC `Main` and `Main 10` are emitted as
+FFmpeg `main` and `main10`, including VAAPI, NVENC, QSV and VideoToolbox.
+
 ## Test template
 
 | Host | Device | Driver | FFmpeg | Decoder path | Encoder | Pixel format/filter | Result | Evidence |

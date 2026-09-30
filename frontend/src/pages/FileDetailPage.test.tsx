@@ -1642,4 +1642,26 @@ describe("FileDetailPage", () => {
     expect(copiedText).toBe(JSON.stringify(file.raw_ffprobe_json, null, 2));
     expect(screen.getByRole("button", { name: "Copied raw ffprobe JSON" })).toBeInTheDocument();
   });
+  it("compares external output variants and switches both versions independently", async () => {
+    const file = createFileDetail();
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileTranscode").mockResolvedValue({
+      original: { id: file.id }, jobs: [], variants: [
+        { id: 41, output_file_id: null, analysis_status: "external", output_filename: "H264.mp4" },
+        { id: 42, output_file_id: null, analysis_status: "awaiting_analysis", output_filename: "HEVC.mp4" },
+      ],
+    } as unknown as FileTranscode);
+    const { container } = renderPage(file.id);
+    await selectFileDetailPanel("Preview");
+    const left = await screen.findByRole("combobox", { name: "Left version" });
+    const right = screen.getByRole("combobox", { name: "Right version" });
+    fireEvent.change(left, { target: { value: "variant:42" } });
+    fireEvent.change(right, { target: { value: "variant:41" } });
+    expect(container.querySelectorAll(".video-wipe-stage video")[0]).toHaveAttribute("src", "/api/transcode-variants/42/media");
+    expect(container.querySelectorAll(".video-wipe-stage video")[1]).toHaveAttribute("src", "/api/transcode-variants/41/media");
+    expect(container.querySelector(".file-detail-preview-player")).toHaveAttribute("src", `/api/files/${file.id}/media`);
+  });
+
 });

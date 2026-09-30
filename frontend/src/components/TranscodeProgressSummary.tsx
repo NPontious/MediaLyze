@@ -3,6 +3,11 @@ import ReactECharts from "echarts-for-react";
 import type { TranscodeJob } from "../lib/api";
 import { formatBytes, formatDuration } from "../lib/format";
 
+type ProgressJob = Pick<TranscodeJob,
+  "status" | "progress_percent" | "speed" | "eta_seconds" | "processing_phase" | "phase_detail"
+  | "source_transfer_bytes" | "source_transfer_total_bytes" | "result_transfer_bytes" | "result_transfer_total_bytes"
+>;
+
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export function parseTranscodeSpeed(value: string | null): number | null {
@@ -17,16 +22,16 @@ export function formatTranscodeSpeedLabel(value: string | null): string {
   return /x$/i.test(trimmed) ? `${trimmed.slice(0, -1)}×` : trimmed;
 }
 
-export function transcodeProgressValue(job: TranscodeJob): number {
+export function transcodeProgressValue(job: ProgressJob): number {
   return Math.max(0, Math.min(100, Number.isFinite(job.progress_percent) ? job.progress_percent : 0));
 }
 
-export function phaseForTranscodeJob(job: TranscodeJob, t: Translate): string {
+export function phaseForTranscodeJob(job: ProgressJob, t: Translate): string {
   const phase = job.processing_phase || (job.status === "running" ? "transcoding" : job.status);
   return t(`transcoding.federation.phases.${phase}`, { defaultValue: job.phase_detail || phase });
 }
 
-export function transferForTranscodeJob(job: TranscodeJob): string | null {
+export function transferForTranscodeJob(job: ProgressJob): string | null {
   if (job.source_transfer_total_bytes) {
     return `${formatBytes(job.source_transfer_bytes ?? 0)} / ${formatBytes(job.source_transfer_total_bytes)}`;
   }
@@ -36,7 +41,7 @@ export function transferForTranscodeJob(job: TranscodeJob): string | null {
   return null;
 }
 
-function speedSeries(job: TranscodeJob, sampledSpeeds: number[]): number[] {
+function speedSeries(job: ProgressJob, sampledSpeeds: number[]): number[] {
   const values = sampledSpeeds.length > 0 ? sampledSpeeds : [];
   const current = parseTranscodeSpeed(job.speed);
   if (current !== null && (values.length === 0 || values.at(-1) !== current)) {
@@ -57,7 +62,7 @@ function speedTooltipFormatter(params: unknown): string {
   return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 1 })}×`;
 }
 
-function SpeedChart({ job, sampledSpeeds, t }: { job: TranscodeJob; sampledSpeeds: number[]; t: Translate }) {
+function SpeedChart({ job, sampledSpeeds, t }: { job: ProgressJob; sampledSpeeds: number[]; t: Translate }) {
   const values = speedSeries(job, sampledSpeeds);
   const option = {
     animation: false,
@@ -102,7 +107,7 @@ function SpeedChart({ job, sampledSpeeds, t }: { job: TranscodeJob; sampledSpeed
     ],
   };
 
-  return <ReactECharts option={option} style={{ width: "100%", height: 58 }} opts={{ renderer: "svg" }} />;
+  return <ReactECharts option={option} style={{ width: "100%", height: 30 }} opts={{ renderer: "svg" }} />;
 }
 
 export function TranscodeProgressSummary({
@@ -111,7 +116,7 @@ export function TranscodeProgressSummary({
   t,
   compact = false,
 }: {
-  job: TranscodeJob;
+  job: ProgressJob;
   sampledSpeeds?: number[];
   t: Translate;
   compact?: boolean;
@@ -140,13 +145,13 @@ export function TranscodeProgressSummary({
         <div className="transcoding-progress-chart">
           <SpeedChart job={job} sampledSpeeds={sampledSpeeds} t={t} />
         </div>
-        <span className="transcoding-progress-track" aria-label={t("transcoding.center.progressAria", { value: Math.round(progress) })}>
-          <span style={{ width: `${progress}%` }} />
-        </span>
         <div className="transcoding-progress-meta">
           <span className="transcoding-progress-phase" title={job.phase_detail ?? phaseText}>{phaseText}</span>
           {transferText ? <span className="transcoding-progress-transfer">{transferText}</span> : null}
         </div>
+        <span className="transcoding-progress-track" aria-label={t("transcoding.center.progressAria", { value: Math.round(progress) })}>
+          <span style={{ width: `${progress}%` }} />
+        </span>
       </div>
     );
   }

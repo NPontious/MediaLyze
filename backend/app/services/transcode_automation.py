@@ -719,6 +719,13 @@ def _first_matching_stream_rule(
     )
 
 
+def _preset_stream_language_format(format: str, container: str) -> str:
+    supported = {"container_default", "iso_639_2_t"} if container == "mp4" else {
+        "container_default", "iso_639_2", "iso_639_2_region",
+    }
+    return format if format in supported else "container_default"
+
+
 def materialize_transcode_preset(
     profile: TranscodePreset,
     media_file: MediaFile,
@@ -781,9 +788,9 @@ def materialize_transcode_preset(
     return TranscodePlan(
         profile=profile_key,
         container=container,
-        video_language_code_format=definition.video_language_code_format,
-        audio_language_code_format=definition.audio_language_code_format,
-        subtitle_language_code_format=definition.subtitle_language_code_format,
+        video_language_code_format=_preset_stream_language_format(definition.video_language_code_format, container),
+        audio_language_code_format=_preset_stream_language_format(definition.audio_language_code_format, container),
+        subtitle_language_code_format=_preset_stream_language_format(definition.subtitle_language_code_format, container),
         video_streams=video_plans,
         audio_streams=audio_plans,
         subtitle_streams=subtitle_plans,

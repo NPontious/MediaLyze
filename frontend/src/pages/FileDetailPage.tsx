@@ -654,19 +654,26 @@ function CoverDetailsList({
   );
 }
 
+type PreviewVersion = { id: string; src: string; label: string };
+
 function PreviewDetailsPanel({
   detail,
-  comparison,
+  versions = [],
   comparisonLoading = false,
   comparisonError = null,
   t,
 }: {
   detail: MediaFileDetail | null;
-  comparison?: MediaFileDetail | null;
+  versions?: PreviewVersion[];
   comparisonLoading?: boolean;
   comparisonError?: string | null;
   t: (key: string, options?: Record<string, unknown>) => string;
 }): ReactNode {
+  const [leftId, setLeftId] = useState<string | null>(null);
+  const [rightId, setRightId] = useState<string | null>(null);
+  const left = versions.find((item) => item.id === leftId) ?? versions[0];
+  const right = versions.find((item) => item.id === rightId && item.id !== left?.id)
+    ?? versions.find((item) => item.id !== left?.id);
   if (!detail) {
     return t("streamDetails.unavailable");
   }
@@ -700,13 +707,24 @@ function PreviewDetailsPanel({
           <h3>{t("transcoding.previewComparison")}</h3>
           <p className="notice compact error" role="alert">{comparisonError}</p>
         </div>
-      ) : comparison && isVideoPreview && hasVideoMetadata(comparison) ? (
+      ) : left && right && isVideoPreview ? (
         <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
           <h3>{t("transcoding.previewComparison")}</h3>
-          <VideoWipeCompare
-            first={{ src: previewUrl, label: detail.filename }}
-            second={{ src: api.fileMediaUrl(comparison.id), label: comparison.filename }}
-          />
+          {versions.length > 2 ? (
+            <div className="transcode-configuration-grid">
+              <label className="transcode-control-field"><span>{t("transcoding.previewLeft")}</span>
+                <select value={left.id} onChange={(event) => setLeftId(event.target.value)}>
+                  {versions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+              <label className="transcode-control-field"><span>{t("transcoding.previewRight")}</span>
+                <select value={right.id} onChange={(event) => setRightId(event.target.value)}>
+                  {versions.filter((item) => item.id !== left.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+            </div>
+          ) : null}
+          <VideoWipeCompare key={`${left.id}:${right.id}`} first={left} second={right} />
         </div>
       ) : null}
     </div>
@@ -1750,7 +1768,7 @@ export function FileDetailPage() {
   const showAllPlaybacksWhenUnstacked =
     appSettings.feature_flags.show_all_playbacks_when_unstacked;
   const [file, setFile] = useState<MediaFileDetail | null>(null);
-  const [previewComparison, setPreviewComparison] = useState<MediaFileDetail | null>(null);
+  const [previewVersions, setPreviewVersions] = useState<PreviewVersion[]>([]);
   const [previewComparisonLoading, setPreviewComparisonLoading] = useState(false);
   const [previewComparisonError, setPreviewComparisonError] = useState<string | null>(null);
   const [qualityDetail, setQualityDetail] = useState<MediaFileQualityScoreDetail | null>(null);
@@ -1895,31 +1913,48 @@ export function FileDetailPage() {
       String(file.id) !== fileId ||
       !hasVideoMetadata(file)
     ) {
-      setPreviewComparison(null);
+      setPreviewVersions([]);
       setPreviewComparisonLoading(false);
       setPreviewComparisonError(null);
       return;
     }
     let active = true;
     const controller = new AbortController();
-    setPreviewComparison(null);
+    setPreviewVersions([]);
     setPreviewComparisonLoading(true);
     setPreviewComparisonError(null);
 
+    let comparisonRefreshTimer: ReturnType<typeof setTimeout> | undefined;
     const loadComparison = async () => {
-      let targetFileId = comparisonFileId;
-      if (!targetFileId && file.video_streams.length > 0) {
-        const transcode = await api.fileTranscode(file.id, controller.signal);
-        targetFileId = transcode.variants.find(
-          (variant) => variant.output_file_id && variant.output_file_id !== file.id,
-        )?.output_file_id ?? null;
+      const versionForFile = (detail: MediaFileDetail): PreviewVersion => ({
+        id: `file:${detail.id}`, src: api.fileMediaUrl(detail.id), label: detail.filename,
+      });
+      if (comparisonFileId) {
+        const comparison = await api.file(comparisonFileId, { includeRawFfprobe: false });
+        if (active) setPreviewVersions([versionForFile(file), versionForFile(comparison)]);
+        return;
       }
-      if (!targetFileId || !active) return;
-
-      const payload = await api.file(targetFileId, { includeRawFfprobe: false });
+      const transcode = await api.fileTranscode(file.id, controller.signal);
+      const original = transcode.original?.id && transcode.original.id !== file.id
+        ? await api.file(transcode.original.id, { includeRawFfprobe: false }) : file;
+      const variants = await Promise.all(transcode.variants.map(async (variant): Promise<PreviewVersion | null> => {
+        if (variant.output_file_id) {
+          return versionForFile(await api.file(variant.output_file_id, { includeRawFfprobe: false }));
+        }
+        if (!["external", "ready", "awaiting_analysis"].includes(variant.analysis_status)) return null;
+        return { id: `variant:${variant.id}`, src: api.transcodeVariantMediaUrl(variant.id), label: variant.output_filename };
+      }));
+      const sources = [versionForFile(original), ...variants.filter((item): item is PreviewVersion => item !== null)];
       if (!active) return;
-      setPreviewComparison(payload);
+      setPreviewVersions(sources.filter((item, index) => sources.findIndex((candidate) => candidate.id === item.id) === index));
       setPreviewComparisonError(null);
+      if (active && transcode.jobs.some((job) => job.status === "queued" || job.status === "running")) {
+        comparisonRefreshTimer = setTimeout(() => {
+          void loadComparison().catch((reason: Error) => {
+            if (active && reason.name !== "AbortError") setPreviewComparisonError(reason.message);
+          });
+        }, 5000);
+      }
     };
 
     void loadComparison()
@@ -1933,6 +1968,7 @@ export function FileDetailPage() {
     return () => {
       active = false;
       controller.abort();
+      clearTimeout(comparisonRefreshTimer);
     };
   }, [activePanelId, comparisonFileId, file, fileId]);
 
@@ -2102,7 +2138,7 @@ export function FileDetailPage() {
       body: (
         <PreviewDetailsPanel
           detail={file}
-          comparison={previewComparison}
+          versions={previewVersions}
           comparisonLoading={previewComparisonLoading}
           comparisonError={previewComparisonError}
           t={t}

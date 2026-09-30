@@ -1,6 +1,6 @@
 import "../i18n";
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -163,7 +163,7 @@ describe("TranscodePresetsRulesPanel", () => {
 
     expect(screen.queryByRole("textbox", { name: "Filename formatting" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add metadata" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Language code format" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Language code format" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Override default template" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Include subtitle languages" })).not.toBeInTheDocument();
 
@@ -191,12 +191,19 @@ describe("TranscodePresetsRulesPanel", () => {
     expect(screen.queryByRole("button", { name: /Remove German/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Metadata settings" }));
     expect(screen.getByRole("group", { name: "Metadata settings" })).toBeInTheDocument();
+    const languageFormat = screen.getByRole("combobox", { name: "Language code format (Metadata settings)" });
+    expect(languageFormat).toHaveValue("container_default");
+    expect(within(screen.getByRole("group", { name: "Metadata settings" })).getByRole("combobox")).toBe(languageFormat);
+    fireEvent.change(languageFormat, { target: { value: "iso_639_2_region" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(api.updateTranscodePreset).toHaveBeenCalled());
     const definition = vi.mocked(api.updateTranscodePreset).mock.calls[0][1].definition!;
     expect(definition.audio_rules[0].match_languages).toEqual(["en", "de", "fr-CA"]);
     expect(definition.video_rules).toEqual([]);
+    expect(definition.video_language_code_format).toBe("iso_639_2_region");
+    expect(definition.audio_language_code_format).toBe("iso_639_2_region");
+    expect(definition.subtitle_language_code_format).toBe("iso_639_2_region");
     expect(definition.filename_template_override).toBe(false);
   });
 

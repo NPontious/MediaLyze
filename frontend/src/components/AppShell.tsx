@@ -438,6 +438,17 @@ export function AppShell() {
   const showTelemetryAttention =
     showReleaseNotes &&
     (showUpdateTelemetryAttention || (appSettingsLoaded && telemetryUndecided && !telemetry.environment_disabled));
+  const [transcodeAttention, setTranscodeAttention] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const highlight = () => {
+      setTranscodeAttention(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setTranscodeAttention(false), 4800);
+    };
+    window.addEventListener("medialyze:transcode-started", highlight);
+    return () => { clearTimeout(timer); window.removeEventListener("medialyze:transcode-started", highlight); };
+  }, []);
   const showFirstLibraryAttention = librariesLoaded && libraries.length === 0;
   const libraryRouteActive = /^\/libraries\/[^/]+/.test(location.pathname);
 
@@ -810,7 +821,7 @@ export function AppShell() {
                 end
                 aria-label={t("nav.transcodingAria")}
                 data-tooltip={t("nav.transcodingAria")}
-                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}${transcodeAttention ? " is-first-library-attention" : ""}`.trim()}
               >
                 {({ isActive }) => (
                   <>

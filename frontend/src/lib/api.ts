@@ -2816,6 +2816,7 @@ export const api = {
       filename: extractFilenameFromDisposition(response.headers.get("Content-Disposition")),
     };
   },
+  transcodeVariantMediaUrl: (id: number) => `${API_PREFIX}/transcode-variants/${id}/media`,
   fileMediaUrl: (id: string | number, options: { download?: boolean } = {}) => `${API_PREFIX}${buildFileMediaPath(id, options)}`,
   libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
   file: (
@@ -3020,6 +3021,7 @@ export const api = {
     return request<TranscodeJobPage>(`/transcode-jobs${suffix ? `?${suffix}` : ""}`);
   },
   transcodeJob: (id: string | number) => request<TranscodeJob>(`/transcode-jobs/${id}`),
+  deleteTranscodeJob: (id: string | number) => request<void>(`/transcode-jobs/${id}`, { method: "DELETE" }),
   cancelTranscodeJob: (id: string | number) =>
     request<TranscodeJob>(`/transcode-jobs/${id}/cancel`, { method: "POST" }),
   browse: (path = ".") => request<BrowseResponse>(`/browse?path=${encodeURIComponent(path)}`),

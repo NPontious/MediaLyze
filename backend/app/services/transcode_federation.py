@@ -39,7 +39,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import or_, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings
@@ -4027,7 +4027,14 @@ def expire_resource_reservations(db: Session, *, now: datetime | None = None) ->
     reservations = db.scalars(
         select(TranscodeResourceReservation).where(
             TranscodeResourceReservation.status == "active",
-            TranscodeResourceReservation.expires_at < current,
+            or_(
+                TranscodeResourceReservation.expires_at < current,
+                TranscodeResourceReservation.job_id.in_(
+                    select(TranscodeJob.id).where(
+                        TranscodeJob.status.in_([JobStatus.completed, JobStatus.failed, JobStatus.canceled])
+                    )
+                ),
+            ),
         )
     ).all()
     for reservation in reservations:

@@ -116,6 +116,8 @@ Attached-picture streams such as embedded cover art are ignored as video-analysi
 
 ### 3.4 Subtitle metadata
 
+Transcoding stream language codes are configured together for video, audio, and subtitles under Metadata settings. Container default uses ISO 639-2/B for MKV/WebM and ISO 639-2/T for MP4. Presets using the source container can request any supported stream convention; applying a preset falls back to the actual target container's default if that convention is unsupported. Filename and folder-name language formatting remains independent.
+
 | Field | Internal subtitle stream | External subtitle sidecar |
 |---|---:|---:|
 | codec / format | yes | yes |

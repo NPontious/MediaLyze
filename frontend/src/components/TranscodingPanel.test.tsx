@@ -242,6 +242,36 @@ const savedPreset: TranscodePresetPlan = {
 };
 
 describe("TranscodingPanel", () => {
+  it("sets one metadata language format for all stream types and resets it for an incompatible container", async () => {
+    vi.mocked(api.validateFileTranscode).mockImplementation(async (_id, plan) => ({ ...validation, normalized_plan: plan }));
+    renderTranscodingPanel();
+    await screen.findByRole("button", { name: "Validate plan" });
+    for (const name of [/Video/, /Audio/, /Subtitles/]) {
+      fireEvent.click(screen.getByRole("tab", { name }));
+      expect(within(screen.getByRole("tabpanel")).queryByRole("combobox", { name: /Language code format/ })).not.toBeInTheDocument();
+    }
+    const toggle = screen.getByRole("button", { name: "Metadata settings" });
+    if (toggle.getAttribute("aria-expanded") === "false") fireEvent.click(toggle);
+    const metadata = screen.getByRole("group", { name: "Metadata settings" });
+    const format = within(metadata).getByRole("combobox", { name: "Language code format (Metadata settings)" });
+    expect(format).toHaveValue("container_default");
+    const container = screen.getByRole("combobox", { name: "Target container" });
+    fireEvent.change(container, { target: { value: "mkv" } });
+    fireEvent.change(format, { target: { value: "iso_639_2_region" } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
+    await waitFor(() => expect(api.validateFileTranscode).toHaveBeenCalled());
+    expect(vi.mocked(api.validateFileTranscode).mock.calls[0][1]).toEqual(expect.objectContaining({
+      video_language_code_format: "iso_639_2_region", audio_language_code_format: "iso_639_2_region", subtitle_language_code_format: "iso_639_2_region",
+    }));
+    fireEvent.change(container, { target: { value: "mp4" } });
+    expect(format).toHaveValue("container_default");
+    fireEvent.click(screen.getByRole("button", { name: "Validate plan" }));
+    await waitFor(() => expect(api.validateFileTranscode).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.validateFileTranscode).mock.calls[1][1]).toEqual(expect.objectContaining({
+      video_language_code_format: "container_default", audio_language_code_format: "container_default", subtitle_language_code_format: "container_default",
+    }));
+  });
+
   beforeEach(() => {
     releaseVisibility.federation = true;
     vi.spyOn(api, "fileTranscode").mockResolvedValue(payload);
@@ -260,6 +290,22 @@ describe("TranscodingPanel", () => {
     vi.restoreAllMocks();
   });
 
+
+  it("keeps validation collapsed after validating and starting, and signals navigation attention", async () => {
+    const event = vi.fn();
+    window.addEventListener("medialyze:transcode-started", event);
+    const { container } = renderTranscodingPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Validate plan" }));
+    await waitFor(() => expect(container.querySelector("details.transcode-validation")).toBeInTheDocument());
+    const disclosure = container.querySelector("details.transcode-validation") as HTMLDetailsElement;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(disclosure.querySelector("summary")!);
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Start transcoding" }));
+    await waitFor(() => expect(event).toHaveBeenCalledOnce());
+    expect((container.querySelector("details.transcode-validation") as HTMLDetailsElement).open).toBe(false);
+    window.removeEventListener("medialyze:transcode-started", event);
+  });
   it("keeps the release plan local without showing execution targets", async () => {
     releaseVisibility.federation = false;
     const federationRequest = vi.spyOn(api, "transcodeFederation");

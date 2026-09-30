@@ -1253,6 +1253,7 @@ def test_worker_selection_resolves_target_codec_against_selected_worker() -> Non
                     "name": "h264_qsv",
                     "codec": "h264",
                     "hardware": True,
+                    "tested": True,
                     "available": True,
                     "device_ids": ["qsv0"],
                 }
