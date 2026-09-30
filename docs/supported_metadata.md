@@ -64,6 +64,10 @@ Library types control discovery and some UI behavior:
 | Broken-file diagnostics | partial | partial | scan failure summaries exist; richer diagnostics remain backlog |
 | Media-type-specific recommendation workflows | planned gap | planned gap | not implemented today |
 
+ffprobe failures are recorded per file and the scan continues with the remaining files. Each probe has a 120-second execution limit, a 16 MiB JSON output limit, and a 1 MiB diagnostic output limit. Exceeding a limit terminates and reaps the probe and records an analysis failure; partial metadata is not accepted. Stored raw payloads are loaded lazily during scans, and persisted analysis payloads and stream data are released as files finish processing.
+
+If the backend/container restarts during a scan, startup marks the interrupted job as canceled. This does not imply a user cancellation. For Docker, inspect `docker inspect medialyze --format '{{json .State}}'` and `docker inspect medialyze --format '{{.RestartCount}}'`, plus host kernel logs such as `journalctl -k --since '1 hour ago'`, to check for OOM kills or other restart causes. An ffprobe error immediately before startup messages alone does not establish why the backend exited. Output/time limits do not cap ffprobe's internal memory use or total container memory.
+
 ## 3) Persisted Metadata
 
 ### 3.1 Shared file / format metadata
@@ -111,6 +115,8 @@ Attached-picture streams such as embedded cover art are ignored as video-analysi
 | title, artist, album, album artist, genre, date, disc, composer | no | yes |
 
 ### 3.4 Subtitle metadata
+
+Transcoding stream language codes are configured together for video, audio, and subtitles under Metadata settings. Container default uses ISO 639-2/B for MKV/WebM and ISO 639-2/T for MP4. Presets using the source container can request any supported stream convention; applying a preset falls back to the actual target container's default if that convention is unsupported. Filename and folder-name language formatting remains independent.
 
 | Field | Internal subtitle stream | External subtitle sidecar |
 |---|---:|---:|

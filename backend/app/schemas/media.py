@@ -60,6 +60,7 @@ class VideoStreamRead(BaseModel):
     bit_rate: int | None
     bit_depth: int | None
     hdr_type: str | None
+    language: str | None = None
 
 
 class AudioStreamRead(BaseModel):
@@ -109,6 +110,7 @@ class SubtitleStreamRead(BaseModel):
 class ExternalSubtitleRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
     path: str
     language: str | None
     format: str | None

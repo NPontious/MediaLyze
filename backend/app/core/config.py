@@ -136,10 +136,18 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     config_path: Path | None = None
     media_root: Path | None = None
+    transcode_output_root: Path | None = Field(
+        default=None,
+        validation_alias="MEDIALYZE_TRANSCODE_OUTPUT_ROOT",
+    )
     frontend_dist_path: Path | None = None
     database_filename: str = "medialyze.db"
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"
+    hardware_render_node: str | None = Field(
+        default=None,
+        validation_alias="MEDIALYZE_HW_RENDER_NODE",
+    )
     jellyfin_api_key_file: Path | None = Field(default=None, validation_alias="JELLYFIN_API_KEY_FILE")
     scan_discovery_batch_size: int = 500
     scan_commit_batch_size: int = 5
@@ -147,6 +155,61 @@ class Settings(BaseSettings):
     ffprobe_worker_count: int = 4
     scan_runtime_worker_count: int = 2
     disable_default_ignore_patterns: bool = False
+    # The federation is deliberately opt-in at the persisted application
+    # level.  These process settings describe the optional protocol listener
+    # and its discovery transport once a user enables it in the UI.
+    federation_enabled: bool = Field(
+        default=True,
+        validation_alias="MEDIALYZE_FEDERATION_ENABLED",
+    )
+    federation_host: str = Field(
+        default="0.0.0.0",
+        validation_alias="MEDIALYZE_FEDERATION_HOST",
+    )
+    federation_port: int = Field(
+        default=8091,
+        ge=1,
+        le=65535,
+        validation_alias="MEDIALYZE_FEDERATION_PORT",
+    )
+    federation_discovery_port: int = Field(
+        default=43211,
+        ge=1024,
+        le=65535,
+        validation_alias="MEDIALYZE_FEDERATION_DISCOVERY_PORT",
+    )
+    federation_passcode: str | None = Field(
+        default=None,
+        max_length=256,
+        validation_alias="MEDIALYZE_FEDERATION_PASSCODE",
+    )
+    federation_advertise_urls: str = Field(
+        default="",
+        validation_alias="MEDIALYZE_FEDERATION_ADVERTISE_URLS",
+    )
+    federation_chunk_size_bytes: int = Field(
+        default=1024 * 1024,
+        ge=64 * 1024,
+        le=16 * 1024 * 1024,
+        validation_alias="MEDIALYZE_FEDERATION_CHUNK_SIZE_BYTES",
+    )
+    federation_temp_budget_bytes: int = Field(
+        default=0,
+        ge=0,
+        validation_alias="MEDIALYZE_FEDERATION_TEMP_BUDGET_BYTES",
+    )
+    federation_result_retention_hours: int = Field(
+        default=24,
+        ge=1,
+        le=168,
+        validation_alias="MEDIALYZE_FEDERATION_RESULT_RETENTION_HOURS",
+    )
+    federation_request_timeout_seconds: float = Field(
+        default=15.0,
+        gt=0.5,
+        le=120.0,
+        validation_alias="MEDIALYZE_FEDERATION_REQUEST_TIMEOUT_SECONDS",
+    )
     allowed_media_extensions: tuple[str, ...] = VIDEO_EXTENSIONS
     subtitle_extensions: tuple[str, ...] = (".srt", ".ass", ".ssa", ".sub", ".idx")
 
@@ -162,6 +225,8 @@ class Settings(BaseSettings):
                 self.config_path = Path("/config")
         if self.media_root is None:
             self.media_root = Path("/media")
+        if self.transcode_output_root is None:
+            self.transcode_output_root = self.config_path / "Transcode_Output"
         if self.frontend_dist_path is None:
             self.frontend_dist_path = _repo_frontend_dist_path()
         return self

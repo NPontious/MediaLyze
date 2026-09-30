@@ -36,12 +36,12 @@ Generic connections use persisted, single-flight, connection-scoped jobs. Bindin
 
 On upgrade, MediaLyze idempotently creates the standard `provider=jellyfin`, `name=Jellyfin` connection and backfills the legacy catalog, locations, links, users, user state, playback events, credentials, and unambiguous path rules. Existing rules begin as imported; manual file matches, ignored states, and file suggestions are removed. Existing Jellyfin tables are intentionally retained. Standard legacy syncs mirror their catalog and playback snapshot into connector tables, project automatic bindings back to the compatibility path-mapping table, and execute both exact-path matchers. Job summaries report Shadow Mode counters so unexplained differences can be diagnosed before the compatibility facade is removed in a later release.
 
-Startup cancels orphaned connector jobs rather than promoting partial state. Remote deletions are applied only during a successful promote. The repository includes the large-catalog benchmark:
+Startup cancels orphaned connector jobs rather than promoting partial state. Remote deletions are applied only during a successful promote. The repository includes [documented large-catalog benchmarks](benchmarks.md). Run the connector benchmarks from the repository root:
 
 ```bash
-.venv/bin/python benchmarks/benchmark_jellyfin_bulk_promote.py
-.venv/bin/python benchmarks/benchmark_connector_bulk_promote.py
-.venv/bin/python benchmarks/benchmark_connector_matching.py
+.venv/bin/python docs/benchmarks/benchmark_jellyfin_bulk_promote.py --items 100000
+.venv/bin/python docs/benchmarks/benchmark_connector_bulk_promote.py --items 100000
+.venv/bin/python docs/benchmarks/benchmark_connector_matching.py --items 100000
 ```
 
 The automated contract tests cover Jellyfin 10.10 and 10.11 response shapes. A running Jellyfin server exposes its exact API documentation at `/api-docs/swagger/index.html`; verify other versions with Test connection and a complete sync.

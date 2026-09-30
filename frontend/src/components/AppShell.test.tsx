@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AppDataProvider } from "../lib/app-data";
-import { api, type AppSettings } from "../lib/api";
+import { api, type AppSettings, type LibrarySummary } from "../lib/api";
 import { ScanJobsProvider } from "../lib/scan-jobs";
 import { AppShell } from "./AppShell";
 
@@ -49,6 +49,7 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       in_depth_dolby_vision_profiles: false,
       show_all_playbacks_when_unstacked: false,
       ...overrideFeatureFlags,
+    },
     ...restOverrides,
   };
 }
@@ -63,6 +64,7 @@ function renderShell(initialEntries = ["/"]) {
               <Route path="/" element={<div>Dashboard</div>} />
               <Route path="/settings" element={<div>Settings page</div>} />
               <Route path="/storage-map" element={<div>Storage map page</div>} />
+              <Route path="/libraries/:libraryId" element={<div>Library page</div>} />
               <Route path="/ui-elements" element={<div>UI elements page</div>} />
             </Route>
           </Routes>
@@ -96,18 +98,52 @@ afterEach(() => {
 });
 
 describe("AppShell", () => {
-  it("shows the storage map as the fourth primary navigation item", async () => {
+  it("opens the library list on hover or click and navigates to the selected library", async () => {
+    window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
+    vi.mocked(api.libraries).mockResolvedValue([
+      { id: 1, name: "Movies" } as LibrarySummary,
+      { id: 2, name: "Music" } as LibrarySummary,
+    ]);
+    renderShell();
+
+    const trigger = await screen.findByRole("button", { name: "Libraries" });
+    await waitFor(() => expect(api.libraries).toHaveBeenCalled());
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveAttribute("data-tooltip", "Libraries");
+    fireEvent.mouseEnter(trigger.parentElement!);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Music" })).toHaveAttribute("href", "/libraries/2");
+    fireEvent.mouseLeave(trigger.parentElement!);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("link", { name: "Movies" }));
+    expect(await screen.findByText("Library page")).toBeInTheDocument();
+    expect(trigger).toHaveClass("active");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("shows the storage map and transcoding center in the primary navigation", async () => {
     window.localStorage.setItem("medialyze-release-notes-seen-app-version", "0.8.3");
 
     renderShell();
 
     const primaryNavigation = await screen.findByRole("navigation", { name: "Primary" });
-    const primaryLinks = Array.from(primaryNavigation.querySelectorAll<HTMLAnchorElement>(".media-nav-icons > a"));
-    expect(primaryLinks.map((link) => link.getAttribute("href"))).toEqual([
+    const navItems = Array.from(primaryNavigation.querySelector(".media-nav-icons")!.children);
+    expect(navItems.map((item) => item.matches("a") ? item.getAttribute("href") : item.querySelector("button")?.getAttribute("aria-label"))).toEqual([
       "/",
+      "Libraries",
       "/files/compare",
-      "/settings",
       "/storage-map",
+      "/transcoding",
+      "/settings",
+    ]);
+    expect(navItems.map((item) => item.matches("a") ? item.getAttribute("data-tooltip") : item.querySelector("button")?.getAttribute("data-tooltip"))).toEqual([
+      "Dashboard",
+      "Libraries",
+      "Compare files",
+      "Storage map",
+      "Transcoding",
+      "Settings",
     ]);
 
     fireEvent.click(screen.getByRole("link", { name: "Storage map" }));
@@ -208,7 +244,7 @@ describe("AppShell", () => {
     expect(screen.getByText(/default the full-width app shell feature flag/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open GitHub repository" })).toHaveAttribute(
       "href",
-      "https://github.com/frederikemmer/MediaLyze/",
+      "https://github.com/NPontious/MediaLyze/",
     );
     expect(screen.getByRole("link", { name: "Open GitHub repository" })).toHaveAttribute(
       "data-tooltip",
@@ -216,7 +252,7 @@ describe("AppShell", () => {
     );
     expect(screen.getByRole("link", { name: "Report an issue" })).toHaveAttribute(
       "href",
-      "https://github.com/frederikemmer/MediaLyze/issues/new/choose",
+      "https://github.com/NPontious/MediaLyze/issues/new/choose",
     );
     expect(screen.getByRole("link", { name: "Report an issue" })).toHaveAttribute(
       "data-tooltip",
@@ -591,6 +627,7 @@ describe("AppShell", () => {
     await waitFor(() => expect(markReminder).toHaveBeenCalledWith("0.9.0"));
     expect(window.localStorage.getItem("medialyze-update-reminder-v1")).toBeNull();
   });
+
   it("applies the full-width shell class when the feature flag is enabled", async () => {
     vi.spyOn(api, "appSettings").mockResolvedValue(
       createAppSettings({
@@ -606,4 +643,11 @@ describe("AppShell", () => {
       expect(container.querySelector(".media-app-shell")).toHaveClass("media-app-shell-full-width"),
     );
   });
+  it("reuses navigation attention after a transcode starts", async () => {
+    renderShell();
+    const link = await screen.findByRole("link", { name: "Transcoding" });
+    fireEvent(window, new Event("medialyze:transcode-started"));
+    expect(link).toHaveClass("is-first-library-attention");
+  });
+
 });

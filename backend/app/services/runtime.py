@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
+import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from threading import Lock, Timer
+from threading import BoundedSemaphore, Lock, Timer
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -27,7 +30,12 @@ from backend.app.models.entities import (
     ScanJob,
     ScanMode,
     ScanTriggerSource,
+    TranscodeAutomationRun,
+    TranscodeFederationMember,
+    TranscodeJob,
 )
+from backend.app.schemas.transcoding import TranscodePlan, TranscodeValidationRead
+from backend.app.schemas.transcoding import TranscodeAutomationScope, TranscodeAutomationRunRead
 from backend.app.schemas.history import (
     HistoryReconstructionJobStatus,
     HistoryReconstructionPhase,
@@ -86,10 +94,50 @@ from backend.app.services.scanner import (
     queue_scan_job,
 )
 from backend.app.services.stats_cache import stats_cache
+from backend.app.services.transcoding import (
+    cancel_transcode_job,
+    execute_transcode_job,
+    queue_transcode_job,
+    reconcile_transcode_variants,
+    recover_orphaned_transcode_jobs,
+    transcode_capacity,
+)
+from backend.app.services.transcode_federation import (
+    DiscoveryResponder,
+    FederationError,
+    choose_worker_for_media_file,
+    cleanup_federation_attempts,
+    execute_remote_transcode_job,
+    federation_enabled,
+    queue_remote_transcode_job,
+    release_resource_reservation,
+    renew_resource_reservation,
+    reserve_resource,
+    run_remote_attempt,
+    get_federation_state,
+    sync_peer,
+)
+from backend.app.services.transcode_automation import (
+    create_transcode_automation_run,
+    finalize_transcode_automation_record,
+    process_transcode_automation_run,
+    recover_orphaned_transcode_automation_runs,
+    request_transcode_automation_cancellation,
+    serialize_transcode_automation_run,
+)
 from backend.app.services.update_status import check_for_updates
 from backend.app.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
+
+FEDERATION_PROTOCOL_START_TIMEOUT_SECONDS = 5.0
+
+
+def _is_address_in_use(error: OSError) -> bool:
+    return (
+        getattr(error, "winerror", None) == 10048
+        or getattr(error, "errno", None) in {48, 98, 10048}
+    )
 
 
 class ScanCancelPersistenceError(RuntimeError):
@@ -138,8 +186,31 @@ class ScanRuntimeManager:
         self.connector_executor = self._build_connector_executor(
             self.connector_executor_max_workers
         )
+        # Transcoding is deliberately isolated from scan/maintenance workers.
+        # The executor is created lazily so installations that never transcode
+        # do not pay for another worker pool.
+        self.transcode_executor: ThreadPoolExecutor | None = None
+        self.transcode_executor_max_workers = 0
+        self.transcode_cpu_parallel_jobs = 1
+        self.transcode_gpu_parallel_jobs_per_device = 1
+        self.transcode_cpu_slots = BoundedSemaphore(1)
+        self.transcode_gpu_slots: dict[str, BoundedSemaphore] = {}
+        self.transcode_capacity_signature: tuple[object, ...] | None = None
+        self.discovery_responder: DiscoveryResponder | None = None
+        self.federation_protocol_server = None
+        self.federation_protocol_thread: threading.Thread | None = None
+        self.federation_protocol_status = "disabled"
+        self.federation_protocol_error: str | None = None
+        self.federation_protocol_port: int | None = None
+        self.submitted_remote_attempt_ids: set[str] = set()
+        self.cancel_requested_remote_attempt_ids: set[str] = set()
+        self.federation_maintenance_submitted = False
+        self.federation_network_probe_pending = True
         self.connector_futures: dict[int, Future] = {}
         self.maintenance_executor = self._build_maintenance_executor()
+        # Inventory automation is isolated from scans/transcodes, but its
+        # single worker is created only when the first run is requested.
+        self.automation_executor: ThreadPoolExecutor | None = None
         self.lock = Lock()
         self.watch_observers: dict[int, tuple[tuple[str, ...], Observer]] = {}
         self.debounce_timers: dict[int, Timer] = {}
@@ -147,6 +218,10 @@ class ScanRuntimeManager:
         self.active_library_ids: set[int] = set()
         self.submitted_job_ids: set[int] = set()
         self.cancel_requested_job_ids: set[int] = set()
+        self.submitted_transcode_job_ids: set[int] = set()
+        self.cancel_requested_transcode_job_ids: set[int] = set()
+        self.submitted_automation_run_ids: set[int] = set()
+        self.cancel_requested_automation_run_ids: set[int] = set()
         self.history_compaction_pending = False
         self.history_storage_refresh_submitted = False
         self.history_reconstruction_status = HistoryReconstructionStatusRead()
@@ -171,6 +246,10 @@ class ScanRuntimeManager:
         self.refresh_jellyfin_schedule()
         self.refresh_connector_schedules()
         self._recover_orphaned_jobs()
+        self._recover_orphaned_transcode_jobs()
+        self._refresh_federation_transport()
+        self._ensure_federation_maintenance_job()
+        self._recover_orphaned_transcode_automation_runs()
         self.request_update_check()
         self.sync_all_libraries()
         self.run_history_retention()
@@ -199,33 +278,80 @@ class ScanRuntimeManager:
             self.scheduler.shutdown(wait=False)
         self._shutdown_executor(self.executor, cancel_futures=True)
         self._shutdown_executor(self.connector_executor, cancel_futures=True)
+        if self.transcode_executor is not None:
+            self._shutdown_executor(self.transcode_executor, cancel_futures=True)
+            self.transcode_executor = None
+        with self.lock:
+            self.federation_maintenance_submitted = False
+            self.federation_network_probe_pending = True
+        if self.discovery_responder is not None:
+            self.discovery_responder.stop()
+            self.discovery_responder = None
+        self._stop_federation_protocol_server()
         self._shutdown_executor(self.maintenance_executor, cancel_futures=True)
+        if self.automation_executor is not None:
+            self._shutdown_executor(self.automation_executor, cancel_futures=True)
+            self.automation_executor = None
 
     def refresh_worker_settings(self) -> bool:
         db = SessionLocal()
         try:
-            next_workers = max(1, get_app_settings(db, self.settings).scan_performance.parallel_scan_jobs)
+            persisted = get_app_settings(db, self.settings)
+            next_workers = max(1, persisted.scan_performance.parallel_scan_jobs)
+            capacity = transcode_capacity(self.settings, persisted)
+            next_transcode_workers = max(
+                1,
+                int(capacity["cpu_parallel_jobs"])
+                + persisted.transcoding.gpu_parallel_jobs_per_device
+                if persisted.transcoding.execution_mode != "cpu_only"
+                else int(capacity["cpu_parallel_jobs"]),
+            )
+            next_transcode_capacity_signature = (
+                int(capacity["cpu_threads"]),
+                int(capacity["cpu_threads_per_job"]),
+                int(capacity["cpu_parallel_jobs"]),
+                persisted.transcoding.gpu_parallel_jobs_per_device,
+                persisted.transcoding.execution_mode,
+            )
         finally:
             db.close()
 
         previous_executor: ThreadPoolExecutor | None = None
+        previous_transcode_executor: ThreadPoolExecutor | None = None
         with self.lock:
-            if (
-                next_workers == self.executor_max_workers
-                and next_workers == self.connector_executor_max_workers
-            ):
+            scan_workers_changed = (
+                next_workers != self.executor_max_workers
+                or next_workers != self.connector_executor_max_workers
+            )
+            transcode_workers_changed = next_transcode_workers != self.transcode_executor_max_workers
+            transcode_capacity_changed = next_transcode_capacity_signature != self.transcode_capacity_signature
+            if not scan_workers_changed and not transcode_workers_changed and not transcode_capacity_changed:
                 return False
-            previous_executor = self.executor
-            self.executor = self._build_executor(next_workers)
-            self.executor_max_workers = next_workers
-            previous_connector_executor = self.connector_executor
-            self.connector_executor = self._build_connector_executor(next_workers)
-            self.connector_executor_max_workers = next_workers
+            if scan_workers_changed:
+                previous_executor = self.executor
+                self.executor = self._build_executor(next_workers)
+                self.executor_max_workers = next_workers
+                previous_connector_executor = self.connector_executor
+                self.connector_executor = self._build_connector_executor(next_workers)
+                self.connector_executor_max_workers = next_workers
+            else:
+                previous_connector_executor = None
+            self.transcode_executor_max_workers = next_transcode_workers
+            self.transcode_cpu_parallel_jobs = int(capacity["cpu_parallel_jobs"])
+            self.transcode_gpu_parallel_jobs_per_device = persisted.transcoding.gpu_parallel_jobs_per_device
+            self.transcode_capacity_signature = next_transcode_capacity_signature
+            self.transcode_cpu_slots = BoundedSemaphore(self.transcode_cpu_parallel_jobs)
+            self.transcode_gpu_slots = {}
+            if self.transcode_executor is not None and transcode_workers_changed:
+                previous_transcode_executor = self.transcode_executor
+                self.transcode_executor = self._build_transcode_executor(next_transcode_workers)
 
         if previous_executor is not None:
             self._shutdown_executor(previous_executor, cancel_futures=False)
         if previous_connector_executor is not None:
             self._shutdown_executor(previous_connector_executor, cancel_futures=False)
+        if previous_transcode_executor is not None:
+            self._shutdown_executor(previous_transcode_executor, cancel_futures=False)
         return True
 
     def sync_all_libraries(self) -> None:
@@ -331,6 +457,609 @@ class ScanRuntimeManager:
         if job_id is None:
             raise ValueError(f"Failed to request quality recompute for library {library_id}")
         return job_id, created
+
+    def request_transcode(self, file_id: int, plan: TranscodePlan) -> tuple[TranscodeJob, TranscodeValidationRead]:
+        db = SessionLocal()
+        try:
+            media_file = db.get(MediaFile, file_id)
+            if media_file is None:
+                raise ValueError("Media file not found")
+            selected = None
+            if plan.target_mode != "local":
+                if not federation_enabled(db, self.settings):
+                    raise FederationError(
+                        "Federation is not enabled on this installation",
+                        status_code=409,
+                    )
+                selected = choose_worker_for_media_file(db, self.settings, media_file, plan)
+            selected_plan = selected.resolved_plan if selected is not None and selected.resolved_plan is not None else plan
+            if selected is not None and not selected.candidate.is_local:
+                job, validation = queue_remote_transcode_job(
+                    db,
+                    self.settings,
+                    media_file,
+                    selected_plan,
+                    selected,
+                )
+            else:
+                local_plan = selected_plan.model_copy(
+                    update={
+                        "target_mode": "local",
+                        "target_member_id": None,
+                        "target_device_id": None,
+                    }
+                )
+                job, validation = queue_transcode_job(db, self.settings, media_file, local_plan)
+        finally:
+            db.close()
+        try:
+            self._submit_transcode_job(job.id)
+        except Exception:
+            with self.lock:
+                self.submitted_transcode_job_ids.discard(job.id)
+            failed_db = SessionLocal()
+            try:
+                failed_job = failed_db.get(TranscodeJob, job.id)
+                if failed_job is not None:
+                    failed_job.status = JobStatus.failed
+                    failed_job.error = "Unable to submit transcoding job to the runtime executor"
+                    failed_job.finished_at = utc_now()
+                    failed_db.commit()
+            finally:
+                failed_db.close()
+            raise
+        return job, validation
+
+    def _refresh_federation_transport(self) -> None:
+        db = SessionLocal()
+        try:
+            enabled = federation_enabled(db, self.settings)
+            state = get_federation_state(db, self.settings)
+            discovery_enabled = bool(state.get("discovery_enabled", True))
+        finally:
+            db.close()
+        if enabled:
+            if discovery_enabled:
+                if self.discovery_responder is None:
+                    self.discovery_responder = DiscoveryResponder(self.settings)
+                    self.discovery_responder.start()
+            elif self.discovery_responder is not None:
+                self.discovery_responder.stop()
+                self.discovery_responder = None
+            # Discovery can be disabled independently; the authenticated
+            # direct protocol remains available for explicitly configured
+            # endpoints and already paired members.
+            self._ensure_federation_protocol_server()
+        else:
+            if self.discovery_responder is not None:
+                self.discovery_responder.stop()
+                self.discovery_responder = None
+            self._stop_federation_protocol_server()
+
+    def get_federation_listener_status(self) -> dict[str, object]:
+        with self.lock:
+            return {
+                "status": self.federation_protocol_status,
+                "port": self.federation_protocol_port,
+                "error": self.federation_protocol_error,
+            }
+
+    def _set_federation_listener_status(
+        self,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        with self.lock:
+            self.federation_protocol_status = status
+            self.federation_protocol_error = error
+            self.federation_protocol_port = (
+                int(self.settings.federation_port)
+                if status != "disabled"
+                else None
+            )
+
+    def _check_federation_port_available(self) -> None:
+        host = str(self.settings.federation_host or "0.0.0.0")
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.bind((host, int(self.settings.federation_port)))
+
+    def _federation_listener_error_message(self, error: BaseException) -> str:
+        port = int(self.settings.federation_port)
+        if isinstance(error, OSError) and _is_address_in_use(error):
+            return (
+                f"Federation listener is unavailable on port {port}: the port is already in use "
+                "by another process. Stop the other MediaLyze instance or configure "
+                "MEDIALYZE_FEDERATION_PORT to a free port and advertise the matching address. "
+                "Remote sync and network tests remain unavailable until this listener is running."
+            )
+        return (
+            f"Federation listener could not start on port {port}. Remote sync and network tests "
+            f"remain unavailable until this listener is running. Details: {error}"
+        )
+
+    def _run_federation_protocol_server(self, server) -> None:
+        try:
+            server.run()
+        except BaseException as error:
+            message = self._federation_listener_error_message(error)
+            self._set_federation_listener_status("error", message)
+            logger.exception("Federation protocol listener stopped unexpectedly")
+        finally:
+            if (
+                self.federation_protocol_server is server
+                and not getattr(server, "started", False)
+                and not getattr(server, "should_exit", False)
+                and self.federation_protocol_status != "error"
+            ):
+                self._set_federation_listener_status(
+                    "error",
+                    self._federation_listener_error_message(
+                        RuntimeError("the listener stopped before it became ready")
+                    ),
+                )
+
+    def _dispose_federation_protocol_server(self) -> None:
+        server = self.federation_protocol_server
+        if server is not None:
+            server.should_exit = True
+        thread = self.federation_protocol_thread
+        if (
+            thread is not None
+            and thread is not threading.current_thread()
+            and thread.ident is not None
+        ):
+            thread.join(timeout=3)
+        self.federation_protocol_thread = None
+        self.federation_protocol_server = None
+
+    def _ensure_federation_maintenance_job(self) -> None:
+        self.scheduler.add_job(
+            self.request_federation_maintenance,
+            trigger="interval",
+            seconds=10,
+            id="transcode-federation-maintenance",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+    def request_federation_maintenance(self) -> None:
+        with self.lock:
+            if not self.started or self.federation_maintenance_submitted:
+                return
+            self.federation_maintenance_submitted = True
+        try:
+            self.maintenance_executor.submit(self._run_federation_maintenance)
+        except Exception:
+            with self.lock:
+                self.federation_maintenance_submitted = False
+            raise
+
+    def _run_federation_maintenance(self) -> None:
+        try:
+            db = SessionLocal()
+            try:
+                if federation_enabled(db, self.settings):
+                    with self.lock:
+                        probe_all = self.federation_network_probe_pending
+                        self.federation_network_probe_pending = False
+                    member_ids = [
+                        member.installation_id
+                        for member in db.scalars(
+                            select(TranscodeFederationMember).where(
+                                TranscodeFederationMember.status == "active"
+                            )
+                        ).all()
+                    ]
+                    for installation_id in member_ids:
+                        try:
+                            sync_peer(
+                                db,
+                                self.settings,
+                                installation_id,
+                                probe_all=probe_all,
+                            )
+                        except FederationError:
+                            logger.info(
+                                "Federation heartbeat failed for %s",
+                                installation_id,
+                                exc_info=True,
+                            )
+                    now = utc_now()
+                    for member in db.scalars(
+                        select(TranscodeFederationMember).where(
+                            TranscodeFederationMember.status == "active"
+                        )
+                    ).all():
+                        if member.last_seen_at and (now - member.last_seen_at).total_seconds() >= 30:
+                            member.reachable = False
+                            member.connection_status = "offline"
+                    cleanup_federation_attempts(db, self.settings, now=now)
+                    db.commit()
+            finally:
+                db.close()
+        finally:
+            with self.lock:
+                self.federation_maintenance_submitted = False
+
+    def _ensure_federation_protocol_server(self) -> None:
+        if self.federation_protocol_server is not None:
+            if (
+                self.federation_protocol_thread is not None
+                and self.federation_protocol_thread.is_alive()
+                and self.federation_protocol_status in {"starting", "running"}
+            ):
+                return
+            self._dispose_federation_protocol_server()
+        # The regular API already exposes the protocol routes.  A second
+        # listener is only needed when the configured federation port is
+        # distinct, which is the normal desktop/split-network arrangement.
+        if int(self.settings.federation_port) == int(self.settings.app_port):
+            self._set_federation_listener_status("running")
+            return
+        self._set_federation_listener_status("starting")
+        try:
+            self._check_federation_port_available()
+            import uvicorn
+
+            from backend.app.api.federation_app import create_federation_app
+
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    create_federation_app(self.settings, runtime=self),
+                    host=self.settings.federation_host,
+                    port=int(self.settings.federation_port),
+                    log_level="warning",
+                    access_log=False,
+                )
+            )
+            thread = threading.Thread(
+                target=self._run_federation_protocol_server,
+                args=(server,),
+                name="medialyze-federation-protocol",
+                daemon=True,
+            )
+            self.federation_protocol_server = server
+            self.federation_protocol_thread = thread
+            thread.start()
+        except BaseException as error:
+            self._dispose_federation_protocol_server()
+            message = self._federation_listener_error_message(error)
+            self._set_federation_listener_status("error", message)
+            logger.exception("Unable to start the optional federation protocol listener")
+            return
+
+        deadline = time.monotonic() + FEDERATION_PROTOCOL_START_TIMEOUT_SECONDS
+        while (
+            not getattr(server, "started", False)
+            and thread.is_alive()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        if getattr(server, "started", False):
+            self._set_federation_listener_status("running")
+            return
+
+        message = self.federation_protocol_error or self._federation_listener_error_message(
+            RuntimeError("the listener did not become ready in time")
+        )
+        self._dispose_federation_protocol_server()
+        self._set_federation_listener_status("error", message)
+
+    def _stop_federation_protocol_server(self) -> None:
+        self._dispose_federation_protocol_server()
+        self._set_federation_listener_status("disabled")
+
+    def submit_remote_attempt(self, attempt_id: str) -> None:
+        attempt_key = str(getattr(attempt_id, "id", attempt_id))
+        with self.lock:
+            if attempt_key in self.submitted_remote_attempt_ids:
+                return
+            self.submitted_remote_attempt_ids.add(attempt_key)
+            if self.transcode_executor is None:
+                self.transcode_executor = self._build_transcode_executor(
+                    max(1, self.transcode_executor_max_workers or self.executor_max_workers)
+                )
+            executor = self.transcode_executor
+        try:
+            executor.submit(self._run_remote_attempt, attempt_key)
+        except Exception:
+            with self.lock:
+                self.submitted_remote_attempt_ids.discard(attempt_key)
+            raise
+
+    def _run_remote_attempt(self, attempt_id: str) -> None:
+        try:
+            run_remote_attempt(
+                attempt_id,
+                self.settings,
+                is_cancel_requested=self.is_remote_attempt_cancel_requested,
+            )
+        finally:
+            with self.lock:
+                self.submitted_remote_attempt_ids.discard(attempt_id)
+                self.cancel_requested_remote_attempt_ids.discard(attempt_id)
+
+    def is_remote_attempt_cancel_requested(self, attempt_id: str) -> bool:
+        with self.lock:
+            return attempt_id in self.cancel_requested_remote_attempt_ids
+
+    def cancel_remote_attempt(self, attempt_id: str) -> None:
+        with self.lock:
+            self.cancel_requested_remote_attempt_ids.add(str(attempt_id))
+
+    def _submit_transcode_job(self, job_id: int) -> None:
+        with self.lock:
+            if job_id in self.submitted_transcode_job_ids:
+                return
+            self.submitted_transcode_job_ids.add(job_id)
+            if self.transcode_executor is None:
+                self.transcode_executor = self._build_transcode_executor(
+                    max(1, self.transcode_executor_max_workers)
+                )
+            transcode_executor = self.transcode_executor
+        try:
+            transcode_executor.submit(self._run_transcode_job, job_id)
+        except Exception:
+            with self.lock:
+                self.submitted_transcode_job_ids.discard(job_id)
+            failed_db = SessionLocal()
+            try:
+                failed_job = failed_db.get(TranscodeJob, job_id)
+                if failed_job is not None:
+                    failed_job.status = JobStatus.failed
+                    failed_job.error = "Unable to submit transcoding job to the runtime executor"
+                    failed_job.finished_at = utc_now()
+                    finalize_transcode_automation_record(failed_db, failed_job)
+                    if failed_db.in_transaction():
+                        failed_db.commit()
+            finally:
+                failed_db.close()
+            raise
+
+    def request_transcode_automation(
+        self,
+        scope: TranscodeAutomationScope,
+        *,
+        trigger: str = "manual",
+    ) -> TranscodeAutomationRunRead:
+        db = SessionLocal()
+        try:
+            run = create_transcode_automation_run(db, scope, trigger=trigger)
+        finally:
+            db.close()
+        with self.lock:
+            self.submitted_automation_run_ids.add(run.id)
+            if self.automation_executor is None:
+                self.automation_executor = self._build_automation_executor()
+            automation_executor = self.automation_executor
+        try:
+            automation_executor.submit(self._run_transcode_automation, run.id)
+        except Exception:
+            with self.lock:
+                self.submitted_automation_run_ids.discard(run.id)
+            failed_db = SessionLocal()
+            try:
+                failed_run = failed_db.get(TranscodeAutomationRun, run.id)
+                if failed_run is not None:
+                    failed_run.status = "failed"
+                    failed_run.error = "Unable to submit the automation inventory to the runtime executor"
+                    failed_run.finished_at = utc_now()
+                    failed_db.commit()
+            finally:
+                failed_db.close()
+            raise
+        return run
+
+    def _run_transcode_automation(self, run_id: int) -> None:
+        try:
+            process_transcode_automation_run(
+                self.settings,
+                run_id,
+                submit_job=self._submit_transcode_job,
+                is_cancel_requested=self.is_transcode_automation_cancel_requested,
+            )
+        finally:
+            with self.lock:
+                self.submitted_automation_run_ids.discard(run_id)
+                self.cancel_requested_automation_run_ids.discard(run_id)
+            self.request_history_storage_refresh()
+
+    def is_transcode_automation_cancel_requested(self, run_id: int) -> bool:
+        with self.lock:
+            return run_id in self.cancel_requested_automation_run_ids
+
+    def cancel_transcode_automation(self, run_id: int) -> TranscodeAutomationRunRead:
+        db = SessionLocal()
+        try:
+            with self.lock:
+                self.cancel_requested_automation_run_ids.add(run_id)
+            return request_transcode_automation_cancellation(db, run_id)
+        finally:
+            db.close()
+
+    def _run_transcode_job(self, job_id: int) -> None:
+        library_id = 0
+        completed = False
+        slot = None
+        local_reservation = None
+        local_resource_type = None
+        local_resource_device_id = None
+        local_resource_capacity = None
+        remote = False
+        try:
+            db = SessionLocal()
+            try:
+                queued_job = db.get(TranscodeJob, job_id)
+                if queued_job is None:
+                    return
+                library_id = queued_job.library_id
+                remote = bool(
+                    queued_job.target_installation_id
+                    and queued_job.assignment_mode in {"automatic", "member"}
+                )
+                plan_payload = queued_job.plan if isinstance(queued_job.plan, dict) else {}
+                has_hardware_video = any(
+                    str(item.get("encoder") or item.get("codec") or "").lower().endswith(
+                        ("_nvenc", "_qsv", "_vaapi", "_amf", "_videotoolbox")
+                    )
+                    for item in plan_payload.get("video_streams", [])
+                    if isinstance(item, dict) and item.get("action") == "encode"
+                )
+                if remote:
+                    slot = None
+                elif has_hardware_video:
+                    # Automatic device selection is resolved and persisted by
+                    # validation.  Create a slot lazily for the selected
+                    # backend/device so AMD, Intel, NVIDIA, and Apple jobs do
+                    # not accidentally share a hard-coded CUDA slot.
+                    device_id = queued_job.device_id or f"backend:{queued_job.hardware_backend or 'automatic'}"
+                    with self.lock:
+                        slot = self.transcode_gpu_slots.get(device_id)
+                        if slot is None:
+                            slot = BoundedSemaphore(self.transcode_gpu_parallel_jobs_per_device)
+                            self.transcode_gpu_slots[device_id] = slot
+                    local_resource_type = "gpu"
+                    local_resource_device_id = device_id
+                    local_resource_capacity = self.transcode_gpu_parallel_jobs_per_device
+                else:
+                    slot = self.transcode_cpu_slots
+                    local_resource_type = "cpu"
+                    local_resource_device_id = "cpu"
+                    local_resource_capacity = self.transcode_cpu_parallel_jobs
+            finally:
+                db.close()
+            if slot is not None:
+                slot.acquire()
+            if not remote:
+                while local_reservation is None:
+                    reservation_db = SessionLocal()
+                    try:
+                        owner_id = get_federation_state(reservation_db, self.settings)["installation_id"]
+                        local_reservation = reserve_resource(
+                            reservation_db,
+                            owner_installation_id=owner_id,
+                            resource_type=str(local_resource_type),
+                            device_id=str(local_resource_device_id),
+                            capacity=max(1, int(local_resource_capacity or 1)),
+                            job_id=job_id,
+                            lease_seconds=3600,
+                        )
+                        reservation_db.commit()
+                    except FederationError as exc:
+                        reservation_db.rollback()
+                        if exc.status_code != 409:
+                            raise
+                    finally:
+                        reservation_db.close()
+                    if local_reservation is not None:
+                        break
+                    if self.is_transcode_cancel_requested(job_id):
+                        cancel_db = SessionLocal()
+                        try:
+                            canceled = cancel_transcode_job(cancel_db, job_id)
+                            finalize_transcode_automation_record(cancel_db, canceled)
+                        finally:
+                            cancel_db.close()
+                        return
+                    time.sleep(0.25)
+            while True:
+                if remote:
+                    library_id = execute_remote_transcode_job(
+                        job_id,
+                        self.settings,
+                        is_cancel_requested=self.is_transcode_cancel_requested,
+                    )
+                else:
+                    library_id = execute_transcode_job(
+                        job_id,
+                        is_cancel_requested=self.is_transcode_cancel_requested,
+                    )
+                db = SessionLocal()
+                try:
+                    job = db.get(TranscodeJob, job_id)
+                    if job is None:
+                        break
+                    if job.status == JobStatus.failed and job.attempt <= job.retry_count:
+                        job.status = JobStatus.queued
+                        job.error = f"Retrying after failed attempt {job.attempt}"
+                        job.finished_at = None
+                        db.commit()
+                        continue
+                    if job.status == JobStatus.queued and remote:
+                        # A temporarily unreachable peer remains queued and is
+                        # retried by this same origin-owned worker loop.  The
+                        # target's deterministic chunk rows make the retry
+                        # resumable after a restart.
+                        db.commit()
+                        time.sleep(2.0)
+                        continue
+                    completed = job.status == JobStatus.completed
+                    if job.status == JobStatus.failed and job.on_error == "stop_queue":
+                        db.query(TranscodeJob).filter(
+                            TranscodeJob.library_id == job.library_id,
+                            TranscodeJob.status == JobStatus.queued,
+                        ).update(
+                            {
+                                TranscodeJob.status: JobStatus.canceled,
+                                TranscodeJob.error: "Canceled because the transcode queue is configured to stop on error",
+                                TranscodeJob.finished_at: utc_now(),
+                            },
+                            synchronize_session=False,
+                        )
+                        db.commit()
+                    finalize_transcode_automation_record(db, job)
+                    break
+                finally:
+                    db.close()
+            if completed and library_id:
+                self.request_scan(
+                    library_id,
+                    "incremental",
+                    trigger_source=ScanTriggerSource.transcode,
+                    trigger_details={"reason": "transcode_completed", "transcode_job_id": job_id},
+                )
+        finally:
+            if local_reservation is not None:
+                reservation_db = SessionLocal()
+                try:
+                    release_resource_reservation(
+                        reservation_db,
+                        local_reservation.id,
+                        lease_token=local_reservation.lease_token,
+                    )
+                    reservation_db.commit()
+                except Exception:
+                    reservation_db.rollback()
+                finally:
+                    reservation_db.close()
+            if slot is not None:
+                slot.release()
+            with self.lock:
+                self.submitted_transcode_job_ids.discard(job_id)
+                self.cancel_requested_transcode_job_ids.discard(job_id)
+            self.request_history_storage_refresh()
+
+    def is_transcode_cancel_requested(self, job_id: int) -> bool:
+        with self.lock:
+            return job_id in self.cancel_requested_transcode_job_ids
+
+    def cancel_transcode(self, job_id: int) -> TranscodeJob:
+        db = SessionLocal()
+        try:
+            job = db.get(TranscodeJob, job_id)
+            if job is None:
+                raise ValueError("Transcoding job not found")
+            if job.status == JobStatus.running:
+                with self.lock:
+                    self.cancel_requested_transcode_job_ids.add(job_id)
+                return job
+            canceled = cancel_transcode_job(db, job_id)
+            finalize_transcode_automation_record(db, canceled)
+            return canceled
+        finally:
+            db.close()
 
     def get_history_reconstruction_status(self) -> HistoryReconstructionStatusRead:
         with self.lock:
@@ -861,9 +1590,21 @@ class ScanRuntimeManager:
             execute_scan_job(job_id, self.settings, is_cancel_requested=self.is_job_cancel_requested)
         finally:
             connector_recompute_ids: list[int] = []
+            automation_source_ids: list[int] = []
+            scan_completed = False
             match_db = SessionLocal()
             try:
                 job = match_db.get(ScanJob, job_id)
+                # A scan with file-level analysis errors is terminally
+                # completed by the scanner, but it is not a successful scan
+                # for automatic transcoding.  Requiring zero errors prevents
+                # a partial inventory from silently starting destructive or
+                # expensive follow-up work.
+                scan_completed = bool(
+                    job is not None
+                    and job.status == JobStatus.completed
+                    and not job.errors
+                )
                 after_files = {
                     file_id: (root_id, relative_path)
                     for file_id, root_id, relative_path in match_db.execute(
@@ -875,15 +1616,24 @@ class ScanRuntimeManager:
                     )
                     if root_id is not None
                 }
-                changed_ids = set(
+                analyzed_video_ids = set(
                     match_db.scalars(
                         select(MediaFile.id).where(
                             MediaFile.library_id == library_id,
+                            MediaFile.video_streams.any(),
                             MediaFile.last_analyzed_at.is_not(None),
                             MediaFile.last_analyzed_at >= job.started_at,
                         )
+                        )
+                    ) if job and job.started_at else set()
+                changed_ids = set(
+                    match_db.scalars(
+                        select(MediaFile.id).where(
+                            MediaFile.id.in_(analyzed_video_ids),
+                            MediaFile.is_transcode_variant.is_(False),
+                        )
                     )
-                ) if job and job.started_at else set()
+                ) if analyzed_video_ids else set()
                 changed_locators = {
                     locator
                     for file_id in set(before_files) | set(after_files)
@@ -904,12 +1654,41 @@ class ScanRuntimeManager:
                                 ConnectorConnection.enabled.is_(True)
                             )
                         )
+                )
+                reconcile_transcode_variants(match_db, library_id)
+                if scan_completed:
+                    # Variant reconciliation must happen before automatic
+                    # processing is selected.  A same-directory output can
+                    # be discovered by the follow-up scan while it still has
+                    # the default primary-file flag; selecting it earlier
+                    # would allow a transcode loop.
+                    automation_source_ids = sorted(
+                        match_db.scalars(
+                            select(MediaFile.id).where(
+                                MediaFile.id.in_(analyzed_video_ids),
+                                MediaFile.library_id == library_id,
+                                MediaFile.is_transcode_variant.is_(False),
+                                MediaFile.video_streams.any(),
+                            )
+                        )
                     )
             except Exception:
                 match_db.rollback()
                 logger.exception("Failed to refresh Jellyfin matches after scan %s", job_id)
             finally:
                 match_db.close()
+            if scan_completed and automation_source_ids:
+                try:
+                    self.request_transcode_automation(
+                        TranscodeAutomationScope(
+                            library_ids=[library_id],
+                            source_file_ids=automation_source_ids,
+                            limit=max(len(automation_source_ids), 1),
+                        ),
+                        trigger="scan",
+                    )
+                except Exception:
+                    logger.exception("Failed to queue transcoding automation after scan %s", job_id)
             for connection_id in connector_recompute_ids:
                 try:
                     self.request_connector_recompute(connection_id, trigger_source="scan")
@@ -1272,6 +2051,23 @@ class ScanRuntimeManager:
         finally:
             db.close()
 
+    def _recover_orphaned_transcode_jobs(self) -> None:
+        db = SessionLocal()
+        try:
+            recovered = recover_orphaned_transcode_jobs(db)
+            if recovered:
+                logger.info("Canceled %s orphaned transcoding job(s)", recovered)
+        finally:
+            db.close()
+
+    def _recover_orphaned_transcode_automation_runs(self) -> None:
+        db = SessionLocal()
+        try:
+            recovered = recover_orphaned_transcode_automation_runs(db)
+            if recovered:
+                logger.info("Canceled %s orphaned transcoding automation run(s)", recovered)
+        finally:
+            db.close()
     def _run_update_check(self) -> None:
         db = SessionLocal()
         try:
@@ -1516,8 +2312,22 @@ class ScanRuntimeManager:
         )
 
     @staticmethod
+    def _build_automation_executor() -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="medialyze-transcode-automation",
+        )
+
+    @staticmethod
     def _build_connector_executor(max_workers: int) -> ThreadPoolExecutor:
         return ThreadPoolExecutor(
             max_workers=max(1, max_workers),
             thread_name_prefix="medialyze-connector",
+        )
+
+    @staticmethod
+    def _build_transcode_executor(max_workers: int) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=max(1, max_workers),
+            thread_name_prefix="medialyze-transcode",
         )

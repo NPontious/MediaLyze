@@ -3,6 +3,8 @@ import {
   ArrowLeft,
   Captions,
   ChevronDown,
+  ChevronRight,
+  Clapperboard,
   Cpu,
   FileClock,
   FileJson,
@@ -28,7 +30,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router";
 
 import { AsyncPanel } from "../components/AsyncPanel";
-import { ArrowUpRightIcon, type ArrowUpRightIconHandle } from "../components/ArrowUpRightIcon";
+import { ArrowUpRightIcon } from "../components/ArrowUpRightIcon";
 import { AudioStreamPrimaryToggle, type AudioStreamPrimaryMode } from "../components/AudioStreamPrimaryToggle";
 import { CopyIcon } from "../components/CopyIcon";
 import { DownloadIcon, type DownloadIconHandle } from "../components/DownloadIcon";
@@ -46,6 +48,8 @@ import { ProfileFavoriteButton } from "../components/ProfileFavoriteButton";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
 import { StreamDetailsList } from "../components/StreamDetailsList";
 import { TooltipTrigger } from "../components/TooltipTrigger";
+import { FileTranscodeHistory, TranscodingPanel } from "../components/TranscodingPanel";
+import { VideoWipeCompare } from "../components/VideoWipeCompare";
 import {
   api,
   type CompatibilityEvaluation,
@@ -82,6 +86,7 @@ function JsonPreview({ value }: { value: unknown }) {
 type FileDetailPanelId =
   | "overview"
   | "preview"
+  | "transcoding"
   | "qualityBreakdown"
   | "compatibility"
   | "jellyfin"
@@ -107,15 +112,16 @@ const PREVIEW_REPORT_URL = "https://github.com/NPontious/MediaLyze/issues/new/ch
 
 const FILE_DETAIL_NAV_ITEMS: FileDetailNavItem[] = [
   { id: "overview", labelKey: "fileDetail.navigation.overview", icon: Info },
-  { id: "preview", labelKey: "fileDetail.preview", icon: Play },
-  { id: "qualityBreakdown", labelKey: "fileDetail.qualityBreakdown", icon: Gauge },
-  { id: "compatibility", labelKey: "fileDetail.compatibility.title", icon: Cpu },
-  { id: "jellyfin", labelKey: "jellyfin.streaming", icon: Radio },
   { id: "videoStreams", labelKey: "fileDetail.videoStreams", icon: Film },
   { id: "audioStreams", labelKey: "fileDetail.audioStreams", icon: AudioLines },
   { id: "subtitles", labelKey: "fileDetail.subtitles", icon: Captions },
-  { id: "cover", labelKey: "fileDetail.cover", icon: ImageIcon },
   { id: "chapters", labelKey: "fileDetail.chapters", icon: ListVideo },
+  { id: "transcoding", labelKey: "transcoding.title", icon: Clapperboard },
+  { id: "compatibility", labelKey: "fileDetail.compatibility.title", icon: Cpu },
+  { id: "preview", labelKey: "fileDetail.preview", icon: Play },
+  { id: "qualityBreakdown", labelKey: "fileDetail.qualityBreakdown", icon: Gauge },
+  { id: "jellyfin", labelKey: "jellyfin.streaming", icon: Radio },
+  { id: "cover", labelKey: "fileDetail.cover", icon: ImageIcon },
   { id: "fileHistory", labelKey: "fileDetail.history.title", icon: FileClock },
   { id: "rawJson", labelKey: "fileDetail.rawJson", icon: FileJson },
 ];
@@ -217,6 +223,73 @@ function formatQualityNote(note: string, t: (key: string, options?: Record<strin
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function escapeCsvCell(value: unknown): string {
+  const text = Array.isArray(value) ? value.join(" | ") : value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildQualityBreakdownCsv(
+  qualityDetail: MediaFileQualityScoreDetail,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const rows: unknown[][] = [
+    [
+      "section",
+      "category_key",
+      "category",
+      "score",
+      "raw_score",
+      "weight",
+      "active",
+      "skipped",
+      "unknown_mapping",
+      "actual",
+      "minimum",
+      "ideal",
+      "maximum",
+      "notes",
+    ],
+    ["summary", "overall", t("fileDetail.qualityBreakdown"), qualityDetail.score, qualityDetail.score_raw],
+    ...qualityDetail.breakdown.categories.map((category) => [
+      "category",
+      category.key,
+      t(`quality.category.${category.key}`),
+      category.score,
+      "",
+      category.weight,
+      category.active,
+      category.skipped,
+      category.unknown_mapping,
+      formatQualityBreakdownValue(category.key, category.actual, t),
+      formatQualityBreakdownValue(category.key, category.minimum, t),
+      formatQualityBreakdownValue(category.key, category.ideal, t),
+      category.maximum === undefined ? "" : formatQualityBreakdownValue(category.key, category.maximum, t),
+      category.notes.map((note) => formatQualityNote(note, t)).join(" | "),
+    ]),
+  ];
+  return `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n")}\r\n`;
+}
+
+function triggerCsvDownload(blob: Blob, filename: string): void {
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+function downloadQualityBreakdownReport(
+  qualityDetail: MediaFileQualityScoreDetail,
+  filename: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): void {
+  const csv = buildQualityBreakdownCsv(qualityDetail, t);
+  triggerCsvDownload(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
+}
+
 function QualityBreakdownCategoryList({
   qualityDetail,
   t,
@@ -286,6 +359,9 @@ function QualityBreakdownCategoryList({
         return (
           <details className="stream-detail-entry quality-detail-entry" key={category.key} open={index === 0}>
             <summary className="stream-detail-entry-head quality-detail-entry-head">
+              <span className="stream-detail-entry-chevron" aria-hidden="true">
+                <ChevronRight className="nav-icon" />
+              </span>
               <div className="stream-tooltip-inline">
                 <strong>{t(`quality.category.${category.key}`)}</strong>
                 {meta.length > 0 ? (
@@ -298,7 +374,9 @@ function QualityBreakdownCategoryList({
                   </div>
                 ) : null}
               </div>
-              <span>{formatQualityNumber(category.score)} / 100</span>
+              <span className="stream-detail-entry-summary-value">
+                {formatQualityNumber(category.score)} / 100
+              </span>
             </summary>
             <div className="stream-detail-entry-body">
               {detailRows.map((row) => (
@@ -315,8 +393,28 @@ function QualityBreakdownCategoryList({
   );
 }
 
-function formatChapterTime(value: number | null | undefined): string {
-  return value === null || value === undefined ? "n/a" : formatDuration(value);
+function formatChapterTimecode(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  const totalSeconds = Math.max(0, Math.floor(value));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const minutePart = String(minutes).padStart(2, "0");
+  const secondPart = String(seconds).padStart(2, "0");
+  return hours > 0 ? `${hours}:${minutePart}:${secondPart}` : `${minutePart}:${secondPart}`;
+}
+
+function formatChapterTimeRange(
+  start: number | null | undefined,
+  end: number | null | undefined,
+): string {
+  const startLabel = formatChapterTimecode(start);
+  return end === null || end === undefined
+    ? startLabel
+    : `${startLabel}–${formatChapterTimecode(end)}`;
 }
 
 function ChaptersList({
@@ -358,9 +456,18 @@ function ChaptersList({
 
   return (
     <div className="stream-tooltip-content stream-tooltip-content-panel">
-      <div className="stream-tooltip-summary">
-        <strong>{t("fileDetail.chapters")}</strong>
-        <span>{chapters.length}</span>
+      <div className="stream-tooltip-summary file-detail-chapter-summary">
+        <div className="file-detail-chapter-summary-copy">
+          <strong>{t("fileDetail.chapters")}</strong>
+          <span>{chapters.length}</span>
+        </div>
+        <button
+          type="button"
+          className="secondary small settings-panel-header-action file-detail-chapter-export-button"
+          onClick={() => void handleExport()}
+        >
+          {t("fileDetail.exportChapters")}
+        </button>
       </div>
       <div className="file-detail-chapter-tools">
         <input
@@ -373,9 +480,6 @@ function ChaptersList({
           placeholder={t("fileDetail.chapterSearchPlaceholder")}
           aria-label={t("fileDetail.chapterSearch")}
         />
-        <button type="button" className="secondary-button" onClick={() => void handleExport()}>
-          {t("fileDetail.exportChapters")}
-        </button>
       </div>
       {visibleChapters.map((chapter, index) => (
         <div className="stream-tooltip-row" key={`${chapter.chapter_index}-${chapter.start_time ?? index}`}>
@@ -383,12 +487,11 @@ function ChaptersList({
             <div className="stream-tooltip-inline">
               <strong>{chapter.title?.trim() || t("fileDetail.untitledChapter", { number: index + 1 })}</strong>
               <div className="stream-tooltip-meta">
-                <span className="stream-tooltip-pill">{formatChapterTime(chapter.start_time)}</span>
-                {chapter.end_time !== null && chapter.end_time !== undefined ? (
-                  <span className="stream-tooltip-pill">{formatChapterTime(chapter.end_time)}</span>
-                ) : null}
+                <span className="stream-tooltip-pill">
+                  {formatChapterTimeRange(chapter.start_time, chapter.end_time)}
+                </span>
                 {chapter.duration !== null && chapter.duration !== undefined ? (
-                  <span className="stream-tooltip-pill">{formatChapterTime(chapter.duration)}</span>
+                  <span className="stream-tooltip-pill">{formatDuration(chapter.duration)}</span>
                 ) : null}
               </div>
             </div>
@@ -551,13 +654,26 @@ function CoverDetailsList({
   );
 }
 
+type PreviewVersion = { id: string; src: string; label: string };
+
 function PreviewDetailsPanel({
   detail,
+  versions = [],
+  comparisonLoading = false,
+  comparisonError = null,
   t,
 }: {
   detail: MediaFileDetail | null;
+  versions?: PreviewVersion[];
+  comparisonLoading?: boolean;
+  comparisonError?: string | null;
   t: (key: string, options?: Record<string, unknown>) => string;
 }): ReactNode {
+  const [leftId, setLeftId] = useState<string | null>(null);
+  const [rightId, setRightId] = useState<string | null>(null);
+  const left = versions.find((item) => item.id === leftId) ?? versions[0];
+  const right = versions.find((item) => item.id === rightId && item.id !== left?.id)
+    ?? versions.find((item) => item.id !== left?.id);
   if (!detail) {
     return t("streamDetails.unavailable");
   }
@@ -566,18 +682,51 @@ function PreviewDetailsPanel({
   const previewUrl = api.fileMediaUrl(detail.id);
 
   return (
-    <div className="file-detail-preview-panel">
-      <div className="file-detail-preview-player-shell">
-        {isVideoPreview ? (
-          <video className="file-detail-preview-player" controls preload="metadata" src={previewUrl}>
-            {t("fileDetail.previewUnsupported")}
-          </video>
-        ) : (
-          <audio className="file-detail-preview-player file-detail-preview-player-audio" controls preload="metadata" src={previewUrl}>
-            {t("fileDetail.previewUnsupported")}
-          </audio>
-        )}
+    <div className="file-detail-preview-stack">
+      <div className="file-detail-preview-panel">
+        <div className="file-detail-preview-player-shell">
+          {isVideoPreview ? (
+            <video className="file-detail-preview-player" controls preload="metadata" src={previewUrl}>
+              {t("fileDetail.previewUnsupported")}
+            </video>
+          ) : (
+            <audio className="file-detail-preview-player file-detail-preview-player-audio" controls preload="metadata" src={previewUrl}>
+              {t("fileDetail.previewUnsupported")}
+            </audio>
+          )}
+        </div>
       </div>
+
+      {comparisonLoading ? (
+        <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
+          <h3>{t("transcoding.previewComparison")}</h3>
+          <p className="field-hint">{t("panel.loading")}</p>
+        </div>
+      ) : comparisonError ? (
+        <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
+          <h3>{t("transcoding.previewComparison")}</h3>
+          <p className="notice compact error" role="alert">{comparisonError}</p>
+        </div>
+      ) : left && right && isVideoPreview ? (
+        <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
+          <h3>{t("transcoding.previewComparison")}</h3>
+          {versions.length > 2 ? (
+            <div className="transcode-configuration-grid">
+              <label className="transcode-control-field"><span>{t("transcoding.previewLeft")}</span>
+                <select value={left.id} onChange={(event) => setLeftId(event.target.value)}>
+                  {versions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+              <label className="transcode-control-field"><span>{t("transcoding.previewRight")}</span>
+                <select value={right.id} onChange={(event) => setRightId(event.target.value)}>
+                  {versions.filter((item) => item.id !== left.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+            </div>
+          ) : null}
+          <VideoWipeCompare key={`${left.id}:${right.id}`} first={left} second={right} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -671,6 +820,9 @@ function buildAvailableFileDetailPanelIds(
   const ids: FileDetailPanelId[] = ["overview"];
   if (hasPreviewMetadata(file)) {
     ids.push("preview");
+  }
+  if (hasVideoMetadata(file)) {
+    ids.push("transcoding");
   }
   if (hasQualityMetadata(file, qualityDetail)) {
     ids.push("qualityBreakdown");
@@ -934,7 +1086,10 @@ function FavoriteCompatibilityResults({
         return (
         <details className="compatibility-favorite-section" key={section.type} open>
           <summary>
-            <span>{section.label}</span>
+            <span className="compatibility-favorite-section-chevron" aria-hidden="true">
+              <ChevronRight className="nav-icon" />
+            </span>
+            <span className="compatibility-favorite-section-label">{section.label}</span>
             <span className="compatibility-favorite-count">{favoriteCount}</span>
           </summary>
           <div
@@ -995,7 +1150,10 @@ function FavoriteCompatibilityResults({
               return (
                 <details className={`compatibility-favorite-profile${status ? ` status-${status}` : ""}`} key={profile.id}>
                   <summary className="compatibility-favorite-profile-summary">
-                    <span>{profile.name}</span>
+                    <span className="compatibility-favorite-profile-chevron" aria-hidden="true">
+                      <ChevronRight className="nav-icon" />
+                    </span>
+                    <span className="compatibility-favorite-profile-name">{profile.name}</span>
                     <span className="compatibility-favorite-profile-actions">
                       {status ? (
                         <span className={`compatibility-status-badge status-${status}`}>
@@ -1175,11 +1333,6 @@ function OverviewPanel({
         <div className="notice file-detail-analysis-warning">
           <strong>{t("fileDetail.analysisFailure")}</strong>
           <span>{file.analysis_failure_reason}</span>
-        </div>
-      ) : null}
-      {jellyfinItem ? (
-        <div className="file-detail-jellyfin-overview">
-          <JellyfinOverviewDetails item={jellyfinItem} showBadges={false} showTitle={false} t={t} />
         </div>
       ) : null}
     </div>
@@ -1568,6 +1721,9 @@ function FileHistoryPanel({
         return (
           <details className="file-history-entry" key={entry.id} open={index === 0}>
             <summary className="file-history-entry-head">
+              <span className="file-history-entry-chevron" aria-hidden="true">
+                <ChevronRight className="nav-icon" />
+              </span>
               <strong>{formatHistoryRange(state, t)}</strong>
             </summary>
             <dl className="file-history-metrics">
@@ -1595,11 +1751,26 @@ export function FileDetailPage() {
   const { fileId = "" } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const isPreviewRoute = /\/preview\/?$/.test(location.pathname);
+  const comparisonFileId = useMemo(() => {
+    if (!isPreviewRoute) {
+      return null;
+    }
+    const raw = new URLSearchParams(location.search).get("compare");
+    if (!raw || !/^\d+$/.test(raw)) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isSafeInteger(parsed) && parsed > 0 && String(parsed) !== fileId ? parsed : null;
+  }, [fileId, isPreviewRoute, location.search]);
   const { appSettings } = useAppData();
   const inDepthDolbyVisionProfiles = appSettings.feature_flags.in_depth_dolby_vision_profiles;
   const showAllPlaybacksWhenUnstacked =
     appSettings.feature_flags.show_all_playbacks_when_unstacked;
   const [file, setFile] = useState<MediaFileDetail | null>(null);
+  const [previewVersions, setPreviewVersions] = useState<PreviewVersion[]>([]);
+  const [previewComparisonLoading, setPreviewComparisonLoading] = useState(false);
+  const [previewComparisonError, setPreviewComparisonError] = useState<string | null>(null);
   const [qualityDetail, setQualityDetail] = useState<MediaFileQualityScoreDetail | null>(null);
   const [qualityError, setQualityError] = useState(false);
   const [compatibilityResults, setCompatibilityResults] = useState<CompatibilityEvaluation[]>([]);
@@ -1623,7 +1794,8 @@ export function FileDetailPage() {
   const [activePanelState, setActivePanelState] = useState<{
     fileId: string;
     panelId: FileDetailPanelId;
-  }>(() => ({ fileId, panelId: DEFAULT_FILE_DETAIL_PANEL_ID }));
+  }>(() => ({ fileId, panelId: isPreviewRoute ? "preview" : DEFAULT_FILE_DETAIL_PANEL_ID }));
+  const [transcodePresetHeaderTarget, setTranscodePresetHeaderTarget] = useState<HTMLDivElement | null>(null);
   const activePanelId =
     activePanelState.fileId === fileId
       ? activePanelState.panelId
@@ -1640,11 +1812,13 @@ export function FileDetailPage() {
   }>(() => ({ fileId, status: "idle", error: null }));
   const [rawJsonCopied, setRawJsonCopied] = useState(false);
   const rawJsonCopyResetTimeoutRef = useRef<number | null>(null);
-  const previewReportIconRef = useRef<ArrowUpRightIconHandle>(null);
-
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [fileId]);
+
+  useEffect(() => {
+    setActivePanelState({ fileId, panelId: isPreviewRoute ? "preview" : DEFAULT_FILE_DETAIL_PANEL_ID });
+  }, [fileId, isPreviewRoute]);
 
   const goBack = useCallback(() => {
     if (location.key !== "default") {
@@ -1731,6 +1905,72 @@ export function FileDetailPage() {
       })
       .finally(() => setCompatibilityLoading(false));
   }, [fileId]);
+
+  useEffect(() => {
+    if (
+      activePanelId !== "preview" ||
+      !file ||
+      String(file.id) !== fileId ||
+      !hasVideoMetadata(file)
+    ) {
+      setPreviewVersions([]);
+      setPreviewComparisonLoading(false);
+      setPreviewComparisonError(null);
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    setPreviewVersions([]);
+    setPreviewComparisonLoading(true);
+    setPreviewComparisonError(null);
+
+    let comparisonRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const loadComparison = async () => {
+      const versionForFile = (detail: MediaFileDetail): PreviewVersion => ({
+        id: `file:${detail.id}`, src: api.fileMediaUrl(detail.id), label: detail.filename,
+      });
+      if (comparisonFileId) {
+        const comparison = await api.file(comparisonFileId, { includeRawFfprobe: false });
+        if (active) setPreviewVersions([versionForFile(file), versionForFile(comparison)]);
+        return;
+      }
+      const transcode = await api.fileTranscode(file.id, controller.signal);
+      const original = transcode.original?.id && transcode.original.id !== file.id
+        ? await api.file(transcode.original.id, { includeRawFfprobe: false }) : file;
+      const variants = await Promise.all(transcode.variants.map(async (variant): Promise<PreviewVersion | null> => {
+        if (variant.output_file_id) {
+          return versionForFile(await api.file(variant.output_file_id, { includeRawFfprobe: false }));
+        }
+        if (!["external", "ready", "awaiting_analysis"].includes(variant.analysis_status)) return null;
+        return { id: `variant:${variant.id}`, src: api.transcodeVariantMediaUrl(variant.id), label: variant.output_filename };
+      }));
+      const sources = [versionForFile(original), ...variants.filter((item): item is PreviewVersion => item !== null)];
+      if (!active) return;
+      setPreviewVersions(sources.filter((item, index) => sources.findIndex((candidate) => candidate.id === item.id) === index));
+      setPreviewComparisonError(null);
+      if (active && transcode.jobs.some((job) => job.status === "queued" || job.status === "running")) {
+        comparisonRefreshTimer = setTimeout(() => {
+          void loadComparison().catch((reason: Error) => {
+            if (active && reason.name !== "AbortError") setPreviewComparisonError(reason.message);
+          });
+        }, 5000);
+      }
+    };
+
+    void loadComparison()
+      .catch((reason: Error) => {
+        if (!active || reason.name === "AbortError") return;
+        setPreviewComparisonError(reason.message);
+      })
+      .finally(() => {
+        if (active) setPreviewComparisonLoading(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+      clearTimeout(comparisonRefreshTimer);
+    };
+  }, [activePanelId, comparisonFileId, file, fileId]);
 
   const currentRawProbeState =
     rawProbeState.fileId === fileId
@@ -1861,7 +2101,7 @@ export function FileDetailPage() {
       loading: boolean;
       error: string | null;
       titleAddon?: ReactNode;
-      subtitleAddon?: ReactNode;
+      headerAddon?: ReactNode;
       actions?: ReactNode;
       body: ReactNode;
     }
@@ -1880,38 +2120,72 @@ export function FileDetailPage() {
         <TooltipTrigger
           ariaLabel={t("fileDetail.previewPlaybackWarningAria")}
           className="file-detail-preview-warning-tooltip"
-          content={t("fileDetail.previewPlaybackWarning")}
+          content={(
+            <div className="file-detail-preview-help-tooltip">
+              <p>{t("fileDetail.previewPlaybackWarning")}</p>
+              <p>{t("fileDetail.previewSupportedFormats")}</p>
+              <p>{t("fileDetail.previewReportPrompt")}</p>
+              <a href={PREVIEW_REPORT_URL} rel="noreferrer" target="_blank">
+                <ArrowUpRightIcon size={14} aria-hidden="true" />
+                {t("fileDetail.previewReportLink")}
+              </a>
+            </div>
+          )}
         >
           <Info size={14} aria-hidden="true" />
         </TooltipTrigger>
       ),
-      subtitleAddon: (
-        <div className="file-detail-preview-supported-formats">
-          <p>{t("fileDetail.previewSupportedFormats")}</p>
-          <div className="file-detail-preview-report">
-            <p>{t("fileDetail.previewReportPrompt")}</p>
-            <a
-              className="secondary small file-detail-cover-button file-detail-preview-report-button"
-              href={PREVIEW_REPORT_URL}
-              onBlur={() => previewReportIconRef.current?.stopAnimation()}
-              onFocus={() => previewReportIconRef.current?.startAnimation()}
-              onMouseEnter={() => previewReportIconRef.current?.startAnimation()}
-              onMouseLeave={() => previewReportIconRef.current?.stopAnimation()}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <ArrowUpRightIcon ref={previewReportIconRef} size={16} aria-hidden="true" />
-              {t("fileDetail.previewReportLink")}
-            </a>
-          </div>
-        </div>
+      body: (
+        <PreviewDetailsPanel
+          detail={file}
+          versions={previewVersions}
+          comparisonLoading={previewComparisonLoading}
+          comparisonError={previewComparisonError}
+          t={t}
+        />
       ),
-      body: <PreviewDetailsPanel detail={file} t={t} />,
+    },
+    transcoding: {
+      title: t("transcoding.betaTitle"),
+      loading: !file && !error,
+      error,
+      titleAddon: (
+        <TooltipTrigger
+          ariaLabel={t("transcoding.betaHelpAria")}
+          content={t("transcoding.betaHelp")}
+        />
+      ),
+      headerAddon: (
+        <div className="transcode-preset-header-slot" ref={setTranscodePresetHeaderTarget} />
+      ),
+      body: file ? (
+        <TranscodingPanel
+          file={file}
+          presetHeaderTarget={transcodePresetHeaderTarget}
+          connectorSources={connectorSources ?? []}
+          resolutionCategories={appSettings.resolution_categories}
+        />
+      ) : null,
     },
     qualityBreakdown: {
       title: t("fileDetail.qualityBreakdown"),
       loading: !qualityDetail && !qualityError && !error,
       error: null,
+      actions: qualityDetail ? (
+        <button
+          type="button"
+          className="secondary small settings-panel-header-action file-detail-quality-export-button"
+          aria-label={t("fileDetail.exportQualityBreakdown")}
+          onClick={() => downloadQualityBreakdownReport(
+            qualityDetail,
+            `${file?.filename ?? `media-file-${qualityDetail.id}`}-quality.csv`,
+            t,
+          )}
+        >
+          <DownloadIcon size={16} aria-hidden="true" />
+          <span>{t("fileDetail.exportQualityBreakdown")}</span>
+        </button>
+      ) : null,
       body: qualityDetail ? (
         <QualityBreakdownCategoryList qualityDetail={qualityDetail} t={t} />
       ) : (
@@ -1957,7 +2231,7 @@ export function FileDetailPage() {
       ),
     },
     jellyfin: {
-      title: t("connectors.externalSources"),
+      title: t("jellyfin.streaming"),
       loading: (!connectorSources && !connectorSourcesError) || (!connectorPlayback && !connectorPlaybackError),
       error: jellyfinError,
       titleAddon: (
@@ -1970,6 +2244,19 @@ export function FileDetailPage() {
       ),
       body: (
         <div className="file-external-sources">
+          {jellyfinOverlay?.item ? (
+            <details className="stream-detail-entry file-detail-streaming-metadata">
+              <summary className="stream-detail-entry-head file-detail-streaming-metadata-summary">
+                <span className="stream-detail-entry-chevron" aria-hidden="true">
+                  <ChevronRight className="nav-icon" />
+                </span>
+                <strong>{t("jellyfin.filePanel")}</strong>
+              </summary>
+              <div className="file-detail-streaming-metadata-body">
+                <JellyfinOverviewDetails item={jellyfinOverlay.item} showBadges={false} showTitle={false} t={t} />
+              </div>
+            </details>
+          ) : null}
           <div className="file-external-source-list">
             {connectorSourcesError ? <p className="notice error">{connectorSourcesError}</p> : null}
             {connectorPlaybackError ? <p className="notice error">{connectorPlaybackError}</p> : null}
@@ -2015,11 +2302,14 @@ export function FileDetailPage() {
       loading: !fileHistory && !fileHistoryError,
       error: fileHistoryError,
       body: (
-        <FileHistoryPanel
-          history={fileHistory}
-          t={t}
-          inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles}
-        />
+        <div className="file-history-with-transcoding">
+          <FileHistoryPanel
+            history={fileHistory}
+            t={t}
+            inDepthDolbyVisionProfiles={inDepthDolbyVisionProfiles}
+          />
+          {file && hasVideoMetadata(file) ? <FileTranscodeHistory fileId={file.id} /> : null}
+        </div>
       ),
     },
     videoStreams: {
@@ -2240,7 +2530,6 @@ export function FileDetailPage() {
               aria-hidden="true"
               collapsed={isNavCollapsed}
               className="settings-navigation-toggle-icon"
-              size={24}
             />
           </button>
         </div>
@@ -2254,9 +2543,9 @@ export function FileDetailPage() {
           title={activePanel.title}
           loading={activePanel.loading}
           error={activePanel.error}
-          className="file-detail-active-panel"
-          titleAddon={activePanel.titleAddon}
-          subtitleAddon={activePanel.subtitleAddon}
+           className={`file-detail-active-panel file-detail-panel-${normalizedActivePanelId}`}
+           titleAddon={activePanel.titleAddon}
+           headerAddon={activePanel.headerAddon}
           collapseActions={activePanel.actions}
         >
           {activePanel.body}

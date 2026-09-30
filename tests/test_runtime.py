@@ -1,4 +1,5 @@
 import os
+import socket
 import tempfile
 import time
 from threading import Thread
@@ -39,6 +40,59 @@ def test_runtime_scheduler_uses_configured_tz_environment(monkeypatch) -> None:
     runtime = runtime_module.ScanRuntimeManager(Settings())
 
     assert getattr(runtime.scheduler.timezone, "key", None) == "Europe/Berlin"
+
+
+def test_federation_listener_reports_port_conflict() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        blocker.bind(("0.0.0.0", 0))
+        blocker.listen()
+        port = int(blocker.getsockname()[1])
+        runtime = runtime_module.ScanRuntimeManager(
+            Settings(app_port=18080, federation_port=port)
+        )
+
+        runtime._ensure_federation_protocol_server()
+
+        status = runtime.get_federation_listener_status()
+        assert status["status"] == "error"
+        assert status["port"] == port
+        assert "already in use" in str(status["error"])
+        assert "network tests remain unavailable" in str(status["error"])
+
+
+def test_federation_listener_starts_on_distinct_port() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_picker:
+        port_picker.bind(("127.0.0.1", 0))
+        port = int(port_picker.getsockname()[1])
+
+    runtime = runtime_module.ScanRuntimeManager(
+        Settings(app_host="127.0.0.1", app_port=18080, federation_host="127.0.0.1", federation_port=port)
+    )
+    try:
+        runtime._ensure_federation_protocol_server()
+
+        assert runtime.get_federation_listener_status() == {
+            "status": "running",
+            "port": port,
+            "error": None,
+        }
+    finally:
+        runtime._stop_federation_protocol_server()
+
+
+def test_federation_listener_uses_main_api_when_ports_match() -> None:
+    runtime = runtime_module.ScanRuntimeManager(
+        Settings(app_port=18080, federation_port=18080)
+    )
+
+    runtime._ensure_federation_protocol_server()
+
+    assert runtime.get_federation_listener_status() == {
+        "status": "running",
+        "port": 18080,
+        "error": None,
+    }
+    assert runtime.federation_protocol_server is None
 
 
 def test_recover_orphaned_jobs_cancels_queued_and_running_jobs_without_resubmitting(monkeypatch) -> None:

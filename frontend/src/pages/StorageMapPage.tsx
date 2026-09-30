@@ -1,6 +1,5 @@
 import {
   ArrowUp,
-  ChevronDown,
   ChevronRight,
   File,
   FileText,
@@ -22,7 +21,6 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { JellyfinIcon } from "../components/JellyfinIcon";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
-import { StatCard } from "../components/StatCard";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { useAppData } from "../lib/app-data";
 import { api, type LibraryStorageMap, type StorageMapNode } from "../lib/api";
@@ -656,26 +654,56 @@ export function StorageMapPage() {
   return (
     <div className="storage-map-page">
       <section className="panel storage-map-panel">
-        <div className="storage-map-header">
+        <header className="storage-map-header">
           <div className="storage-map-title-block">
-            <h2>{t("storageMap.title")}</h2>
-            <p className="subtitle">{t("storageMap.subtitle")}</p>
-          </div>
-          {data ? (
-            <div className="card-grid grid storage-map-header-cards">
-              <StatCard
-                label={t("dashboard.storage")}
-                value={formatBytes(data.total_size_bytes)}
-                tone="blue"
-              />
-              <StatCard
-                label={t("dashboard.files")}
-                value={String(data.file_count)}
-                tone="teal"
-              />
+            <div className="storage-map-title-row">
+              <MapIcon aria-hidden="true" className="storage-map-title-icon" />
+              <h2>{t("storageMap.title")}</h2>
+              {supportsJellyfinNames ? (
+                <div
+                  className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle"
+                  role="group"
+                  aria-label={t("libraryDetail.fileNameSource.label")}
+                >
+                  <SlidingTogglePill
+                    activeKey={nameSource}
+                    className="nav-active-pill distribution-chart-mode-pill"
+                  />
+                  <button
+                    type="button"
+                    data-toggle-key="file"
+                    className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                      nameSource === "file" ? " active" : ""
+                    }`}
+                    aria-label={t("libraryDetail.fileNameSource.file")}
+                    title={t("libraryDetail.fileNameSource.file")}
+                    aria-pressed={nameSource === "file"}
+                    onClick={() => updateQuery({ names: null })}
+                  >
+                    <span className="distribution-chart-mode-button-content">
+                      <FileText aria-hidden="true" className="distribution-chart-mode-icon" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    data-toggle-key="jellyfin"
+                    className={`distribution-chart-mode-button analyzed-file-name-source-button${
+                      nameSource === "jellyfin" ? " active" : ""
+                    }`}
+                    aria-label={t("libraryDetail.fileNameSource.jellyfin")}
+                    title={t("libraryDetail.fileNameSource.jellyfin")}
+                    aria-pressed={nameSource === "jellyfin"}
+                    onClick={() => updateQuery({ names: "jellyfin" })}
+                  >
+                    <span className="distribution-chart-mode-button-content">
+                      <JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" />
+                    </span>
+                  </button>
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
+          </div>
+        </header>
 
         {librariesLoaded && libraries.length === 0 ? (
           <div className="storage-map-empty">
@@ -702,106 +730,54 @@ export function StorageMapPage() {
               <div className="storage-map-toolbar">
                 <label className="storage-map-field storage-map-library-field">
                   <span>{t("storageMap.library")}</span>
-                  <span className="storage-map-select-wrap">
-                    <select
-                      value={selectedLibraryId ?? ""}
-                      disabled={!librariesLoaded}
-                      onChange={(event) => updateQuery({ library: event.target.value, path: null })}
-                    >
-                      {libraries.map((library) => (
-                        <option key={library.id} value={library.id}>
-                          {library.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown aria-hidden="true" />
-                  </span>
+                  <select
+                    className="settings-choice-input"
+                    value={selectedLibraryId ?? ""}
+                    disabled={!librariesLoaded}
+                    onChange={(event) => updateQuery({ library: event.target.value, path: null })}
+                  >
+                    {libraries.map((library) => (
+                      <option key={library.id} value={library.id}>
+                        {library.name}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="storage-map-field">
                   <span>{t("storageMap.colorBy")}</span>
-                  <span className="storage-map-select-wrap">
-                    <select
-                      value={colorMode}
-                      onChange={(event) => updateQuery({ color: event.target.value })}
-                    >
-                      {COLOR_MODE_GROUPS.map((group) => (
-                        <optgroup
-                          key={group.label}
-                          label={t(`storageMap.groups.${group.label}`)}
-                        >
-                          {group.modes.map((mode) => (
-                            <option key={mode} value={mode}>
-                              {t(`storageMap.modes.${mode}`)}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                    <ChevronDown aria-hidden="true" />
-                  </span>
+                  <select
+                    className="settings-choice-input"
+                    value={colorMode}
+                    onChange={(event) => updateQuery({ color: event.target.value })}
+                  >
+                    {COLOR_MODE_GROUPS.map((group) => (
+                      <optgroup
+                        key={group.label}
+                        label={t(`storageMap.groups.${group.label}`)}
+                      >
+                        {group.modes.map((mode) => (
+                          <option key={mode} value={mode}>
+                            {t(`storageMap.modes.${mode}`)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                 </label>
                 <label className="storage-map-field">
                   <span>{t("storageMap.sortBy")}</span>
-                  <span className="storage-map-select-wrap">
-                    <select
-                      value={sortMode}
-                      onChange={(event) => updateQuery({ sort: event.target.value })}
-                    >
-                      {SORT_MODES.map((mode) => (
-                        <option key={mode} value={mode}>
-                          {t(`storageMap.sorts.${mode}`)}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown aria-hidden="true" />
-                  </span>
-                </label>
-                {supportsJellyfinNames ? (
-                  <div
-                    className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle"
-                    role="group"
-                    aria-label={t("libraryDetail.fileNameSource.label")}
+                  <select
+                    className="settings-choice-input"
+                    value={sortMode}
+                    onChange={(event) => updateQuery({ sort: event.target.value })}
                   >
-                    <SlidingTogglePill
-                      activeKey={nameSource}
-                      className="nav-active-pill distribution-chart-mode-pill"
-                    />
-                    <button
-                      type="button"
-                      data-toggle-key="file"
-                      className={`distribution-chart-mode-button analyzed-file-name-source-button${
-                        nameSource === "file" ? " active" : ""
-                      }`}
-                      aria-label={t("libraryDetail.fileNameSource.file")}
-                      title={t("libraryDetail.fileNameSource.file")}
-                      aria-pressed={nameSource === "file"}
-                      onClick={() => updateQuery({ names: null })}
-                    >
-                      <span className="distribution-chart-mode-button-content">
-                        <FileText aria-hidden="true" className="distribution-chart-mode-icon" />
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      data-toggle-key="jellyfin"
-                      className={`distribution-chart-mode-button analyzed-file-name-source-button${
-                        nameSource === "jellyfin" ? " active" : ""
-                      }`}
-                      aria-label={t("libraryDetail.fileNameSource.jellyfin")}
-                      title={t("libraryDetail.fileNameSource.jellyfin")}
-                      aria-pressed={nameSource === "jellyfin"}
-                      onClick={() => updateQuery({ names: "jellyfin" })}
-                    >
-                      <span className="distribution-chart-mode-button-content">
-                        <JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" />
-                      </span>
-                    </button>
-                  </div>
-                ) : null}
-                <span className="storage-map-area-hint">
-                  <Info aria-hidden="true" />
-                  {t("storageMap.areaHint")}
-                </span>
+                    {SORT_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {t(`storageMap.sorts.${mode}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <div className={`storage-map-stage${currentPath ? " has-up-overlay" : ""}`}>

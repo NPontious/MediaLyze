@@ -1,0 +1,3889 @@
+from __future__ import annotations
+
+import ctypes
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
+from math import floor, isfinite
+from pathlib import Path
+from threading import Lock
+from time import monotonic
+from typing import Callable
+from uuid import uuid4
+
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.orm import Session
+
+from backend.app.core.config import Settings
+from backend.app.db.session import SessionLocal
+from backend.app.models.entities import (
+    AudioStream,
+    ConnectorItem,
+    ConnectorMediaMatch,
+    ExternalSubtitle,
+    JobStatus,
+    Library,
+    LibraryRoot,
+    MediaFile,
+    SubtitleStream,
+    TranscodeFederationMember,
+    TranscodeJob,
+    TranscodePreset,
+    TranscodeVariant,
+    TranscodeVariantGroup,
+    VideoStream,
+)
+from backend.app.schemas.transcoding import (
+    ExternalSubtitlePlan,
+    FileTranscodeRead,
+    TranscodeCapabilitiesRead,
+    TranscodeCapabilityMatrixRead,
+    TranscodeAttachmentSummary,
+    TranscodeEncoderCapability,
+    TranscodeFileSummary,
+    TranscodeHardwareDevice,
+    TranscodeJobPageRead,
+    TranscodeJobRead,
+    TranscodePlan,
+    TranscodeStreamAction,
+    TranscodeStreamPlan,
+    TranscodeValidationRead,
+    TranscodeVariantRead,
+)
+from backend.app.services.app_settings import get_app_settings
+from backend.app.services.languages import format_filename_language_code, format_stream_language_code, normalize_language_tag
+from backend.app.services.resolution_categories import classify_resolution_category
+from backend.app.services.spatial_audio import format_spatial_audio_profile
+from backend.app.utils.processes import get_hidden_subprocess_kwargs
+from backend.app.utils.time import utc_now
+
+
+HARDWARE_ENCODER_MARKERS = (
+    "_nvenc",
+    "_qsv",
+    "_amf",
+    "_videotoolbox",
+    "_vaapi",
+    "_vulkan",
+    "_v4l2m2m",
+    "_d3d12va",
+    "_mediacodec",
+    "_rkmpp",
+)
+VIDEO_ENCODER_CODECS = {
+    "libx264": "h264",
+    "mpeg2video": "mpeg2video",
+    "mjpeg": "mjpeg",
+    "h264_nvenc": "h264",
+    "h264_qsv": "h264",
+    "h264_amf": "h264",
+    "h264_videotoolbox": "h264",
+    "h264_vaapi": "h264",
+    "mjpeg_qsv": "mjpeg",
+    "mjpeg_vaapi": "mjpeg",
+    "mpeg2_qsv": "mpeg2video",
+    "mpeg2_vaapi": "mpeg2video",
+    "libx265": "hevc",
+    "hevc_nvenc": "hevc",
+    "hevc_qsv": "hevc",
+    "hevc_amf": "hevc",
+    "hevc_videotoolbox": "hevc",
+    "hevc_vaapi": "hevc",
+    "libsvtav1": "av1",
+    "libaom-av1": "av1",
+    "av1_nvenc": "av1",
+    "av1_qsv": "av1",
+    "av1_amf": "av1",
+    "av1_vaapi": "av1",
+    "vp8_vaapi": "vp8",
+    "libvpx-vp9": "vp9",
+    "vp9_qsv": "vp9",
+    "vp9_vaapi": "vp9",
+    "libvpx": "vp8",
+}
+AUDIO_ENCODER_CODECS = {
+    "aac": "aac",
+    "libfdk_aac": "aac",
+    "libopus": "opus",
+    "opus": "opus",
+    "libvorbis": "vorbis",
+    "ac3": "ac3",
+    "eac3": "eac3",
+    "flac": "flac",
+    "libmp3lame": "mp3",
+}
+SUBTITLE_ENCODER_CODECS = {
+    "mov_text": "mov_text",
+    "srt": "subrip",
+    "subrip": "subrip",
+    "ass": "ass",
+    "webvtt": "webvtt",
+}
+TRANSCODE_CODEC_ALIASES = {
+    "avc": "h264",
+    "h.264": "h264",
+    "h264": "h264",
+    "av01": "av1",
+    "h.265": "hevc",
+    "h265": "hevc",
+    "hevc": "hevc",
+    "mpeg-2": "mpeg2video",
+    "mpeg2": "mpeg2video",
+    "mpeg2video": "mpeg2video",
+    "vp08": "vp8",
+    "vp8": "vp8",
+    "vp09": "vp9",
+    "vp9": "vp9",
+    "mjpeg": "mjpeg",
+    "aac": "aac",
+    "opus": "opus",
+    "vorbis": "vorbis",
+    "ac3": "ac3",
+    "eac3": "eac3",
+    "flac": "flac",
+    "mp3": "mp3",
+    "mov_text": "mov_text",
+    "movtext": "mov_text",
+    "srt": "subrip",
+    "subrip": "subrip",
+    "ass": "ass",
+    "webvtt": "webvtt",
+}
+SOFTWARE_VIDEO_ENCODER_PREFERENCES = {
+    "h264": ("libx264",),
+    "hevc": ("libx265",),
+    "av1": ("libsvtav1", "libaom-av1"),
+    "vp8": ("libvpx",),
+    "vp9": ("libvpx-vp9",),
+    "mpeg2video": ("mpeg2video",),
+    "mjpeg": ("mjpeg",),
+}
+AUDIO_ENCODER_PREFERENCES = {
+    "aac": ("aac", "libfdk_aac"),
+    "opus": ("libopus", "opus"),
+    "vorbis": ("libvorbis",),
+    "ac3": ("ac3",),
+    "eac3": ("eac3",),
+    "flac": ("flac",),
+    "mp3": ("libmp3lame",),
+}
+SUBTITLE_ENCODER_PREFERENCES = {
+    "mov_text": ("mov_text",),
+    "subrip": ("srt", "subrip"),
+    "ass": ("ass",),
+    "webvtt": ("webvtt",),
+}
+ENCODER_QUALITY_SPECS = {
+    # mode, minimum, maximum, default, step.  The values mirror FFmpeg's
+    # constant-quality controls for the encoder families MediaLyze exposes.
+    "libx264": ("crf", 0, 51, 23, 1),
+    "libx265": ("crf", 0, 51, 28, 1),
+    "libsvtav1": ("crf", 0, 63, 30, 1),
+    "libaom-av1": ("crf", 0, 63, 30, 1),
+    "libvpx-vp9": ("crf", 0, 63, 31, 1),
+}
+# VAAPI exposes the common ``global_quality`` option for codecs which do not
+# have a codec-specific QP option.  Keep these ranges close to the native
+# FFmpeg/VAAPI ranges so that the UI does not send an option the encoder cannot
+# understand (notably ``av1_vaapi`` does not accept ``-qp`` on current builds).
+VAAPI_QUALITY_SPECS = {
+    "h264": ("qp", 0, 51, 23, 1),
+    "hevc": ("qp", 0, 51, 23, 1),
+    "av1": ("global_quality", 1, 255, 80, 1),
+    "vp8": ("global_quality", 1, 127, 60, 1),
+    "vp9": ("global_quality", 1, 255, 120, 1),
+    "mpeg2video": ("global_quality", 1, 51, 23, 1),
+    "mjpeg": ("global_quality", 1, 100, 80, 1),
+}
+QSV_QUALITY_SPECS = {
+    "mjpeg": ("global_quality", 1, 100, 80, 1),
+    "h264": ("global_quality", 1, 51, 23, 1),
+    "hevc": ("global_quality", 1, 51, 23, 1),
+    "av1": ("global_quality", 1, 51, 23, 1),
+    "vp9": ("global_quality", 1, 51, 23, 1),
+    "mpeg2video": ("global_quality", 1, 51, 23, 1),
+}
+CONTAINER_FORMATS = {"mkv": "matroska", "mp4": "mp4", "webm": "webm"}
+CONTAINER_COMPATIBILITY = {
+    "mp4": {
+        "video": {"h264", "hevc", "av1", "mpeg4", "mjpeg"},
+        "audio": {"aac", "ac3", "eac3", "mp3", "alac"},
+        "subtitle": {"mov_text"},
+    },
+    "webm": {
+        "video": {"vp8", "vp9", "av1"},
+        "audio": {"opus", "vorbis"},
+        "subtitle": {"webvtt"},
+    },
+}
+DEFAULT_FILENAME_TEMPLATE = "{sourceName} [{resolution}, {dynRange}, {codec}] [{audioLanguages}]"
+DEFAULT_FOLDER_TEMPLATE = "{folderName}"
+FILENAME_TOKENS = {
+    "sourceName",
+    "movieTitle",
+    "releaseYear",
+    "resolution",
+    "resolutionCategory",
+    "dynRange",
+    "codec",
+    "audioLanguages",
+    "audioCodecs",
+    "audioProfiles",
+    "audioChannels",
+    "frameRate",
+    "bitDepth",
+    "subtitleLanguages",
+    "subtitleFormats",
+    "seriesName",
+    "seasonNumber",
+    "episodeNumber",
+    "episodeTitle",
+    "contentCategory",
+    "container",
+    "videoBitrate",
+}
+FOLDER_TOKENS = FILENAME_TOKENS | {"folderName"}
+FILENAME_CLEANUP_PATTERNS = {
+    "square_brackets": r"\[[^\[\]]*\]",
+    "round_brackets": r"\([^()]*\)",
+    "square_and_round_brackets": r"\[[^\[\]]*\]|\([^()]*\)",
+    "all_brackets": r"\[[^\[\]]*\]|\([^()]*\)|\{[^{}]*\}",
+}
+BITMAP_SUBTITLE_CODECS = {"dvb_subtitle", "dvd_subtitle", "hdmv_pgs_subtitle", "pgs", "xsub"}
+CAPABILITIES_LOCK = Lock()
+
+
+def _encoder_quality_spec(name: str) -> tuple[str, int, int, int, int] | None:
+    """Return the quality control used by an encoder, if it is known."""
+    normalized = name.lower()
+    if normalized in ENCODER_QUALITY_SPECS:
+        return ENCODER_QUALITY_SPECS[normalized]
+    if normalized.endswith("_vaapi"):
+        codec = _hardware_encoder_codec(normalized)
+        return VAAPI_QUALITY_SPECS.get(codec) if codec else None
+    if normalized.endswith("_qsv"):
+        codec = _hardware_encoder_codec(normalized)
+        return QSV_QUALITY_SPECS.get(codec) if codec else None
+    if any(normalized.endswith(suffix) for suffix in ("_nvenc", "_amf")):
+        return ("cq", 0, 51, 23, 1)
+    # VideoToolbox does not expose FFmpeg's generic cq/crf/qp controls in the
+    # bundled macOS build. Its rate control is bitrate-driven instead.
+    return None
+
+
+def _quality_option(mode: str) -> str:
+    return {
+        "crf": "crf",
+        "cq": "cq",
+        "qp": "qp",
+        "global_quality": "global_quality",
+    }.get(mode, mode)
+
+
+class TranscodeValidationError(ValueError):
+    def __init__(self, validation: TranscodeValidationRead) -> None:
+        self.validation = validation
+        super().__init__("; ".join(validation.errors) or "Transcoding plan is invalid")
+
+
+class TranscodeCancelled(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class SourcePaths:
+    root: Path
+    source: Path
+
+
+def _safe_path_below(root: Path, relative_path: str) -> Path:
+    resolved_root = root.resolve()
+    candidate = (resolved_root / relative_path).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("Media path escapes its library root") from exc
+    return candidate
+
+
+def normalize_transcode_output_subfolder(value: str | None) -> str:
+    """Normalize and validate a rule-relative output subfolder.
+
+    The value is intentionally a relative POSIX-style path even on Windows.
+    Rejecting drive prefixes, traversal segments, and control characters here
+    keeps both preview and queue paths on the same security boundary.
+    """
+
+    candidate = str(value or "").strip().replace("\\", "/")
+    if not candidate:
+        return ""
+    if "\x00" in candidate or any(ord(char) < 32 for char in candidate):
+        raise ValueError("Output subfolder contains an invalid control character")
+    if candidate.startswith("/") or re.match(r"^[A-Za-z]:", candidate) or candidate.startswith("//"):
+        raise ValueError("Output subfolder must be relative")
+    parts = [part for part in candidate.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise ValueError("Output subfolder may not contain traversal segments")
+    if any(":" in part for part in parts):
+        raise ValueError("Output subfolder may not contain a drive prefix")
+    return "/".join(parts)
+
+
+def _source_paths(media_file: MediaFile) -> SourcePaths:
+    root = Path(media_file.library_root.path if media_file.library_root else media_file.library.path)
+    source = _safe_path_below(root, media_file.relative_path)
+    return SourcePaths(root=root.resolve(), source=source)
+
+
+def default_formatting_flags(media_file: MediaFile) -> tuple[bool, bool]:
+    """Return the safe filename/folder formatting defaults for one asset."""
+
+    library = getattr(media_file, "library", None)
+    library_type = getattr(getattr(library, "type", None), "value", None)
+    library_type = str(library_type or getattr(library, "type", ""))
+    is_series = library_type.casefold() == "series"
+    return (not is_series, is_series)
+
+
+def _is_hardware_encoder(name: str) -> bool:
+    return any(marker in name for marker in HARDWARE_ENCODER_MARKERS)
+
+
+def _hardware_encoder_codec(name: str) -> str | None:
+    if not _is_hardware_encoder(name):
+        return None
+    normalized = name.lower()
+    for prefix, codec in (
+        ("h264", "h264"),
+        ("hevc", "hevc"),
+        ("av1", "av1"),
+        ("vp9", "vp9"),
+        ("vp8", "vp8"),
+        ("mpeg2", "mpeg2video"),
+        ("mjpeg", "mjpeg"),
+    ):
+        if normalized.startswith(prefix):
+            return codec
+    return None
+
+
+def _hardware_backend(name: str | None) -> str | None:
+    normalized = (name or "").lower()
+    if normalized.endswith("_nvenc"):
+        return "cuda"
+    if normalized.endswith("_vaapi"):
+        return "vaapi"
+    if normalized.endswith("_qsv"):
+        return "qsv"
+    if normalized.endswith("_amf"):
+        return "amf"
+    if normalized.endswith("_videotoolbox"):
+        return "videotoolbox"
+    return None
+
+
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _is_windows() -> bool:
+    return sys.platform.startswith("win") or os.name == "nt"
+
+
+def _resolve_hardware_render_nodes(configured: str | Path | None) -> tuple[str, ...]:
+    """Return every usable Linux DRM render node in deterministic order.
+
+    A single global ``/dev/dri/renderD128`` default is not sufficient on
+    laptops with an integrated GPU next to a discrete adapter.  The launcher
+    and capability probe both keep the node explicit, while the normal
+    configuration still requires no user input.  An explicitly configured
+    node remains a supported escape hatch for hosts whose device ordering is
+    unusual.
+    """
+
+    if not _is_linux():
+        return ()
+    if configured:
+        candidate = Path(configured).expanduser()
+        return (str(candidate),) if candidate.exists() else ()
+    dri_directory = Path("/dev/dri")
+    if not dri_directory.is_dir():
+        return ()
+    return tuple(
+        str(candidate)
+        for candidate in sorted(dri_directory.glob("renderD*"))
+        if candidate.is_char_device() or candidate.exists()
+    )
+
+
+def _resolve_hardware_render_node(configured: str | Path | None) -> str | None:
+    """Resolve the DRM render node used for Intel VAAPI/QSV operations.
+
+    Linux containers normally expose one or more ``/dev/dri/renderD*`` nodes.
+    An explicit setting is preferred so multi-GPU hosts can select the right
+    adapter; otherwise the first available render node is used.  Other
+    platforms keep their native FFmpeg device selection behavior.
+    """
+
+    return next(iter(_resolve_hardware_render_nodes(configured)), None)
+
+
+def _hardware_device_arguments(
+    backends: set[str],
+    render_node: str | None,
+    *,
+    qsv_direct: bool = False,
+    cuda_device_id: str = "cuda0",
+    native_device_index: int | None = None,
+) -> list[str]:
+    """Build FFmpeg's named hardware-device initialization arguments.
+
+    A QSV-only graph uses FFmpeg's explicit Linux ``child_device`` syntax. It
+    avoids relying on the driver's default adapter, which is especially
+    important when an Arc GPU is present next to an integrated adapter. When
+    VAAPI and QSV are used in the same graph, QSV is derived from the named
+    VAAPI device so both encoders share the same DRM context.
+    """
+
+    arguments: list[str] = []
+    # Windows exposes the native D3D11 adapter ordinal as the stable selector
+    # for AMF and QSV.  Without this explicit binding FFmpeg uses adapter 0,
+    # which is commonly an NVIDIA GPU on hybrid systems and makes an AMD/iGPU
+    # encoder fail with an opaque ``AMF failed to initialise`` error.
+    if native_device_index is not None and backends == {"amf"}:
+        arguments.extend(["-init_hw_device", f"d3d11va=amf:{native_device_index}"])
+        return arguments
+    if native_device_index is not None and backends == {"qsv"} and _is_windows():
+        arguments.extend(["-qsv_device", str(native_device_index)])
+        return arguments
+    if "cuda" in backends:
+        # Keep the selected NVIDIA adapter explicit. ``cuda=<name>:<index>``
+        # assigns a stable per-process name and, unlike ``cuda=cuda0``, does
+        # not silently fall back to adapter 0 on multi-GPU hosts.
+        match = re.fullmatch(r"cuda(\d+)", cuda_device_id or "")
+        cuda_index = match.group(1) if match else "0"
+        arguments.extend(["-init_hw_device", f"cuda=cu:{cuda_index}"])
+    if qsv_direct and backends == {"qsv"} and render_node:
+        arguments.extend(
+            [
+                "-init_hw_device",
+                f"qsv=qs:hw,child_device={render_node}",
+            ]
+        )
+        return arguments
+    if ("vaapi" in backends or "qsv" in backends) and render_node:
+        arguments.extend(["-init_hw_device", f"vaapi=va:{render_node}"])
+    if "qsv" in backends:
+        # Deriving QSV from the VAAPI device keeps Intel's DRM render node
+        # selection explicit and works with oneVPL-backed FFmpeg builds.
+        arguments.extend(["-init_hw_device", "qsv=qs@va"])
+    return arguments
+
+
+def _hardware_upload_format(source: VideoStream | None, effective_pixel_format: str | None) -> str:
+    pixel_format = (effective_pixel_format or (source.pix_fmt if source else None) or "").lower()
+    bit_depth = (source.bit_depth if source else None) or 0
+    if bit_depth >= 10 or "10" in pixel_format or pixel_format.startswith("p010"):
+        return "p010le"
+    return "nv12"
+
+
+def _hardware_upload_filter(
+    backend: str,
+    source: VideoStream | None,
+    effective_pixel_format: str | None,
+    *,
+    qsv_direct: bool = False,
+) -> str:
+    if backend == "cuda":
+        return f"format={_hardware_upload_format(source, effective_pixel_format)},hwupload_cuda"
+    if backend == "vaapi":
+        upload = "hwupload"
+    elif backend in {"amf", "videotoolbox"}:
+        # AMF and VideoToolbox accept system-memory frames and let the native
+        # driver/framework choose the active adapter.  They must not inherit
+        # the Linux VAAPI/QSV upload filter through the generic fallback.
+        # VideoToolbox accepts system-memory frames and is negotiated by the
+        # macOS framework; AMF behaves equivalently on Windows.
+        return ""
+    elif qsv_direct:
+        # With a direct QSV device, filter_hw_device already points at the
+        # target surface pool. Extra frames prevent short sources from
+        # exhausting the QSV upload queue during startup.
+        upload = "hwupload=extra_hw_frames=16"
+    else:
+        upload = "hwupload=derive_device=qsv"
+    return f"format={_hardware_upload_format(source, effective_pixel_format)},{upload}"
+
+
+DRM_VENDOR_NAMES = {
+    "0x8086": "intel",
+    "0x1002": "amd",
+    "0x10de": "nvidia",
+}
+DRM_DRIVER_VENDORS = {
+    "i915": "intel",
+    "xe": "intel",
+    "amdgpu": "amd",
+    "radeon": "amd",
+    "nouveau": "nvidia",
+    "nvidia": "nvidia",
+    "nvidia-drm": "nvidia",
+}
+BACKEND_DISPLAY_NAMES = {
+    "vaapi": "VAAPI",
+    "qsv": "Quick Sync",
+    "amf": "AMF",
+    "videotoolbox": "VideoToolbox",
+    "cuda": "CUDA",
+}
+
+
+def _read_optional_text(path: Path) -> str | None:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def _device_class_from_name(name: str) -> str:
+    normalized = name.lower()
+    if any(
+        marker in normalized
+        for marker in (
+            "integrated",
+            "uhd graphics",
+            "iris",
+            "radeon(tm) graphics",
+            "radeon graphics",
+            "radeon 7",
+            "radeon vega",
+            "vega 6",
+            "vega 7",
+        )
+    ):
+        return "integrated"
+    if any(
+        marker in normalized
+        for marker in ("arc ", "geforce", "quadro", "tesla", "radeon rx", "firepro", "radeon pro")
+    ):
+        return "dedicated"
+    return "unknown"
+
+
+def _windows_d3d11_adapters(ffmpeg_path: str) -> tuple[dict[str, object], ...]:
+    """Enumerate the native D3D11 adapters visible to a Windows FFmpeg.
+
+    FFmpeg's AMF and Windows-QSV encoders otherwise default to adapter 0. On
+    hybrid systems that is often the discrete NVIDIA adapter, even though an
+    AMD or Intel media engine is also present. Initialising a tiny D3D11
+    device per ordinal gives us the driver-provided PCI identity and lets
+    later probes/jobs bind the exact adapter. The helper is deliberately
+    best-effort: older builds or test doubles may not support
+    ``d3d11va=...``, in which case the caller keeps the legacy logical target.
+    """
+
+    if not _is_windows() or _is_linux():
+        return ()
+    pattern = re.compile(
+        r"Using device\s+([0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})\s+\((.*)\)\."
+    )
+    vendor_by_pci = {
+        "1002": "amd",
+        "10de": "nvidia",
+        "8086": "intel",
+    }
+    adapters: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    # D3D11 adapter ordinals are small in practice. Sixteen is enough to
+    # cover multi-GPU workstations while still keeping capability refreshes
+    # bounded when a driver reports no adapters.
+    for index in range(16):
+        command = [
+            ffmpeg_path,
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-init_hw_device",
+            f"d3d11va=probe:{index}",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=16x16:d=0.01",
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                **get_hidden_subprocess_kwargs(),
+            )
+        except Exception:
+            # Adapter enumeration must never make the normal encoder probe
+            # fail. This also keeps compatibility with older FFmpeg builds
+            # and mocked subprocess implementations.
+            break
+        output = "\n".join(
+            value for value in (completed.stdout or "", completed.stderr or "") if value
+        )
+        match = pattern.search(output)
+        if match is None:
+            break
+        pci_id = match.group(1).lower()
+        name = match.group(2).strip()
+        identity = (pci_id, name.lower())
+        # FFmpeg falls back to the default adapter for an out-of-range index;
+        # the repeated identity is therefore the end of the enumeration.
+        if identity in seen:
+            break
+        seen.add(identity)
+        vendor = vendor_by_pci.get(pci_id.split(":", 1)[0], "unknown")
+        if vendor == "unknown":
+            lowered_name = name.lower()
+            if "radeon" in lowered_name or "amd" in lowered_name:
+                vendor = "amd"
+            elif "intel" in lowered_name or "arc " in lowered_name or "iris" in lowered_name:
+                vendor = "intel"
+            elif "nvidia" in lowered_name or "geforce" in lowered_name or "quadro" in lowered_name:
+                vendor = "nvidia"
+        adapters.append(
+            {
+                "index": index,
+                "pci_id": pci_id,
+                "name": name or f"D3D11 adapter {index}",
+                "vendor": vendor,
+                "device_class": _device_class_from_name(name),
+            }
+        )
+    return tuple(adapters)
+
+
+def _linux_render_device_metadata(render_node: str) -> dict[str, str]:
+    """Read best-effort identity data for one Linux DRM render node.
+
+    The metadata is deliberately advisory.  The actual encoder probe remains
+    the source of truth because sysfs vendor strings and driver names do not
+    prove that a container can open the device.
+    """
+
+    node_name = Path(render_node).name
+    device_path = Path("/sys/class/drm") / node_name / "device"
+    vendor_id = (_read_optional_text(device_path / "vendor") or "").lower()
+    if vendor_id and not vendor_id.startswith("0x"):
+        vendor_id = f"0x{vendor_id}"
+    vendor = DRM_VENDOR_NAMES.get(vendor_id, "unknown")
+    driver_path = device_path / "driver"
+    try:
+        driver = driver_path.resolve().name if driver_path.exists() else ""
+    except OSError:
+        driver = ""
+    uevent: dict[str, str] = {}
+    raw_uevent = _read_optional_text(device_path / "uevent")
+    if raw_uevent:
+        for line in raw_uevent.splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                uevent[key.strip().upper()] = value.strip()
+    # Some NAS/container combinations expose the DRM driver and render node
+    # but hide the PCI vendor file.  Prefer a vendor from the uevent PCI_ID,
+    # then use the Intel i915/xe and AMD amdgpu/radeon driver names.  The
+    # subsequent encoder probe remains authoritative for actual usability.
+    if vendor == "unknown":
+        uevent_vendor_id = uevent.get("PCI_ID", "").partition(":")[0].lower()
+        if uevent_vendor_id and not uevent_vendor_id.startswith("0x"):
+            uevent_vendor_id = f"0x{uevent_vendor_id}"
+        vendor = DRM_VENDOR_NAMES.get(uevent_vendor_id, "unknown")
+    if not driver:
+        driver = uevent.get("DRIVER", "")
+    if vendor == "unknown":
+        vendor = DRM_DRIVER_VENDORS.get(driver.lower(), "unknown")
+    vendor_label = vendor.capitalize() if vendor != "unknown" else "GPU"
+    name = f"{vendor_label} GPU ({node_name})"
+    if uevent.get("PCI_ID"):
+        name = f"{name} · {uevent['PCI_ID']}"
+    device_class = _device_class_from_name(name)
+    return {
+        "vendor": vendor,
+        "name": name,
+        "driver": driver,
+        "device_class": device_class,
+        "render_node": render_node,
+    }
+
+
+def _device_for_backend(
+    backend: str,
+    index: int,
+    *,
+    render_node: str | None = None,
+    vendor: str | None = None,
+    name: str | None = None,
+    driver_version: str | None = None,
+    native_device_index: int | None = None,
+    device_class: str = "unknown",
+) -> TranscodeHardwareDevice:
+    normalized_vendor = vendor or {
+        "cuda": "nvidia",
+        "qsv": "intel",
+        "amf": "amd",
+        "videotoolbox": "apple",
+        "vaapi": "unknown",
+    }.get(backend, "unknown")
+    suffix = Path(render_node).name if render_node else str(index)
+    device_id = f"{backend}-{suffix}" if render_node else f"{backend}{index}"
+    display_name = name or f"{normalized_vendor.capitalize()} {BACKEND_DISPLAY_NAMES.get(backend, backend)} (automatic)"
+    if render_node and "(" not in display_name:
+        display_name = f"{display_name} ({Path(render_node).name})"
+    return TranscodeHardwareDevice(
+        id=device_id,
+        name=display_name,
+        vendor=normalized_vendor,
+        backend=backend,
+        driver_version=driver_version,
+        render_node=render_node,
+        native_device_index=native_device_index,
+        device_class=device_class if device_class in {"integrated", "dedicated", "unknown"} else "unknown",
+    )
+
+
+def _build_hardware_device_inventory(
+    listed_names: set[str],
+    render_nodes: tuple[str, ...],
+    nvidia_devices: list[TranscodeHardwareDevice],
+    *,
+    native_adapters: tuple[dict[str, object], ...] = (),
+) -> list[TranscodeHardwareDevice]:
+    """Build logical adapter targets before probing individual encoders.
+
+    FFmpeg exposes encoder families rather than a portable cross-platform GPU
+    inventory.  The inventory therefore combines native CUDA identity,
+    Linux DRM nodes, and platform-native logical backends.  Every target is
+    still marked unavailable until its own FFmpeg smoke test succeeds.
+
+    An Intel CPU with an enabled integrated GPU exposes its Quick Sync media
+    engine through the same Linux DRM render node as the Intel graphics
+    adapter. AMD APUs expose their VCN media engine through VAAPI. These are
+    hardware-media paths, not CPU software encoding, so they must be included
+    in the same per-device probe and automatic-selection flow as discrete
+    adapters.
+    """
+
+    devices = list(nvidia_devices)
+    render_metadata = [_linux_render_device_metadata(node) for node in render_nodes]
+    listed_render_backends = {
+        backend
+        for backend in ("vaapi", "qsv")
+        if any(name.lower().endswith(f"_{backend}") for name in listed_names)
+    }
+    for metadata in render_metadata:
+        # A vendor-identified DRM node is itself evidence that a hardware
+        # media engine is present, including integrated CPU/APU engines, even
+        # when this FFmpeg build does not list every backend family. Add the
+        # native Intel/AMD targets so the device remains visible in diagnostics
+        # and can become available as soon as one of its hardware encoders
+        # passes the real probe. Do not infer anything for unknown render
+        # nodes; NVIDIA and virtualized paths continue to be gated by their
+        # explicit backend listings.
+        render_backends = set(listed_render_backends)
+        if metadata["vendor"] == "intel":
+            render_backends.update({"qsv", "vaapi"})
+        elif metadata["vendor"] == "amd":
+            render_backends.add("vaapi")
+        for backend in sorted(render_backends):
+            # QSV is an Intel path.  Unknown metadata is retained because
+            # tests and some virtualized/container environments expose a
+            # render node without the PCI sysfs tree.
+            if backend == "qsv" and metadata["vendor"] not in {"intel", "unknown"}:
+                continue
+            devices.append(
+                _device_for_backend(
+                    backend,
+                    len(devices),
+                    render_node=metadata["render_node"],
+                    vendor=metadata["vendor"],
+                    name=f"{metadata['name']} · {BACKEND_DISPLAY_NAMES[backend]}",
+                    driver_version=metadata["driver"] or None,
+                    device_class=metadata["device_class"],
+                )
+            )
+
+    # AMF and Windows QSV select the adapter through the native driver/API.
+    # Prefer one target per physical D3D11 adapter so hybrid systems expose
+    # their AMD/Intel integrated media engine alongside a discrete GPU. Keep
+    # the old logical fallback for FFmpeg builds that cannot enumerate
+    # adapters; the subsequent smoke probe remains authoritative.
+    if _is_windows() and not _is_linux():
+        backend_ordinals = {"amf": 0, "qsv": 0}
+        for adapter in native_adapters:
+            vendor = str(adapter.get("vendor") or "unknown")
+            adapter_name = str(adapter.get("name") or "D3D11 adapter")
+            adapter_index = adapter.get("index")
+            if not isinstance(adapter_index, int) or adapter_index < 0:
+                continue
+            if vendor == "amd" and any(name.lower().endswith("_amf") for name in listed_names):
+                ordinal = backend_ordinals["amf"]
+                backend_ordinals["amf"] += 1
+                devices.append(
+                    _device_for_backend(
+                        "amf",
+                        ordinal,
+                        vendor="amd",
+                        name=f"{adapter_name} · {BACKEND_DISPLAY_NAMES['amf']}",
+                        native_device_index=adapter_index,
+                        device_class=str(
+                            adapter.get("device_class") or _device_class_from_name(adapter_name)
+                        ),
+                    )
+                )
+            if vendor == "intel" and any(name.lower().endswith("_qsv") for name in listed_names):
+                ordinal = backend_ordinals["qsv"]
+                backend_ordinals["qsv"] += 1
+                devices.append(
+                    _device_for_backend(
+                        "qsv",
+                        ordinal,
+                        vendor="intel",
+                        name=f"{adapter_name} · {BACKEND_DISPLAY_NAMES['qsv']}",
+                        native_device_index=adapter_index,
+                        device_class=str(
+                            adapter.get("device_class") or _device_class_from_name(adapter_name)
+                        ),
+                    )
+                )
+        for backend in ("amf", "qsv"):
+            if any(name.lower().endswith(f"_{backend}") for name in listed_names) and not any(
+                device.backend == backend for device in devices
+            ):
+                devices.append(_device_for_backend(backend, 0))
+
+    return devices
+
+
+def _test_hardware_encoder(
+    ffmpeg_path: str,
+    encoder: str,
+    render_node: str | None = None,
+    device_id: str | None = None,
+    native_device_index: int | None = None,
+) -> tuple[bool, str | None]:
+    backend = _hardware_backend(encoder)
+    # CUDA/NVENC uses the NVIDIA device exposed by the container/runtime and
+    # does not require a Linux DRM render node.  A WSL2 Docker container, for
+    # example, can expose `/dev/dxg` while `/dev/dri/renderD*` is absent.  DRM
+    # render nodes remain mandatory for the Intel VAAPI/QSV paths.
+    if backend in {"vaapi", "qsv"} and _is_linux() and not render_node:
+        return False, f"No DRM render node is available for {backend} hardware encoding"
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+    ]
+    qsv_direct = False
+    if backend == "cuda":
+        command.extend(_hardware_device_arguments({backend}, None, cuda_device_id=device_id or "cuda0"))
+        command.extend(["-filter_hw_device", "cu"])
+    elif backend == "amf" and native_device_index is not None:
+        command.extend(
+            _hardware_device_arguments(
+                {backend},
+                None,
+                native_device_index=native_device_index,
+            )
+        )
+        command.extend(["-filter_hw_device", "amf"])
+    elif backend == "qsv" and native_device_index is not None and _is_windows():
+        command.extend(
+            _hardware_device_arguments(
+                {backend},
+                None,
+                native_device_index=native_device_index,
+            )
+        )
+    elif backend and render_node:
+        qsv_direct = backend == "qsv" and _is_linux()
+        command.extend(_hardware_device_arguments({backend}, render_node, qsv_direct=qsv_direct))
+        command.extend(["-filter_hw_device", "qs" if qsv_direct else "va"])
+    command.extend([
+        "-f",
+        "lavfi",
+        "-i",
+        # NVENC rejects very small frame sizes on some driver generations;
+        # 256x256 remains tiny while exercising the real encoder path.
+        "color=c=black:s=256x256:d=0.1",
+    ])
+    if backend and (backend == "cuda" or render_node):
+        command.extend([
+            "-vf",
+            _hardware_upload_filter(backend, None, None, qsv_direct=qsv_direct),
+        ])
+    command.extend([
+        "-frames:v",
+        "1",
+        "-c:v",
+        encoder,
+    ])
+    quality_spec = _encoder_quality_spec(encoder)
+    if quality_spec:
+        command.extend([f"-{_quality_option(quality_spec[0])}", f"{quality_spec[3]:g}"])
+    command.extend(["-f", "null", "-"])
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            **get_hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    error = (completed.stderr or completed.stdout or "").strip()
+    if len(error) > 1000:
+        error = f"{error[:500]}\n...\n{error[-497:]}"
+    return completed.returncode == 0, error or None
+
+
+def _nvidia_smi_path() -> str | None:
+    return shutil.which("nvidia-smi") or shutil.which("nvidia-smi.exe")
+
+
+def _cuda_driver_error(cuda: ctypes.CDLL, result: int) -> str:
+    """Return a readable CUDA Driver API error without requiring nvidia-smi."""
+    try:
+        get_error_string = getattr(cuda, "cuGetErrorString")
+        get_error_string.restype = ctypes.c_int
+        error_string = ctypes.c_char_p()
+        get_error_string.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+        if get_error_string(result, ctypes.byref(error_string)) == 0 and error_string.value:
+            return error_string.value.decode("utf-8", errors="replace")
+    except (AttributeError, OSError, TypeError):
+        pass
+    return f"CUDA driver API error {result}"
+
+
+def _detect_nvidia_devices_via_cuda() -> tuple[list[TranscodeHardwareDevice], str | None]:
+    """Enumerate visible NVIDIA devices through the native CUDA driver API.
+
+    The NVIDIA Container Toolkit injects ``libcuda.so.1`` into a GPU-enabled
+    container but does not necessarily add the ``nvidia-smi`` executable to a
+    Debian/Alpine application image. Native Windows exposes the same API as
+    ``nvcuda.dll``. The Driver API provides the device identity fields needed
+    by the UI without installing a second copy of the host driver in the image.
+    """
+    driver_library = "nvcuda.dll" if _is_windows() else "libcuda.so.1"
+    try:
+        cuda = ctypes.CDLL(driver_library)
+    except OSError as exc:
+        return [], f"nvidia-smi is not available and {driver_library} could not be loaded: {exc}"
+
+    def symbol(name: str):
+        try:
+            function = getattr(cuda, name)
+        except AttributeError:
+            return None
+        function.restype = ctypes.c_int
+        return function
+
+    cu_init = symbol("cuInit")
+    cu_device_get_count = symbol("cuDeviceGetCount")
+    cu_device_get = symbol("cuDeviceGet")
+    cu_device_get_name = symbol("cuDeviceGetName")
+    cu_device_compute_capability = symbol("cuDeviceComputeCapability")
+    if not all(
+        (
+            cu_init,
+            cu_device_get_count,
+            cu_device_get,
+            cu_device_get_name,
+            cu_device_compute_capability,
+        )
+    ):
+        return [], f"{driver_library} does not expose the required CUDA Driver API"
+
+    result = cu_init(0)
+    if result != 0:
+        return [], _cuda_driver_error(cuda, result)
+    count = ctypes.c_int()
+    cu_device_get_count.argtypes = [ctypes.POINTER(ctypes.c_int)]
+    result = cu_device_get_count(ctypes.byref(count))
+    if result != 0:
+        return [], _cuda_driver_error(cuda, result)
+    if count.value <= 0:
+        return [], "CUDA Driver API did not report a GPU"
+
+    cu_device_get.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+    cu_device_get_name.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+    cu_device_compute_capability.argtypes = [
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+    ]
+    cu_device_total_mem = symbol("cuDeviceTotalMem_v2") or symbol("cuDeviceTotalMem")
+    if cu_device_total_mem:
+        cu_device_total_mem.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]
+
+    devices: list[TranscodeHardwareDevice] = []
+    for ordinal in range(count.value):
+        device = ctypes.c_int()
+        result = cu_device_get(ctypes.byref(device), ordinal)
+        if result != 0:
+            return [], _cuda_driver_error(cuda, result)
+
+        name_buffer = ctypes.create_string_buffer(256)
+        result = cu_device_get_name(name_buffer, len(name_buffer), device)
+        if result != 0:
+            return [], _cuda_driver_error(cuda, result)
+        name = name_buffer.value.decode("utf-8", errors="replace").strip()
+
+        major = ctypes.c_int()
+        minor = ctypes.c_int()
+        result = cu_device_compute_capability(ctypes.byref(major), ctypes.byref(minor), device)
+        if result != 0:
+            return [], _cuda_driver_error(cuda, result)
+
+        memory_total_bytes: int | None = None
+        if cu_device_total_mem:
+            total_memory = ctypes.c_size_t()
+            if cu_device_total_mem(ctypes.byref(total_memory), device) == 0:
+                memory_total_bytes = int(total_memory.value)
+        devices.append(
+            TranscodeHardwareDevice(
+                id=f"cuda{ordinal}",
+                name=name or f"NVIDIA GPU {ordinal}",
+                vendor="nvidia",
+                backend="cuda",
+                compute_capability=f"{major.value}.{minor.value}",
+                memory_total_bytes=memory_total_bytes,
+                device_class=_device_class_from_name(name),
+            )
+        )
+    return devices, None
+
+
+def _detect_nvidia_devices() -> tuple[list[TranscodeHardwareDevice], str | None]:
+    executable = _nvidia_smi_path()
+    if not executable:
+        return _detect_nvidia_devices_via_cuda()
+    try:
+        completed = subprocess.run(
+            [
+                executable,
+                "--query-gpu=index,name,driver_version,memory.total,compute_cap",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            **get_hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], str(exc)
+    if completed.returncode != 0:
+        return [], (completed.stderr or completed.stdout or "nvidia-smi failed").strip()[-1000:]
+    devices: list[TranscodeHardwareDevice] = []
+    for line in (completed.stdout or "").splitlines():
+        fields = [item.strip() for item in line.split(",")]
+        if len(fields) < 5:
+            continue
+        index, name, driver_version, memory_total, compute_capability = fields[:5]
+        try:
+            memory_total_bytes = int(float(memory_total) * 1024 * 1024)
+        except (TypeError, ValueError):
+            memory_total_bytes = None
+        devices.append(
+            TranscodeHardwareDevice(
+                id=f"cuda{index}",
+                name=name or f"NVIDIA GPU {index}",
+                vendor="nvidia",
+                backend="cuda",
+                driver_version=driver_version or None,
+                compute_capability=compute_capability or None,
+                memory_total_bytes=memory_total_bytes,
+                device_class=_device_class_from_name(name),
+            )
+        )
+    return devices, None if devices else "nvidia-smi did not report a GPU"
+
+
+def _list_decoder_codecs(ffmpeg_path: str) -> list[str]:
+    try:
+        completed = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-decoders"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            **get_hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if completed.returncode != 0:
+        return []
+    codecs: set[str] = set()
+    for line in (completed.stdout or "").splitlines():
+        match = re.match(r"^\s*[A-Z\.]{6}\s+([A-Za-z0-9_.-]+)\s", line)
+        if match:
+            name = match.group(1)
+            if name.endswith("_cuvid"):
+                codecs.add(name.removesuffix("_cuvid"))
+    return sorted(codecs)
+
+
+def _encoder_options(ffmpeg_path: str, encoder: str) -> list[str]:
+    try:
+        completed = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-h", f"encoder={encoder}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            **get_hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if completed.returncode != 0:
+        return []
+    options = {
+        match.group(1)
+        for line in (completed.stdout or "").splitlines()
+        if (match := re.match(r"^\s+-([A-Za-z0-9_]+)\s+<", line))
+    }
+    return sorted(options)
+
+
+@lru_cache(maxsize=8)
+def _detect_capabilities_cached(
+    ffmpeg_path: str,
+    render_nodes: tuple[str, ...] = (),
+) -> TranscodeCapabilitiesRead:
+    # Keep direct callers that used the old single-node helper working while
+    # the public path now probes every automatically discovered node.
+    if isinstance(render_nodes, str):
+        render_nodes = (render_nodes,)
+    try:
+        version_result = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            **get_hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return TranscodeCapabilitiesRead(
+            ffmpeg_available=False,
+            ffmpeg_path=ffmpeg_path,
+            error=str(exc),
+        )
+    if version_result.returncode != 0:
+        return TranscodeCapabilitiesRead(
+            ffmpeg_available=False,
+            ffmpeg_path=ffmpeg_path,
+            error=(version_result.stderr or version_result.stdout or "FFmpeg failed").strip(),
+        )
+    version_line = (version_result.stdout or "").splitlines()[0] if version_result.stdout else None
+    encoder_result = subprocess.run(
+        [ffmpeg_path, "-hide_banner", "-encoders"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+        **get_hidden_subprocess_kwargs(),
+    )
+    if encoder_result.returncode != 0:
+        return TranscodeCapabilitiesRead(
+            ffmpeg_available=True,
+            ffmpeg_path=ffmpeg_path,
+            version=version_line,
+            ffmpeg_version=version_line,
+            error=(encoder_result.stderr or "Unable to list FFmpeg encoders").strip(),
+        )
+    muxer_result = subprocess.run(
+        [ffmpeg_path, "-hide_banner", "-muxers"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+        **get_hidden_subprocess_kwargs(),
+    )
+    muxers: set[str] = set()
+    if muxer_result.returncode == 0:
+        for line in (muxer_result.stdout or "").splitlines():
+            match = re.match(r"^\s*E\s+([A-Za-z0-9_,.-]+)\s", line)
+            if match:
+                muxers.update(match.group(1).split(","))
+
+    listed_names: set[str] = set()
+    for line in (encoder_result.stdout or "").splitlines():
+        match = re.match(r"^\s*[A-Z\.]{6}\s+([A-Za-z0-9_.-]+)\s", line)
+        if match:
+            listed_names.add(match.group(1))
+    nvidia_encoder_names = sorted(
+        name for name in listed_names if name.lower().endswith("_nvenc")
+    )
+    nvidia_devices: list[TranscodeHardwareDevice] = []
+    nvidia_detection_error: str | None = None
+    nvidia_decoder_codecs: list[str] = []
+    if nvidia_encoder_names:
+        nvidia_devices, nvidia_detection_error = _detect_nvidia_devices()
+        nvidia_decoder_codecs = _list_decoder_codecs(ffmpeg_path)
+        for device in nvidia_devices:
+            device.decoder_codecs = list(nvidia_decoder_codecs)
+            device.encoder_names = []
+            device.encoder_codecs = []
+    native_adapters = (
+        _windows_d3d11_adapters(ffmpeg_path)
+        if _is_windows()
+        and not _is_linux()
+        and any(
+            name.lower().endswith(suffix)
+            for suffix in ("_amf", "_qsv")
+            for name in listed_names
+        )
+        else ()
+    )
+    if native_adapters:
+        devices = _build_hardware_device_inventory(
+            listed_names,
+            render_nodes,
+            nvidia_devices,
+            native_adapters=native_adapters,
+        )
+    else:
+        # Keep the original three-argument call path intact for older
+        # integrations that replace the inventory helper in-process.
+        devices = _build_hardware_device_inventory(
+            listed_names,
+            render_nodes,
+            nvidia_devices,
+        )
+    videotoolbox_encoder_names = sorted(
+        name for name in listed_names if name.lower().endswith("_videotoolbox")
+    )
+    if _is_macos() and videotoolbox_encoder_names:
+        devices.append(
+            _device_for_backend(
+                "videotoolbox",
+                0,
+                vendor="apple",
+                name="Apple VideoToolbox (automatic)",
+            )
+        )
+    known = {**VIDEO_ENCODER_CODECS, **AUDIO_ENCODER_CODECS, **SUBTITLE_ENCODER_CODECS}
+    for name in listed_names:
+        inferred_codec = _hardware_encoder_codec(name)
+        if inferred_codec:
+            known.setdefault(name, inferred_codec)
+    capabilities: list[TranscodeEncoderCapability] = []
+    probe_errors: dict[str, list[str]] = {device.id: [] for device in devices}
+    successful_encoder_names: dict[str, list[str]] = {device.id: [] for device in devices}
+
+    def probe_targets(encoder: str) -> list[tuple[TranscodeHardwareDevice | None, str | None]]:
+        backend = _hardware_backend(encoder)
+        candidates = [
+            device
+            for device in devices
+            if device.backend == backend
+        ]
+        if candidates:
+            return [(device, device.render_node) for device in candidates]
+        # A generic hardware encoder such as a future D3D/V4L2 backend can
+        # still prove itself without a separately enumerable device.  CUDA,
+        # VAAPI, and QSV on Linux intentionally fail closed when their
+        # required device is not visible.
+        return [(None, None)]
+
+    for name in sorted(listed_names & set(known)):
+        hardware = _is_hardware_encoder(name)
+        tested = False
+        available = True
+        test_error = None
+        device_ids: list[str] = []
+        if hardware:
+            tested = True
+            successful = False
+            errors: list[str] = []
+            for device, render_node in probe_targets(name):
+                probe_kwargs: dict[str, object] = {
+                    "device_id": device.id if device is not None else None,
+                }
+                if device is not None and device.native_device_index is not None:
+                    probe_kwargs["native_device_index"] = device.native_device_index
+                available_for_target, target_error = _test_hardware_encoder(
+                    ffmpeg_path,
+                    name,
+                    render_node,
+                    **probe_kwargs,
+                )
+                if available_for_target:
+                    successful = True
+                    if device is not None:
+                        device_ids.append(device.id)
+                        successful_encoder_names[device.id].append(name)
+                elif target_error:
+                    errors.append(target_error)
+                    if device is not None:
+                        probe_errors[device.id].append(target_error)
+            available = successful
+            test_error = next(iter(errors), None)
+        quality_spec = _encoder_quality_spec(name)
+        capabilities.append(
+            TranscodeEncoderCapability(
+                name=name,
+                codec=known[name],
+                hardware=hardware,
+                available=available,
+                tested=tested,
+                test_error=test_error,
+                device_ids=sorted(set(device_ids)),
+                options=_encoder_options(ffmpeg_path, name)
+                if name in VIDEO_ENCODER_CODECS or hardware
+                else [],
+                quality_mode=quality_spec[0] if quality_spec else None,
+                quality_min=quality_spec[1] if quality_spec else None,
+                quality_max=quality_spec[2] if quality_spec else None,
+                quality_default=quality_spec[3] if quality_spec else None,
+                quality_step=quality_spec[4] if quality_spec else None,
+            )
+        )
+    tested_at = utc_now()
+    for device in devices:
+        names = sorted(set(successful_encoder_names[device.id]))
+        device.encoder_names = names
+        device.encoder_codecs = sorted(
+            {
+                VIDEO_ENCODER_CODECS[name]
+                for name in names
+                if name in VIDEO_ENCODER_CODECS
+            }
+        )
+        device.last_tested_at = tested_at
+        device.status = "available" if names else "unavailable"
+        if not names:
+            device.failure_reason = next(iter(probe_errors[device.id]), None)
+            if device.backend == "cuda" and not device.failure_reason:
+                device.failure_reason = nvidia_detection_error or "No CUDA encoder passed its runtime smoke test"
+            elif device.backend == "videotoolbox" and not device.failure_reason:
+                device.failure_reason = "VideoToolbox did not pass its runtime smoke test"
+    return TranscodeCapabilitiesRead(
+        ffmpeg_available=True,
+        ffmpeg_path=ffmpeg_path,
+        version=version_line,
+        ffmpeg_version=version_line,
+        encoders=capabilities,
+        devices=devices,
+        decoder_codecs=nvidia_decoder_codecs,
+        platform=sys.platform,
+        last_tested_at=tested_at,
+        dolby_vision_passthrough=bool({"matroska", "mp4"} & muxers),
+    )
+
+
+def get_transcode_capabilities(settings: Settings, *, refresh: bool = False) -> TranscodeCapabilitiesRead:
+    with CAPABILITIES_LOCK:
+        if refresh:
+            _detect_capabilities_cached.cache_clear()
+        render_nodes = _resolve_hardware_render_nodes(getattr(settings, "hardware_render_node", None))
+        return _detect_capabilities_cached(settings.ffmpeg_path, render_nodes).model_copy(deep=True)
+
+
+def _available_encoder(capabilities: TranscodeCapabilitiesRead, *preferred: str) -> str | None:
+    available = {item.name for item in capabilities.encoders if item.available}
+    return next((name for name in preferred if name in available), None)
+
+
+def _preferred_hardware_encoders(codec: str, *, platform: str | None = None) -> tuple[str, ...]:
+    """Return a platform-aware preference order for automatic profiles.
+
+    The order is only a preference.  Availability still comes from the
+    device-specific smoke probes, so an Intel CPU/iGPU Quick Sync engine, an
+    AMD APU VCN engine, a discrete AMD/NVIDIA/Intel adapter, or an Apple media
+    engine can win without a vendor setting in the user's configuration.
+    """
+
+    platform_name = (platform or "").lower()
+    is_macos = platform_name.startswith("darwin") or platform_name.startswith("mac")
+    is_windows = platform_name.startswith("win") or platform_name.startswith("msys")
+    if not platform_name:
+        is_macos = _is_macos()
+        is_windows = _is_windows()
+    if is_macos:
+        backends = ("videotoolbox", "qsv", "vaapi", "cuda", "amf")
+    elif is_windows:
+        backends = ("cuda", "amf", "qsv", "vaapi", "videotoolbox")
+    else:
+        backends = ("cuda", "qsv", "vaapi", "amf", "videotoolbox")
+    encoder_prefix = "mpeg2" if codec == "mpeg2video" else codec
+    return tuple(f"{encoder_prefix}_{'nvenc' if backend == 'cuda' else backend}" for backend in backends)
+
+
+def _listed_encoder(capabilities: TranscodeCapabilitiesRead, *preferred: str) -> str | None:
+    """Choose a listed encoder even when its runtime probe failed.
+
+    Hardware-required profile plans must surface a concrete failed hardware
+    encoder (and its probe error) instead of silently switching to CPU.
+    """
+    listed = {item.name for item in capabilities.encoders}
+    return next((name for name in preferred if name in listed), None)
+
+
+def _default_subtitle_encoder(container: str) -> str:
+    if container == "mp4":
+        return "mov_text"
+    if container == "webm":
+        return "webvtt"
+    return "srt"
+
+
+def _source_container(media_file: MediaFile) -> str:
+    """Return the closest supported muxer for the source file.
+
+    The default profile is intentionally lossless at stream level.  Keeping a
+    supported source container where possible avoids an unnecessary remux
+    conversion and means the default plan really is a copy operation.
+    """
+    extension = (media_file.extension or Path(media_file.filename).suffix.lstrip(".")).lower()
+    if extension not in CONTAINER_FORMATS:
+        return "mkv"
+    compatibility = CONTAINER_COMPATIBILITY.get(extension)
+    if compatibility:
+        source_streams = {
+            "video": media_file.video_streams,
+            "audio": media_file.audio_streams,
+            "subtitle": media_file.subtitle_streams,
+        }
+        for kind, streams in source_streams.items():
+            if any((stream.codec or "").lower() not in compatibility[kind] for stream in streams):
+                return "mkv"
+    return extension
+
+
+def _profile_plan(
+    media_file: MediaFile,
+    profile: str,
+    capabilities: TranscodeCapabilitiesRead,
+    *,
+    output_mode: str | None = None,
+    execution_mode: str | None = None,
+) -> TranscodePlan:
+    filename_format_enabled, folder_format_enabled = default_formatting_flags(media_file)
+    dynamic_range = "preserve"
+    if profile == "compatibility":
+        container = _source_container(media_file)
+        video_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+            )
+            for stream in media_file.video_streams
+        ]
+        audio_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+            )
+            for stream in media_file.audio_streams
+        ]
+        subtitle_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+            )
+            for stream in media_file.subtitle_streams
+        ]
+    elif profile == "storage":
+        container = "mkv"
+        preferred_hardware = _preferred_hardware_encoders("hevc")
+        video_encoder = (
+            _available_encoder(capabilities, *preferred_hardware)
+            if execution_mode != "cpu_only"
+            else None
+        )
+        video_encoder = video_encoder or (
+            _listed_encoder(capabilities, *preferred_hardware)
+            if execution_mode == "hardware_required"
+            else None
+        ) or _available_encoder(capabilities, "libx265") or "libx265"
+        video_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="encode",
+                default_flag=getattr(stream, "default_flag", False),
+                codec="hevc",
+                encoder=video_encoder,
+                crf=22,
+                preset="medium",
+            )
+            for stream in media_file.video_streams
+        ]
+        audio_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+                language=stream.language,
+            )
+            for stream in media_file.audio_streams
+        ]
+        subtitle_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+                language=stream.language,
+            )
+            for stream in media_file.subtitle_streams
+        ]
+    else:
+        container = "mkv"
+        preferred_hardware = _preferred_hardware_encoders("av1")
+        video_encoder = (
+            _available_encoder(capabilities, *preferred_hardware)
+            if execution_mode != "cpu_only"
+            else None
+        )
+        video_encoder = video_encoder or (
+            _listed_encoder(capabilities, *preferred_hardware)
+            if execution_mode == "hardware_required"
+            else None
+        ) or _available_encoder(capabilities, "libsvtav1", "libaom-av1") or "libsvtav1"
+        video_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="encode",
+                default_flag=getattr(stream, "default_flag", False),
+                codec="av1",
+                encoder=video_encoder,
+                crf=30,
+                preset="6" if video_encoder == "libsvtav1" else None,
+            )
+            for stream in media_file.video_streams
+        ]
+        audio_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+                language=stream.language,
+            )
+            for stream in media_file.audio_streams
+        ]
+        subtitle_plans = [
+            TranscodeStreamPlan(
+                stream_index=stream.stream_index,
+                action="copy",
+                default_flag=getattr(stream, "default_flag", False),
+                language=stream.language,
+            )
+            for stream in media_file.subtitle_streams
+        ]
+    return TranscodePlan(
+        profile=profile,
+        container=container,
+        video_streams=video_plans,
+        audio_streams=audio_plans,
+        subtitle_streams=subtitle_plans,
+        dynamic_range=dynamic_range,
+        filename_template=DEFAULT_FILENAME_TEMPLATE,
+        filename_template_override=False,
+        filename_format_enabled=filename_format_enabled,
+        include_subtitle_languages=False,
+        filename_language_code_format="iso_639_1",
+        folder_format_enabled=folder_format_enabled,
+        folder_template=DEFAULT_FOLDER_TEMPLATE,
+        folder_template_override=False,
+        output_mode=output_mode,
+        execution_mode=execution_mode,
+    )
+
+
+def initial_transcode_presets(
+    media_file: MediaFile,
+    capabilities: TranscodeCapabilitiesRead,
+    *,
+    output_mode: str | None = None,
+    execution_mode: str | None = None,
+) -> dict[str, TranscodePlan]:
+    return {
+        profile: _profile_plan(
+            media_file,
+            profile,
+            capabilities,
+            output_mode=output_mode,
+            execution_mode=execution_mode,
+        )
+        for profile in ("compatibility", "storage", "modern")
+    }
+
+
+def _stream_codec_map(media_file: MediaFile) -> dict[tuple[str, int], str]:
+    result: dict[tuple[str, int], str] = {}
+    for stream in media_file.video_streams:
+        result[("video", stream.stream_index)] = (stream.codec or "").lower()
+    for stream in media_file.audio_streams:
+        result[("audio", stream.stream_index)] = (stream.codec or "").lower()
+    for stream in media_file.subtitle_streams:
+        result[("subtitle", stream.stream_index)] = (stream.codec or "").lower()
+    return result
+
+
+def _encoder_codec(encoder: str | None) -> str | None:
+    if not encoder:
+        return None
+    return ({**VIDEO_ENCODER_CODECS, **AUDIO_ENCODER_CODECS, **SUBTITLE_ENCODER_CODECS}).get(encoder)
+
+
+def _canonical_transcode_codec(codec: str | None) -> str | None:
+    value = str(codec or "").strip().lower()
+    if not value:
+        return None
+    return TRANSCODE_CODEC_ALIASES.get(value, value)
+
+
+def _sanitize_name_segment(value: str, *, suffix: str, fallback: str | None) -> str:
+    candidate = re.sub(r"[<>:\"/\\|?*\x00-\x1f]", "_", value)
+    candidate = re.sub(r"\s+", " ", candidate).strip(" .")
+    if not candidate:
+        if fallback is None:
+            raise ValueError("Formatting produced an empty path segment")
+        candidate = fallback
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    if candidate.upper() in reserved:
+        candidate = f"_{candidate}"
+    max_stem = max(32, 240 - len(suffix))
+    candidate = candidate[:max_stem].rstrip(" .")
+    if not candidate:
+        if fallback is None:
+            raise ValueError("Formatting produced an empty path segment")
+        return fallback
+    return candidate
+
+
+def _sanitize_filename(value: str, *, suffix: str) -> str:
+    return _sanitize_name_segment(value, suffix=suffix, fallback="transcoded")
+
+
+def _connector_filename_metadata(db: Session, media_file: MediaFile) -> dict[str, str | int | None]:
+    """Return deterministic filename metadata from matched connector items."""
+
+    preferred_connection_id = db.scalar(
+        select(Library.preferred_connector_connection_id).where(Library.id == media_file.library_id)
+    )
+    items = list(
+        db.scalars(
+            select(ConnectorItem)
+            .join(ConnectorMediaMatch, ConnectorMediaMatch.connector_item_id == ConnectorItem.id)
+            .where(
+                ConnectorMediaMatch.media_file_id == media_file.id,
+                ConnectorMediaMatch.status == "matched",
+            )
+        ).all()
+    )
+    items.sort(
+        key=lambda item: (
+            0 if preferred_connection_id is not None and item.connection_id == preferred_connection_id else 1,
+            item.connection_id,
+            item.id,
+        )
+    )
+
+    result: dict[str, str | int | None] = {
+        "movie_title": None,
+        "release_year": None,
+        "series_name": None,
+        "season_number": None,
+        "episode_number": None,
+        "episode_title": None,
+    }
+    for item in items:
+        if result["movie_title"] is None and item.item_type.strip().lower() == "movie" and item.title:
+            result["movie_title"] = item.title.strip() or None
+        if result["release_year"] is None:
+            if item.production_year is not None:
+                result["release_year"] = int(item.production_year)
+            elif item.premiere_date is not None:
+                result["release_year"] = int(item.premiere_date.year)
+        if item.item_type.strip().lower() != "episode":
+            continue
+        if result["series_name"] is None and item.series_name:
+            result["series_name"] = item.series_name.strip() or None
+        if result["season_number"] is None and item.parent_index_number is not None:
+            result["season_number"] = int(item.parent_index_number)
+        if result["episode_number"] is None and item.index_number is not None:
+            result["episode_number"] = int(item.index_number)
+        if result["episode_title"] is None and item.item_type.strip().lower() == "episode" and item.title:
+            result["episode_title"] = item.title.strip() or None
+
+    return result
+
+
+def _local_filename_metadata(media_file: MediaFile) -> dict[str, str | int | None]:
+    series = getattr(media_file, "series", None)
+    season = getattr(media_file, "season", None)
+    series_name = getattr(series, "title", None) or getattr(media_file, "series_name", None)
+    season_number = getattr(season, "season_number", None)
+    if season_number is None:
+        season_number = getattr(media_file, "season_number", None)
+    return {
+        "series_name": series_name,
+        "season_number": season_number,
+        "episode_number": getattr(media_file, "episode_number", None),
+        "episode_title": getattr(media_file, "episode_title", None),
+    }
+
+
+def _filename_codec(value: str | None) -> str:
+    aliases = {
+        "libfdk_aac": "aac",
+        "libmp3lame": "mp3",
+        "libopus": "opus",
+        "libvorbis": "vorbis",
+    }
+    normalized = str(value or "").strip().lower()
+    normalized = aliases.get(normalized, _canonical_transcode_codec(normalized) or normalized)
+    return normalized.upper()
+
+
+def _filename_audio_channels(channel_layout: str | None, channels: int | None) -> str:
+    normalized = str(channel_layout or "").strip().lower()
+    known_layouts = {
+        "mono": "1.0",
+        "1.0": "1.0",
+        "stereo": "2.0",
+        "2.0": "2.0",
+        "2.1": "2.1",
+        "5.1": "5.1",
+        "5.1(side)": "5.1",
+        "5.1(back)": "5.1",
+        "6.1": "5.1",
+        "7.1": "7.1",
+        "7.1(wide)": "7.1",
+        "7.1(wide-side)": "7.1",
+    }
+    if normalized in known_layouts:
+        return known_layouts[normalized]
+    if channels and channels > 0:
+        return f"{channels}.0"
+    return ""
+
+
+def _filename_subtitle_format(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = _canonical_transcode_codec(normalized) or normalized
+    labels = {
+        "subrip": "SRT",
+        "ass": "ASS",
+        "ssa": "ASS",
+        "hdmv_pgs_subtitle": "PGS",
+        "dvd_subtitle": "VOBSUB",
+        "dvb_subtitle": "DVB",
+        "mov_text": "MOV_TEXT",
+        "webvtt": "WEBVTT",
+        "xsub": "XSUB",
+    }
+    return labels.get(normalized, normalized.upper())
+
+
+def _filename_frame_rate(value: float | None) -> str:
+    if value is None or value <= 0:
+        return ""
+    return f"{value:.3f}".rstrip("0").rstrip(".") + " fps"
+
+
+def _direct_folder_name(media_file: MediaFile) -> str:
+    relative_path = Path(str(media_file.relative_path).replace("\\", "/"))
+    parent = relative_path.parent
+    return "" if parent == Path(".") else parent.name
+
+
+def _token_values(
+    media_file: MediaFile,
+    plan: TranscodePlan,
+    *,
+    metadata_separator: str | None = None,
+    language_code_format: str | None = None,
+    resolution_categories=None,
+) -> dict[str, str]:
+    primary_video = next((item for item in plan.video_streams if item.action != TranscodeStreamAction.drop), None)
+    source_video = next(
+        (
+            item
+            for item in media_file.video_streams
+            if primary_video is not None and item.stream_index == primary_video.stream_index
+        ),
+        None,
+    ) or (media_file.video_streams[0] if media_file.video_streams else None)
+    width = primary_video.width if primary_video and primary_video.width else (source_video.width if source_video else None)
+    height = primary_video.height if primary_video and primary_video.height else (source_video.height if source_video else None)
+    codec = (
+        (primary_video.codec or _encoder_codec(primary_video.encoder))
+        if primary_video and primary_video.action == TranscodeStreamAction.encode
+        else (source_video.codec if source_video else None)
+    )
+    def selected_languages(
+        decisions: list[TranscodeStreamPlan],
+        sources: list[AudioStream | SubtitleStream],
+    ) -> set[str]:
+        values: set[str] = set()
+        for decision in decisions:
+            if decision.action == TranscodeStreamAction.drop:
+                continue
+            source = next((item for item in sources if item.stream_index == decision.stream_index), None)
+            language = (decision.language or (source.language if source else None) or "").strip()
+            if language:
+                values.add(format_filename_language_code(language, language_code_format or plan.filename_language_code_format))
+        return values
+
+    def selected_streams(
+        decisions: list[TranscodeStreamPlan],
+        sources: list[AudioStream | SubtitleStream],
+    ) -> list[tuple[TranscodeStreamPlan, AudioStream | SubtitleStream]]:
+        source_by_index = {item.stream_index: item for item in sources}
+        return [
+            (decision, source_by_index[decision.stream_index])
+            for decision in decisions
+            if decision.action != TranscodeStreamAction.drop and decision.stream_index in source_by_index
+        ]
+
+    selected_audio = selected_streams(plan.audio_streams, media_file.audio_streams)
+    selected_subtitles = selected_streams(plan.subtitle_streams, media_file.subtitle_streams)
+
+    audio_languages = selected_languages(plan.audio_streams, media_file.audio_streams)
+    subtitle_languages = selected_languages(plan.subtitle_streams, media_file.subtitle_streams)
+    external_rows = {item.id: item for item in media_file.external_subtitles}
+    for decision in plan.external_subtitles:
+        if decision.action == "drop":
+            continue
+        row = external_rows.get(decision.subtitle_id)
+        language = (decision.language or (row.language if row else None) or "").strip()
+        if language:
+            subtitle_languages.add(format_filename_language_code(language, language_code_format or plan.filename_language_code_format))
+    metadata_separator = plan.filename_metadata_separator if metadata_separator is None else metadata_separator
+    bitrate = primary_video.bitrate if primary_video else None
+    audio_codecs = {
+        _filename_codec(
+            decision.codec or decision.encoder
+            if decision.action == TranscodeStreamAction.encode
+            else source.codec
+        )
+        for decision, source in selected_audio
+    }
+    audio_profiles = {
+        format_spatial_audio_profile(source.spatial_audio_profile)
+        or decision.profile
+        or source.profile
+        or ""
+        for decision, source in selected_audio
+    }
+    audio_channels = {
+        _filename_audio_channels(source.channel_layout, source.channels)
+        for _decision, source in selected_audio
+    }
+    subtitle_formats = {
+        _filename_subtitle_format(
+            decision.codec or decision.encoder
+            if decision.action == TranscodeStreamAction.encode
+            else source.codec
+        )
+        for decision, source in selected_subtitles
+    }
+    for decision in plan.external_subtitles:
+        if decision.action == "drop":
+            continue
+        row = external_rows.get(decision.subtitle_id)
+        subtitle_formats.add(
+            _filename_subtitle_format(
+                decision.codec or row.format if decision.action == "encode" and row else (row.format if row else None)
+            )
+        )
+    local_metadata = _local_filename_metadata(media_file)
+    is_movie = bool(plan.filename_movie_title)
+    series_name = "" if is_movie else plan.filename_series_name or local_metadata["series_name"]
+    season_number = None if is_movie else plan.filename_season_number if plan.filename_season_number is not None else local_metadata["season_number"]
+    episode_number = None if is_movie else plan.filename_episode_number if plan.filename_episode_number is not None else local_metadata["episode_number"]
+    episode_title = "" if is_movie else plan.filename_episode_title or local_metadata["episode_title"]
+    content_category = getattr(media_file, "content_category", "main")
+    content_category = getattr(content_category, "value", content_category) or "main"
+    frame_rate = primary_video.frame_rate if primary_video and primary_video.frame_rate else (source_video.frame_rate if source_video else None)
+    bit_depth = source_video.bit_depth if source_video else None
+    resolution_category = classify_resolution_category(width, height, resolution_categories)
+    return {
+        "sourceName": _clean_filename_stem(Path(media_file.filename).stem, plan),
+        "movieTitle": str(plan.filename_movie_title or ""),
+        "releaseYear": "" if plan.filename_release_year is None else str(plan.filename_release_year),
+        "resolution": f"{width}x{height}" if width and height else "",
+        "resolutionCategory": resolution_category.label if resolution_category else "",
+        "dynRange": plan.dynamic_range if plan.dynamic_range != "preserve" else (media_file.primary_video_hdr_type or ""),
+        "codec": (codec or "").upper(),
+        "audioLanguages": metadata_separator.join(sorted(audio_languages)),
+        "audioCodecs": metadata_separator.join(sorted(value for value in audio_codecs if value)),
+        "audioProfiles": metadata_separator.join(sorted(value for value in audio_profiles if value)),
+        "audioChannels": metadata_separator.join(sorted(value for value in audio_channels if value)),
+        "frameRate": _filename_frame_rate(frame_rate),
+        "bitDepth": f"{bit_depth}-bit" if bit_depth else "",
+        "subtitleLanguages": metadata_separator.join(sorted(subtitle_languages)),
+        "subtitleFormats": metadata_separator.join(sorted(value for value in subtitle_formats if value)),
+        "seriesName": str(series_name or ""),
+        "seasonNumber": "" if season_number is None else str(season_number),
+        "episodeNumber": "" if episode_number is None else str(episode_number),
+        "episodeTitle": str(episode_title or ""),
+        "contentCategory": str(content_category),
+        "container": plan.container.upper(),
+        "videoBitrate": f"{round(bitrate / 1_000_000, 1):g}Mbps" if bitrate else "",
+        "folderName": _direct_folder_name(media_file),
+    }
+
+
+def _effective_filename_template(plan: TranscodePlan) -> str:
+    if plan.filename_template_override is False:
+        template = DEFAULT_FILENAME_TEMPLATE
+        if plan.include_subtitle_languages:
+            template += " [{subtitleLanguages}]"
+        return template
+    return plan.filename_template
+
+
+def _clean_name_value(
+    value: str,
+    preset: str,
+    regex: str | None,
+    *,
+    error_label: str,
+) -> str:
+    if preset == "none":
+        return value
+    pattern = regex if preset == "custom" else FILENAME_CLEANUP_PATTERNS.get(preset)
+    if not pattern:
+        return value
+    try:
+        cleaned = re.sub(pattern, "", value)
+    except re.error as exc:
+        raise ValueError(f"Invalid {error_label} cleanup regex: {exc}") from exc
+    return re.sub(r"\s+", " ", cleaned).strip(" ._-")
+
+
+def _clean_filename_stem(stem: str, plan: TranscodePlan) -> str:
+    return _clean_name_value(
+        stem,
+        plan.filename_cleanup_preset,
+        plan.filename_cleanup_regex,
+        error_label="filename",
+    )
+
+
+def _effective_folder_template(plan: TranscodePlan) -> str:
+    if plan.folder_template_override is False:
+        return DEFAULT_FOLDER_TEMPLATE
+    return plan.folder_template
+
+
+def _render_metadata_template(
+    template: str,
+    values: dict[str, str],
+    allowed_tokens: set[str],
+    *,
+    label: str,
+) -> str:
+    unknown_tokens = set(re.findall(r"\{([^{}]+)\}", template)) - allowed_tokens
+    if unknown_tokens:
+        raise ValueError(f"Unsupported {label} token(s): {', '.join(sorted(unknown_tokens))}")
+    rendered = template
+    for token, value in values.items():
+        rendered = rendered.replace(f"{{{token}}}", value)
+    rendered = re.sub(r"\[\s*[,;|+\-]*\s*\]", "", rendered)
+    rendered = re.sub(r"([\[,;|+])\s*([,;|+])", r"\1", rendered)
+    rendered = re.sub(r"\s*,\s*(?=\])", "", rendered)
+    rendered = re.sub(r"\[\s*,\s*", "[", rendered)
+    return re.sub(r"\s+", " ", rendered).strip(" ,;|+-")
+
+
+def render_output_filename(media_file: MediaFile, plan: TranscodePlan, *, resolution_categories=None) -> str:
+    suffix = f".{plan.container}"
+    source_stem = Path(media_file.filename).stem
+    if not plan.filename_format_enabled:
+        return f"{_sanitize_filename(source_stem, suffix=suffix)}{suffix}"
+    template = _effective_filename_template(plan)
+    rendered = _render_metadata_template(
+        template,
+        _token_values(media_file, plan, resolution_categories=resolution_categories),
+        FILENAME_TOKENS,
+        label="filename",
+    )
+    if not plan.filename_template_explicit_source and "{sourceName}" not in template:
+        rendered = f"{_clean_filename_stem(source_stem, plan)} {rendered}".strip()
+    stem = _sanitize_filename(rendered, suffix=suffix)
+    return f"{stem}{suffix}"
+
+
+def render_output_folder_name(media_file: MediaFile, plan: TranscodePlan, *, resolution_categories=None) -> str | None:
+    """Render only the asset's direct parent folder, never an ancestor."""
+
+    source_folder = _direct_folder_name(media_file)
+    if not plan.folder_format_enabled or not source_folder:
+        return None
+    values = _token_values(
+        media_file,
+        plan,
+        metadata_separator=plan.folder_metadata_separator,
+        language_code_format=plan.folder_language_code_format,
+        resolution_categories=resolution_categories,
+    )
+    values["folderName"] = _clean_name_value(
+        source_folder,
+        plan.folder_cleanup_preset,
+        plan.folder_cleanup_regex,
+        error_label="folder",
+    )
+    rendered = _render_metadata_template(
+        _effective_folder_template(plan),
+        values,
+        FOLDER_TOKENS,
+        label="folder",
+    )
+    if not rendered:
+        raise ValueError("Folder formatting produced an empty folder name")
+    return _sanitize_name_segment(rendered, suffix="", fallback=None)
+
+
+def _dynamic_range_filter(dynamic_range: str) -> str | None:
+    if dynamic_range == "sdr":
+        return "zscale=t=linear:npl=100,format=gbrpf32le,tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p"
+    if dynamic_range == "hdr10":
+        return "zscale=t=linear:npl=100,format=gbrpf32le,tonemap=clip,zscale=p=bt2020:t=smpte2084:m=bt2020nc:r=tv,format=yuv420p10le"
+    if dynamic_range == "hlg":
+        return "zscale=t=linear:npl=100,format=gbrpf32le,tonemap=clip,zscale=p=bt2020:t=arib-std-b67:m=bt2020nc:r=tv,format=yuv420p10le"
+    return None
+
+
+def _output_codec(kind: str, decision: TranscodeStreamPlan, source_codec: str) -> str:
+    if decision.action in {TranscodeStreamAction.keep, TranscodeStreamAction.copy}:
+        return source_codec
+    return (decision.codec or _encoder_codec(decision.encoder) or "").lower()
+
+
+def _normalize_plan_languages(plan: TranscodePlan) -> tuple[TranscodePlan, list[str]]:
+    """Canonicalize stream language metadata and report malformed tags."""
+    normalized_plan = plan.model_copy(deep=True)
+    errors: list[str] = []
+    decisions = [
+        *normalized_plan.video_streams,
+        *normalized_plan.audio_streams,
+        *normalized_plan.subtitle_streams,
+    ]
+    for decision in decisions:
+        if decision.action == TranscodeStreamAction.keep:
+            decision.action = TranscodeStreamAction.copy
+        raw = decision.language
+        if not raw:
+            continue
+        normalized = normalize_language_tag(raw)
+        if normalized is None:
+            errors.append(f"Invalid BCP 47 language tag for stream {decision.stream_index}: {raw}")
+        else:
+            decision.language = normalized
+    for decision in normalized_plan.external_subtitles:
+        raw = decision.language
+        if not raw:
+            continue
+        normalized = normalize_language_tag(raw)
+        if normalized is None:
+            errors.append(f"Invalid BCP 47 language tag for external subtitle {decision.subtitle_id}: {raw}")
+        else:
+            decision.language = normalized
+    return normalized_plan, errors
+
+
+def _normalize_plan_stream_defaults(media_file: MediaFile, plan: TranscodePlan) -> TranscodePlan:
+    """Keep one active default per stream kind and put it first in the plan.
+
+    The UI sends an explicit ``default_flag`` when the user chooses a stream.
+    Older clients omit it, so validation first falls back to the source
+    disposition and finally to the first active stream. Dropped streams are
+    kept in the plan for the diff preview, but always move to its end.
+    """
+    normalized_plan = plan.model_copy(deep=True)
+    groups = (
+        ("video_streams", media_file.video_streams),
+        ("audio_streams", media_file.audio_streams),
+        ("subtitle_streams", media_file.subtitle_streams),
+    )
+    for attribute, source_streams in groups:
+        decisions = list(getattr(normalized_plan, attribute))
+        source_by_index = {stream.stream_index: stream for stream in source_streams}
+        source_order = {stream.stream_index: index for index, stream in enumerate(source_streams)}
+        active = [
+            decision
+            for decision in decisions
+            if decision.action != TranscodeStreamAction.drop and decision.stream_index in source_by_index
+        ]
+        selected = next((decision for decision in active if decision.default_flag is True), None)
+        selected = selected or next(
+            (decision for decision in active if getattr(source_by_index[decision.stream_index], "default_flag", False)),
+            None,
+        )
+        selected = selected or (active[0] if active else None)
+        default_index = selected.stream_index if selected is not None else None
+        for decision in decisions:
+            decision.default_flag = default_index is not None and decision.stream_index == default_index
+        decisions.sort(key=lambda decision: (
+            decision.action == TranscodeStreamAction.drop,
+            decision.default_flag is not True,
+            source_order.get(decision.stream_index, len(source_order)),
+            decision.stream_index,
+        ))
+        setattr(normalized_plan, attribute, decisions)
+    return normalized_plan
+
+
+def _validate_video_scale(source: VideoStream, decision: TranscodeStreamPlan) -> str | None:
+    """Reject upscaling and aspect-ratio changes in a user-supplied plan."""
+    if decision.width is None and decision.height is None:
+        return None
+    if source.width is None or source.height is None or source.width <= 0 or source.height <= 0:
+        return "Video scaling requires known source dimensions"
+    target_width = decision.width
+    target_height = decision.height
+    if target_width is None:
+        target_width = max(2, round(source.width * target_height / source.height / 2) * 2)
+    if target_height is None:
+        target_height = max(2, round(source.height * target_width / source.width / 2) * 2)
+    if target_width > source.width or target_height > source.height:
+        return (
+            f"Video stream {decision.stream_index} may only be downscaled "
+            f"(source {source.width}x{source.height}, requested {target_width}x{target_height})"
+        )
+    if (decision.width is not None and decision.width % 2) or (decision.height is not None and decision.height % 2):
+        return f"Video stream {decision.stream_index} scaling dimensions must be even"
+    source_ratio = source.width / source.height
+    target_ratio = target_width / target_height
+    if abs(source_ratio - target_ratio) > max(0.01, source_ratio * 0.01):
+        return (
+            f"Video stream {decision.stream_index} scaling must preserve the source aspect ratio "
+            f"({source.width}x{source.height} → {target_width}x{target_height})"
+        )
+    return None
+
+
+def _quote_command(arguments: list[str]) -> str:
+    return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
+
+
+def _encoder_profile(encoder: str, profile: str) -> str:
+    """Translate common ffprobe display names to case-sensitive encoder values."""
+    codec = VIDEO_ENCODER_CODECS.get(encoder)
+    aliases = {
+        "h264": {"baseline": "baseline", "main": "main", "high": "high"},
+        "hevc": {"main": "main", "main 10": "main10", "main10": "main10"},
+    }
+    # Leave numeric values and encoder-specific expert options untouched.
+    return aliases.get(codec, {}).get(" ".join(profile.lower().split()), profile)
+
+
+def _append_stream_options(
+    arguments: list[str],
+    kind_letter: str,
+    output_index: int,
+    decision: TranscodeStreamPlan,
+    source: VideoStream | AudioStream | SubtitleStream,
+    dynamic_range: str,
+    *,
+    hardware_device_name: str | None = None,
+    language_code_format: str = "container_default",
+    container: str = "mkv",
+) -> None:
+    specifier = f"{kind_letter}:{output_index}"
+    if decision.action in {TranscodeStreamAction.keep, TranscodeStreamAction.copy}:
+        arguments.extend([f"-c:{specifier}", "copy"])
+    else:
+        encoder = decision.encoder or decision.codec
+        hardware_backend = _hardware_backend(encoder) if kind_letter == "v" else None
+        filters: list[str] = []
+        if encoder:
+            arguments.extend([f"-c:{specifier}", encoder])
+        if decision.bitrate:
+            arguments.extend([f"-b:{specifier}", str(decision.bitrate)])
+        quality = decision.cq if decision.cq is not None else decision.crf
+        if quality is not None:
+            quality_spec = _encoder_quality_spec(encoder or "")
+            if quality_spec:
+                quality_option = _quality_option(quality_spec[0])
+            elif hardware_backend == "vaapi":
+                # Keep a conservative fallback for an unknown VAAPI encoder
+                # reported by a future FFmpeg build.
+                quality_option = "qp"
+            elif hardware_backend == "qsv":
+                quality_option = "global_quality"
+            elif decision.cq is not None:
+                quality_option = "cq"
+            else:
+                quality_option = "crf"
+            arguments.extend([f"-{quality_option}:{specifier}", f"{quality:g}"])
+        if decision.width or decision.height:
+            width = decision.width or -2
+            height = decision.height or -2
+            filters.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
+        effective_pixel_format = decision.pixel_format
+        if kind_letter == "v":
+            dynamic_filter = _dynamic_range_filter(dynamic_range)
+            if dynamic_filter:
+                filters.append(dynamic_filter)
+            if dynamic_range == "hdr10":
+                arguments.extend([f"-color_primaries:{specifier}", "bt2020", f"-color_trc:{specifier}", "smpte2084", f"-colorspace:{specifier}", "bt2020nc"])
+            elif dynamic_range == "hlg":
+                arguments.extend([f"-color_primaries:{specifier}", "bt2020", f"-color_trc:{specifier}", "arib-std-b67", f"-colorspace:{specifier}", "bt2020nc"])
+            elif dynamic_range == "preserve":
+                if source.color_primaries:
+                    arguments.extend([f"-color_primaries:{specifier}", source.color_primaries])
+                if source.color_transfer:
+                    arguments.extend([f"-color_trc:{specifier}", source.color_transfer])
+                if source.color_space:
+                    arguments.extend([f"-colorspace:{specifier}", source.color_space])
+                source_hdr = (source.hdr_type or "").lower()
+                if not effective_pixel_format and source_hdr not in {"", "sdr"} and (source.bit_depth or 0) >= 10:
+                    effective_pixel_format = source.pix_fmt or "yuv420p10le"
+            if hardware_backend and hardware_device_name:
+                upload_filter = _hardware_upload_filter(
+                    hardware_backend,
+                    source,
+                    effective_pixel_format,
+                    qsv_direct=hardware_device_name == "qs",
+                )
+                if upload_filter:
+                    filters.append(upload_filter)
+        if filters:
+            arguments.extend([f"-filter:{specifier}", ",".join(filters)])
+        if decision.frame_rate:
+            arguments.extend([f"-r:{specifier}", f"{decision.frame_rate:g}"])
+        # Hardware encoders consume the uploaded VAAPI/QSV surface format;
+        # passing a software ``-pix_fmt`` would force FFmpeg to negotiate
+        # away from that surface and commonly fails with an opaque format error.
+        uses_uploaded_hardware_surface = hardware_backend in {"cuda", "vaapi", "qsv"} and hardware_device_name
+        if effective_pixel_format and not uses_uploaded_hardware_surface:
+            arguments.extend([f"-pix_fmt:{specifier}", effective_pixel_format])
+        if decision.profile:
+            arguments.extend([f"-profile:{specifier}", _encoder_profile(encoder or "", decision.profile)])
+        if decision.level:
+            arguments.extend([f"-level:{specifier}", decision.level])
+        if decision.preset and hardware_backend not in {"vaapi", "videotoolbox"}:
+            arguments.extend([f"-preset:{specifier}", decision.preset])
+        if decision.gop_size:
+            arguments.extend([f"-g:{specifier}", str(decision.gop_size)])
+    language = decision.language or getattr(source, "language", None)
+    if language:
+        arguments.extend([f"-metadata:s:{specifier}", f"language={format_stream_language_code(language, language_code_format, container)}"])
+    if decision.title:
+        arguments.extend([f"-metadata:s:{specifier}", f"title={decision.title}"])
+    disposition: list[str] = []
+    effective_default = (
+        decision.default_flag
+        if decision.default_flag is not None
+        else bool(getattr(source, "default_flag", False))
+    )
+    if effective_default:
+        disposition.append("default")
+    if getattr(source, "forced_flag", False):
+        disposition.append("forced")
+    arguments.extend([f"-disposition:{specifier}", "+".join(disposition) if disposition else "0"])
+
+
+def _effective_output_mode(plan: TranscodePlan, app_settings=None) -> str:
+    if plan.output_mode:
+        return plan.output_mode
+    return getattr(getattr(app_settings, "transcoding", None), "default_output_mode", None) or "same_directory"
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+def _select_hardware_device_for_encoder(
+    capabilities: TranscodeCapabilitiesRead,
+    encoder: str,
+) -> TranscodeHardwareDevice | None:
+    """Select the first probed adapter that can run ``encoder``.
+
+    Device selection is intentionally resolved at request time, not during
+    installation. This makes hot-plugged GPUs, Docker passthrough, hybrid
+    laptops, and driver updates behave consistently after a capability refresh.
+    """
+
+    backend = _hardware_backend(encoder)
+    if backend is None:
+        return None
+    capability = next((item for item in capabilities.encoders if item.name == encoder), None)
+    if capability is None:
+        return None
+    candidates = [
+        device
+        for device in capabilities.devices
+        if device.backend == backend and device.status == "available"
+    ]
+    if capability.device_ids:
+        probed_ids = set(capability.device_ids)
+        candidates = [device for device in candidates if device.id in probed_ids]
+    elif any(device.encoder_names for device in candidates):
+        candidates = [device for device in candidates if encoder in device.encoder_names]
+    return candidates[0] if candidates else None
+
+
+def _hardware_render_node_for_encoder(
+    settings: Settings,
+    device: TranscodeHardwareDevice | None,
+) -> str | None:
+    if device is not None and device.render_node:
+        return device.render_node
+    return _resolve_hardware_render_node(getattr(settings, "hardware_render_node", None))
+
+
+def _encoder_matches_codec(
+    capability: TranscodeEncoderCapability,
+    codec: str,
+) -> bool:
+    capability_codec = _canonical_transcode_codec(capability.codec)
+    encoder_codec = _canonical_transcode_codec(_encoder_codec(capability.name))
+    return codec in {capability_codec, encoder_codec}
+
+
+def _encoder_can_use_device(
+    capabilities: TranscodeCapabilitiesRead,
+    capability: TranscodeEncoderCapability,
+    *,
+    target_device_id: str | None,
+) -> bool:
+    if not capability.hardware and _hardware_backend(capability.name) is None:
+        return True
+    if target_device_id == "cpu":
+        return False
+    backend = _hardware_backend(capability.name)
+    if backend is None:
+        return False
+    if target_device_id:
+        device = next(
+            (
+                item
+                for item in capabilities.devices
+                if item.id == target_device_id
+                and item.backend == backend
+                and item.status == "available"
+            ),
+            None,
+        )
+        if device is None:
+            return False
+        if capability.device_ids and device.id not in capability.device_ids:
+            return False
+        if device.encoder_names and capability.name not in device.encoder_names:
+            return False
+        return True
+    return _select_hardware_device_for_encoder(capabilities, capability.name) is not None
+
+
+def _automatic_encoder_candidates(
+    capabilities: TranscodeCapabilitiesRead,
+    *,
+    kind: str,
+    codec: str,
+    execution_mode: str,
+    target_device_id: str | None,
+) -> list[TranscodeEncoderCapability]:
+    if kind == "video" and execution_mode == "hardware_required":
+        preferred = _preferred_hardware_encoders(codec, platform=capabilities.platform)
+        candidates = [
+            item
+            for item in capabilities.encoders
+            if item.available
+            and item.tested
+            and (item.hardware or _hardware_backend(item.name) is not None)
+            and _encoder_matches_codec(item, codec)
+            and _encoder_can_use_device(
+                capabilities,
+                item,
+                target_device_id=target_device_id,
+            )
+        ]
+    elif kind == "video":
+        preferred = SOFTWARE_VIDEO_ENCODER_PREFERENCES.get(codec, ())
+        candidates = [
+            item
+            for item in capabilities.encoders
+            if item.available
+            and not item.hardware
+            and _hardware_backend(item.name) is None
+            and _encoder_matches_codec(item, codec)
+        ]
+    elif kind == "audio":
+        preferred = AUDIO_ENCODER_PREFERENCES.get(codec, ())
+        candidates = [
+            item
+            for item in capabilities.encoders
+            if item.available and not item.hardware and _encoder_matches_codec(item, codec)
+        ]
+    else:
+        preferred = SUBTITLE_ENCODER_PREFERENCES.get(codec, ())
+        candidates = [
+            item
+            for item in capabilities.encoders
+            if item.available and not item.hardware and _encoder_matches_codec(item, codec)
+        ]
+    by_name = {item.name: item for item in candidates}
+    ordered = [by_name[name] for name in preferred if name in by_name]
+    ordered.extend(item for item in candidates if item.name not in {entry.name for entry in ordered})
+    return ordered
+
+
+def _automatic_plan_device(
+    plan: TranscodePlan,
+    capabilities: TranscodeCapabilitiesRead,
+    *,
+    source_codecs: dict[int, str | None],
+    matrix: TranscodeCapabilityMatrixRead | None = None,
+) -> str | None:
+    """Choose one probed device supporting every encoded video stream.
+
+    Comparable, current hardware-test measurements refine the platform order.
+    Explicit encoders remain constraints; automatic selections remain automatic
+    in the stored plan so another worker can resolve its own hardware.
+    """
+    if matrix is not None:
+        from backend.app.services.transcode_matrix import transcode_capability_fingerprint
+
+        if matrix.status != "completed" or matrix.capability_fingerprint != transcode_capability_fingerprint(capabilities):
+            matrix = None
+    decisions = [item for item in plan.video_streams if item.action == TranscodeStreamAction.encode]
+    if not decisions:
+        return None
+    ranked = []
+    for device in capabilities.devices:
+        if device.status != "available":
+            continue
+        preferences = []
+        timings = []
+        for decision in decisions:
+            codec = _canonical_transcode_codec(decision.codec) or _encoder_codec(decision.encoder)
+            candidates = _automatic_encoder_candidates(
+                capabilities, kind="video", codec=codec or "",
+                execution_mode="hardware_required", target_device_id=device.id,
+            )
+            if decision.encoder and plan.target_mode == "local":
+                candidates = [item for item in candidates if item.name == decision.encoder]
+            if not candidates:
+                break
+            encoder = candidates[0]
+            preferred = _preferred_hardware_encoders(codec or "", platform=capabilities.platform)
+            preferences.append(preferred.index(encoder.name) if encoder.name in preferred else len(preferred))
+            group_id = f"render:{device.render_node}" if device.render_node else f"device:{device.id}"
+            source_codec = _canonical_transcode_codec(source_codecs.get(decision.stream_index))
+            measurement = next((
+                cell.parallel_benchmark
+                for group in (matrix.matrices if matrix is not None else [])
+                if group.device_id == group_id
+                for cell in group.cells
+                if cell.status == "hardware" and cell.encoder == encoder.name
+                and cell.decode_codec == source_codec and cell.encode_codec == codec
+                and cell.parallel_benchmark is not None
+                and cell.parallel_benchmark.baseline_median_seconds
+            ), None)
+            if measurement is not None:
+                # Normalize differing benchmark sizes to time per pixel/frame.
+                timings.append(measurement.baseline_median_seconds / (
+                    measurement.frames * measurement.width * measurement.height
+                ))
+        else:
+            measured = len(timings) == len(decisions)
+            ranked.append(((not measured, sum(timings) if measured else 0,
+                            sum(preferences), device.id), device.id))
+    return min(ranked)[1] if ranked else None
+
+
+def resolve_transcode_plan_encoders(
+    plan: TranscodePlan,
+    capabilities: TranscodeCapabilitiesRead,
+    *,
+    execution_mode: str | None = None,
+    target_device_id: str | None = None,
+    force_auto: bool = False,
+) -> tuple[TranscodePlan, list[str]]:
+    """Resolve target codecs to encoders on the worker that will execute them.
+
+    The request contract deliberately keeps ``codec`` user-facing and treats
+    ``encoder`` as a normalized runtime detail.  Existing explicit encoder
+    plans remain supported for backwards compatibility, while federation
+    assignments always re-resolve against the selected worker's capabilities.
+    """
+
+    normalized_plan = plan.model_copy(deep=True)
+    mode = execution_mode or normalized_plan.execution_mode or "hardware_required"
+    selected_device_id = target_device_id or normalized_plan.target_device_id
+    errors: list[str] = []
+    stream_groups = (
+        ("video", normalized_plan.video_streams),
+        ("audio", normalized_plan.audio_streams),
+        ("subtitle", normalized_plan.subtitle_streams),
+    )
+    for kind, decisions in stream_groups:
+        for decision in decisions:
+            if decision.action != TranscodeStreamAction.encode:
+                continue
+            codec = _canonical_transcode_codec(decision.codec) or _canonical_transcode_codec(
+                _encoder_codec(decision.encoder)
+            )
+            if codec is None:
+                errors.append(
+                    f"Encoded {kind} stream {decision.stream_index} requires a target codec"
+                )
+                continue
+            decision.codec = codec
+            should_resolve = force_auto or not decision.encoder
+            if not should_resolve:
+                continue
+            candidates = _automatic_encoder_candidates(
+                capabilities,
+                kind=kind,
+                codec=codec,
+                execution_mode=mode,
+                target_device_id=selected_device_id,
+            )
+            selected = candidates[0] if candidates else None
+            if selected is None:
+                path = (
+                    "hardware"
+                    if kind == "video" and mode == "hardware_required"
+                    else "software"
+                )
+                message = (
+                    f"No available {path} encoder for {kind} stream {decision.stream_index} "
+                    f"targeting codec {codec} on this worker"
+                )
+                if path == "hardware":
+                    software = _automatic_encoder_candidates(
+                        capabilities, kind=kind, codec=codec,
+                        execution_mode="cpu_only", target_device_id=None,
+                    )
+                    if software:
+                        message += (
+                            f". This FFmpeg build supports {codec} through software encoder "
+                            f"{software[0].name}; choose CPU-only mode to use it"
+                        )
+                errors.append(message)
+                decision.encoder = None
+                continue
+            previous_encoder = decision.encoder
+            decision.encoder = selected.name
+            # A preset belongs to an encoder family.  Do not forward a preset
+            # chosen for the origin's encoder to a different target worker.
+            if kind == "video" and (force_auto or previous_encoder != selected.name):
+                decision.preset = None
+            if kind == "video" and selected.hardware and not _encoder_quality_spec(selected.name):
+                # VideoToolbox and future hardware encoders may be bitrate-only;
+                # an inherited CRF/CQ option would make the otherwise valid
+                # automatic plan fail at FFmpeg argument parsing.
+                decision.crf = None
+                decision.cq = None
+    return normalized_plan, errors
+
+
+def effective_cpu_count() -> float:
+    """Return the smallest usable CPU capacity reported by the host/container."""
+    fallback = float(max(1, os.cpu_count() or 1))
+    try:
+        affinity_count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity_count = 0
+    candidates = [float(affinity_count)] if affinity_count else [fallback]
+    if sys.platform.startswith("linux"):
+        for quota_path in (Path("/sys/fs/cgroup/cpu.max"), Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")):
+            try:
+                raw = quota_path.read_text(encoding="utf-8").strip().split()
+            except OSError:
+                continue
+            if quota_path.name == "cpu.max":
+                if len(raw) < 2 or raw[0] == "max":
+                    continue
+                try:
+                    quota = float(raw[0])
+                    period = float(raw[1])
+                except ValueError:
+                    continue
+            else:
+                if not raw or raw[0] in {"-1", "max"}:
+                    continue
+                try:
+                    quota = float(raw[0])
+                    period = float(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text(encoding="utf-8").strip())
+                except (OSError, ValueError):
+                    continue
+            if quota > 0 and period > 0:
+                candidates.append(quota / period)
+    return max(1.0, min(candidates))
+
+
+def effective_cpu_thread_budget(cpu_budget_percent: int, *, cpu_count: float | None = None) -> int:
+    available = max(1.0, float(cpu_count if cpu_count is not None else effective_cpu_count()))
+    budget = floor(available * max(1, min(100, cpu_budget_percent)) / 100)
+    return max(1, min(floor(available), budget))
+
+
+def transcode_capacity(settings: Settings, app_settings=None) -> dict[str, object]:
+    """Return the resource capacity used by the dedicated transcode runtime."""
+    resolved = app_settings
+    if resolved is None:
+        with SessionLocal() as db:
+            resolved = get_app_settings(db, settings)
+    configured_cpu_jobs = resolved.transcoding.cpu_parallel_jobs
+    total_cpu_threads = effective_cpu_thread_budget(resolved.transcoding.cpu_budget_percent)
+    cpu_jobs = (
+        max(1, min(total_cpu_threads, int(configured_cpu_jobs)))
+        if configured_cpu_jobs != "auto"
+        else max(1, min(4, total_cpu_threads))
+    )
+    return {
+        "cpu_threads": total_cpu_threads,
+        "cpu_threads_per_job": max(1, total_cpu_threads // cpu_jobs),
+        "cpu_parallel_jobs": cpu_jobs,
+        "gpu_parallel_jobs_per_device": resolved.transcoding.gpu_parallel_jobs_per_device,
+    }
+
+
+def validate_transcode_plan(
+    db: Session,
+    settings: Settings,
+    media_file: MediaFile,
+    plan: TranscodePlan,
+    *,
+    output_path_override: Path | None = None,
+    output_root_override: Path | None = None,
+    output_subfolder: str | None = None,
+    capabilities_override: TranscodeCapabilitiesRead | None = None,
+    device_id_override: str | None = None,
+) -> TranscodeValidationRead:
+    paths = _source_paths(media_file)
+    capabilities = capabilities_override or get_transcode_capabilities(settings)
+    app_settings = get_app_settings(db, settings)
+    plan, language_errors = _normalize_plan_languages(plan)
+    plan = _normalize_plan_stream_defaults(media_file, plan)
+    output_mode = _effective_output_mode(plan, app_settings)
+    if plan.output_mode is None:
+        plan.output_mode = output_mode
+    execution_mode = plan.execution_mode or app_settings.transcoding.execution_mode
+    plan.execution_mode = execution_mode
+    device_id_override = device_id_override or plan.target_device_id
+    if execution_mode == "hardware_required" and not device_id_override:
+        # Import locally: the hardware-test service itself uses this module.
+        from backend.app.services.transcode_matrix import load_transcode_matrix
+
+        matrix = load_transcode_matrix(settings)
+        device_id_override = _automatic_plan_device(
+            plan, capabilities,
+            source_codecs={item.stream_index: item.codec for item in media_file.video_streams},
+            matrix=matrix,
+        )
+    plan, encoder_errors = resolve_transcode_plan_encoders(
+        plan,
+        capabilities,
+        execution_mode=execution_mode,
+        target_device_id=device_id_override or plan.target_device_id,
+        force_auto=plan.target_mode != "local",
+    )
+    errors: list[str] = []
+    errors.extend(language_errors)
+    errors.extend(encoder_errors)
+    connector_metadata = _connector_filename_metadata(db, media_file)
+    local_metadata = _local_filename_metadata(media_file)
+    # A local validation refreshes the connector value. A remote federation
+    # worker has no connector catalog, so it preserves the value already
+    # resolved into the plan by the origin worker.
+    if connector_metadata["release_year"] is not None or plan.filename_release_year is None:
+        plan.filename_release_year = connector_metadata["release_year"]  # type: ignore[assignment]
+    if connector_metadata["movie_title"] is not None or plan.filename_movie_title is None:
+        plan.filename_movie_title = connector_metadata["movie_title"]  # type: ignore[assignment]
+    for field in ("series_name", "season_number", "episode_number", "episode_title"):
+        connector_value = connector_metadata[field]
+        local_value = local_metadata[field]
+        if connector_value is not None or getattr(plan, f"filename_{field}") is None:
+            setattr(plan, f"filename_{field}", connector_value if connector_value is not None else local_value)
+    warnings: list[str] = []
+    kept: list[str] = []
+    changed: list[str] = []
+    removed: list[str] = []
+    added: list[str] = []
+    try:
+        normalized_output_subfolder = normalize_transcode_output_subfolder(output_subfolder)
+    except ValueError as exc:
+        normalized_output_subfolder = ""
+        errors.append(str(exc))
+    if not paths.source.exists() or not paths.source.is_file():
+        errors.append("The source file no longer exists")
+    if not media_file.video_streams:
+        errors.append("Transcoding is only available for files with a regular video stream")
+    if not capabilities.ffmpeg_available:
+        errors.append(capabilities.error or "FFmpeg is unavailable")
+
+    try:
+        output_filename = render_output_filename(
+            media_file,
+            plan,
+            resolution_categories=app_settings.resolution_categories,
+        )
+    except ValueError as exc:
+        output_filename = f"{Path(media_file.filename).stem}.transcoded.{plan.container}"
+        errors.append(str(exc))
+    formatted_folder_name: str | None = None
+    if plan.folder_format_enabled:
+        try:
+            formatted_folder_name = render_output_folder_name(
+                media_file,
+                plan,
+                resolution_categories=app_settings.resolution_categories,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+    if output_mode == "replace_original":
+        if normalized_output_subfolder:
+            errors.append("Replace-original rules cannot use an output subfolder")
+        if plan.folder_format_enabled:
+            errors.append("Replace-original rules cannot use folder formatting")
+        output_filename = paths.source.name
+        output_root = paths.root
+        output_path = output_path_override or paths.source
+        if plan.container != paths.source.suffix.lower().lstrip("."):
+            errors.append("Replacing the original requires the output container to match the source extension")
+        if not plan.replacement_confirmed:
+            errors.append("Replacing the original requires an explicit confirmation")
+        warnings.append("The original file will be replaced in place without a byte-for-byte backup")
+    elif output_mode == "transcode_output":
+        output_root = Path(
+            getattr(settings, "transcode_output_root", None)
+            or (Path(settings.config_path) / "Transcode_Output")
+        ).resolve()
+        relative_parent = Path(media_file.relative_path).parent
+        if formatted_folder_name and relative_parent != Path("."):
+            relative_parent = relative_parent.parent / formatted_folder_name
+        output_relative = Path(f"library-{media_file.library_id}") / f"root-{media_file.library_root_id or 0}"
+        if normalized_output_subfolder:
+            output_relative = Path(normalized_output_subfolder) / output_relative
+        output_relative = output_relative / relative_parent / output_filename
+        output_path = output_path_override or _safe_path_below(output_root, output_relative.as_posix())
+    else:
+        if normalized_output_subfolder:
+            errors.append("Same-directory rules cannot use an output subfolder")
+        output_root = paths.root
+        output_parent = paths.source.parent
+        if formatted_folder_name and output_parent != paths.root:
+            output_parent = output_parent.parent / formatted_folder_name
+        output_path = output_path_override or (output_parent / output_filename)
+    validation_output_root = output_root_override or output_root
+    try:
+        output_path.resolve().relative_to(validation_output_root.resolve())
+    except ValueError:
+        errors.append("The output path escapes the configured output root")
+    if output_mode != "replace_original" and output_path.resolve() == paths.source.resolve():
+        errors.append("The output path must differ from the source path")
+    writable_parent = _nearest_existing_parent(output_path.parent)
+    if not writable_parent.is_dir() or not os.access(writable_parent, os.W_OK):
+        errors.append(f"The output directory is not writable: {output_path.parent}")
+    if output_path.exists() and output_mode != "replace_original":
+        if app_settings.transcoding.existing_output == "skip":
+            errors.append("The output file already exists and was skipped by policy")
+        else:
+            errors.append("The output file already exists and will not be overwritten")
+    active_collision = db.scalar(
+        select(TranscodeJob.id).where(
+            TranscodeJob.output_path_snapshot == str(output_path),
+            TranscodeJob.status.in_([JobStatus.queued, JobStatus.running]),
+        ).limit(1)
+    )
+    if active_collision is not None:
+        errors.append("Another active transcoding job already targets this output path")
+
+    source_by_kind = {
+        "video": {item.stream_index: item for item in media_file.video_streams},
+        "audio": {item.stream_index: item for item in media_file.audio_streams},
+        "subtitle": {item.stream_index: item for item in media_file.subtitle_streams},
+    }
+    plan_by_kind = {
+        "video": plan.video_streams,
+        "audio": plan.audio_streams,
+        "subtitle": plan.subtitle_streams,
+    }
+    available_encoders = {item.name: item for item in capabilities.encoders}
+    encoded_video = [
+        decision
+        for decision in plan.video_streams
+        if decision.action == TranscodeStreamAction.encode
+    ]
+    selected_video_backends = {
+        backend
+        for decision in encoded_video
+        for backend in [_hardware_backend(decision.encoder or decision.codec)]
+        if backend is not None
+    }
+    accelerated_backends = selected_video_backends & {
+        "vaapi",
+        "qsv",
+        "cuda",
+        "amf",
+        "videotoolbox",
+    }
+    hardware_backend = (
+        next(iter(selected_video_backends))
+        if len(selected_video_backends) == 1
+        else "mixed"
+        if selected_video_backends
+        else None
+    )
+    selected_hardware_devices: list[TranscodeHardwareDevice] = []
+    for decision in encoded_video:
+        encoder = decision.encoder or decision.codec
+        backend = _hardware_backend(encoder)
+        if not backend:
+            continue
+        selected_device = (
+            next(
+                (
+                    device
+                    for device in capabilities.devices
+                    if device.id == device_id_override
+                    and device.backend == backend
+                    and device.status == "available"
+                    and encoder in available_encoders
+                    and _encoder_can_use_device(capabilities, available_encoders[encoder], target_device_id=device.id)
+                ),
+                None,
+            )
+            if device_id_override
+            else _select_hardware_device_for_encoder(capabilities, encoder or "")
+        )
+        if selected_device is not None:
+            selected_hardware_devices.append(selected_device)
+        elif device_id_override:
+            errors.append(f"Encoder {encoder} has no successful capability probe on device {device_id_override}")
+    selected_device_ids = {device.id for device in selected_hardware_devices}
+    if len(selected_device_ids) > 1:
+        errors.append("All encoded video streams must use the same automatically selected hardware device")
+    hardware_device_name: str | None = None
+    selected_device = selected_hardware_devices[0] if selected_hardware_devices else None
+    device_id = device_id_override or (selected_device.id if selected_device is not None else None)
+    render_node = _hardware_render_node_for_encoder(settings, selected_device)
+    for backend in accelerated_backends:
+        backend_devices = [device for device in capabilities.devices if device.backend == backend]
+        backend_decisions = [
+            decision
+            for decision in encoded_video
+            if _hardware_backend(decision.encoder or decision.codec) == backend
+        ]
+        if not backend_decisions:
+            continue
+        if selected_device is None and (
+            backend in {"cuda", "videotoolbox"}
+            or backend_devices
+        ):
+            errors.append(
+                f"{backend} encoding requires a detected, available device that passed its capability probe"
+            )
+        if backend in {"vaapi", "qsv"} and _is_linux() and not render_node:
+            errors.append(
+                "Linux VAAPI/QSV encoding requires an available DRM render node "
+                "(for example /dev/dri/renderD128)"
+            )
+    if execution_mode == "hardware_required":
+        if encoded_video and any(
+            _hardware_backend(decision.encoder or decision.codec) is None for decision in encoded_video
+        ):
+            errors.append("Hardware-required mode refuses a software video encoder; choose a tested hardware encoder")
+    elif execution_mode == "cpu_only" and selected_video_backends:
+        errors.append("CPU-only mode refuses a hardware video encoder")
+    replace_output = output_mode == "replace_original"
+    arguments = [
+        settings.ffmpeg_path,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y" if replace_output else "-n",
+        "-threads",
+        str(transcode_capacity(settings, app_settings)["cpu_threads_per_job"]),
+    ]
+    if accelerated_backends:
+        if len(accelerated_backends) > 1:
+            errors.append(
+                "Encoded video streams must use one hardware backend per job so every stream shares the selected device"
+            )
+        qsv_direct = accelerated_backends == {"qsv"} and _is_linux()
+        if (
+            len(accelerated_backends) == 1
+            and (
+                render_node
+                or accelerated_backends <= {"cuda", "amf", "videotoolbox"}
+                or (
+                    accelerated_backends == {"qsv"}
+                    and _is_windows()
+                    and selected_device is not None
+                    and selected_device.native_device_index is not None
+                )
+            )
+        ):
+            arguments.extend(
+                _hardware_device_arguments(
+                    accelerated_backends,
+                    render_node,
+                    qsv_direct=qsv_direct,
+                    cuda_device_id=device_id or "cuda0",
+                    native_device_index=(
+                        selected_device.native_device_index
+                        if selected_device is not None
+                        else None
+                    ),
+                )
+            )
+            # VAAPI is the base DRM device when QSV/VAAPI is selected;
+            # QSV-only plans use the explicitly selected QSV child device.
+            if "cuda" in accelerated_backends:
+                filter_device = "cu"
+                arguments.extend(["-filter_hw_device", filter_device])
+                hardware_device_name = filter_device
+            elif accelerated_backends == {"amf"}:
+                filter_device = "amf"
+                if selected_device is not None and selected_device.native_device_index is not None:
+                    arguments.extend(["-filter_hw_device", filter_device])
+                hardware_device_name = filter_device
+            elif accelerated_backends in ({"vaapi"}, {"qsv"}):
+                if (
+                    accelerated_backends == {"qsv"}
+                    and _is_windows()
+                    and selected_device is not None
+                    and selected_device.native_device_index is not None
+                ):
+                    # Windows QSV's ``-qsv_device`` selects the native
+                    # adapter directly; unlike Linux's named DRM/QSV graph
+                    # it does not create a filter device to attach here.
+                    hardware_device_name = None
+                else:
+                    filter_device = "va" if not qsv_direct else "qs"
+                    arguments.extend(["-filter_hw_device", filter_device])
+                    hardware_device_name = filter_device
+    arguments.extend(["-i", str(paths.source)])
+    external_rows = {item.id: item for item in media_file.external_subtitles}
+    selected_external: list[tuple[ExternalSubtitlePlan, ExternalSubtitle, Path]] = []
+    for external in plan.external_subtitles:
+        if external.action == "drop":
+            continue
+        row = external_rows.get(external.subtitle_id)
+        if row is None:
+            errors.append(f"External subtitle {external.subtitle_id} does not belong to this file")
+            continue
+        external_path = (paths.source.parent / row.path).resolve()
+        try:
+            external_path.relative_to(paths.root)
+        except ValueError:
+            errors.append(f"External subtitle escapes the library root: {row.path}")
+            continue
+        if not external_path.exists():
+            errors.append(f"External subtitle no longer exists: {row.path}")
+            continue
+        arguments.extend(["-i", str(external_path)])
+        selected_external.append((external, row, external_path))
+        added.append(f"external subtitle {row.path}")
+
+    output_counts = {"video": 0, "audio": 0, "subtitle": 0}
+    kind_letter = {"video": "v", "audio": "a", "subtitle": "s"}
+    for kind, decisions in plan_by_kind.items():
+        seen: set[int] = set()
+        for decision in decisions:
+            if decision.stream_index in seen:
+                errors.append(f"Stream {decision.stream_index} is selected more than once for {kind}")
+                continue
+            seen.add(decision.stream_index)
+            source = source_by_kind[kind].get(decision.stream_index)
+            label = f"{kind} stream {decision.stream_index}"
+            if source is None:
+                errors.append(f"{label} does not exist in the source")
+                continue
+            if decision.action == TranscodeStreamAction.drop:
+                removed.append(label)
+                continue
+            source_codec = (source.codec or "").lower()
+            output_codec = _output_codec(kind, decision, source_codec)
+            if decision.action == TranscodeStreamAction.encode:
+                encoder = decision.encoder
+                capability = available_encoders.get(encoder or "")
+                if encoder is None:
+                    # Resolution already explains why the codec cannot be used
+                    # in this mode. Never report a codec name as a missing encoder.
+                    continue
+                if capability is None:
+                    errors.append(f"Requested encoder is not provided by this FFmpeg build: {encoder or 'none'}")
+                elif not capability.available:
+                    errors.append(f"Requested hardware encoder failed its capability test: {encoder}")
+                if decision.codec and _encoder_codec(encoder) not in {None, decision.codec}:
+                    errors.append(f"Encoder {encoder} does not produce requested codec {decision.codec}")
+                if kind == "video":
+                    scale_error = _validate_video_scale(source, decision)
+                    if scale_error:
+                        errors.append(scale_error)
+                if kind == "subtitle" and source_codec in BITMAP_SUBTITLE_CODECS and output_codec in {
+                    "ass",
+                    "mov_text",
+                    "srt",
+                    "subrip",
+                    "webvtt",
+                }:
+                    errors.append(
+                        f"Bitmap subtitle stream {decision.stream_index} cannot be converted to text codec {output_codec}"
+                    )
+                changed.append(label)
+            else:
+                kept.append(label)
+            compatibility = CONTAINER_COMPATIBILITY.get(plan.container)
+            if compatibility and output_codec not in compatibility[kind]:
+                errors.append(f"Codec {output_codec or 'unknown'} is not supported for {kind} in {plan.container}")
+            arguments.extend(["-map", f"0:{decision.stream_index}"])
+            language_format = getattr(plan, f"{kind}_language_code_format")
+            try:
+                _append_stream_options(
+                    arguments,
+                    kind_letter[kind],
+                    output_counts[kind],
+                    decision,
+                    source,
+                    plan.dynamic_range,
+                    hardware_device_name=hardware_device_name,
+                    language_code_format=language_format,
+                    container=plan.container,
+                )
+            except ValueError as exc:
+                errors.append(f"{kind} stream {decision.stream_index}: {exc}")
+            output_counts[kind] += 1
+        for stream_index in set(source_by_kind[kind]) - seen:
+            removed.append(f"{kind} stream {stream_index}")
+
+    for input_offset, (decision, row, _path) in enumerate(selected_external, start=1):
+        output_index = output_counts["subtitle"]
+        arguments.extend(["-map", f"{input_offset}:0"])
+        codec = decision.codec or _default_subtitle_encoder(plan.container)
+        if decision.action == "copy":
+            codec = "copy"
+        elif codec not in available_encoders:
+            errors.append(f"Requested subtitle encoder is unavailable: {codec}")
+        if (row.format or "").lower() in BITMAP_SUBTITLE_CODECS and codec in {
+            "ass",
+            "mov_text",
+            "srt",
+            "subrip",
+            "webvtt",
+        }:
+            errors.append(f"Bitmap external subtitle {row.path} cannot be converted to text codec {codec}")
+        arguments.extend([f"-c:s:{output_index}", codec])
+        language = decision.language or row.language
+        if language:
+            try:
+                encoded_language = format_stream_language_code(language, plan.subtitle_language_code_format, plan.container)
+                arguments.extend([f"-metadata:s:s:{output_index}", f"language={encoded_language}"])
+            except ValueError as exc:
+                errors.append(f"External subtitle {row.path}: {exc}")
+        if decision.title:
+            arguments.extend([f"-metadata:s:s:{output_index}", f"title={decision.title}"])
+        output_counts["subtitle"] += 1
+
+    if not output_counts["video"]:
+        errors.append("At least one video stream must be kept or encoded")
+    source_hdr = (media_file.primary_video_hdr_type or "").lower()
+    if plan.dynamic_range == "dolby_vision":
+        video_decisions = [item for item in plan.video_streams if item.action != TranscodeStreamAction.drop]
+        if not capabilities.dolby_vision_passthrough:
+            errors.append("This FFmpeg build has no verified Dolby Vision passthrough container")
+        if "dolby" not in source_hdr:
+            errors.append("Dolby Vision can only be preserved from a detected Dolby Vision source")
+        if (media_file.primary_video_codec or "").lower() not in {"hevc", "h265"}:
+            errors.append("Dolby Vision passthrough requires a detected HEVC video stream")
+        if plan.container not in {"mkv", "mp4"}:
+            errors.append("Dolby Vision passthrough is only offered for MKV or MP4")
+        if any(item.action not in {TranscodeStreamAction.keep, TranscodeStreamAction.copy} for item in video_decisions):
+            errors.append("MediaLyze does not synthesize Dolby Vision metadata; Dolby Vision requires video stream copy")
+    elif "dolby" in source_hdr and plan.dynamic_range == "preserve" and any(
+        item.action == TranscodeStreamAction.encode for item in plan.video_streams
+    ):
+        warnings.append("Encoding the video stream does not preserve Dolby Vision RPU metadata; choose SDR, HDR10, HLG, or stream copy")
+    elif "hdr10+" in source_hdr and plan.dynamic_range == "preserve" and any(
+        item.action == TranscodeStreamAction.encode for item in plan.video_streams
+    ):
+        warnings.append("Encoding may not preserve HDR10+ dynamic metadata; use video stream copy when exact preservation is required")
+    if plan.dynamic_range != "preserve" and any(
+        item.action in {TranscodeStreamAction.keep, TranscodeStreamAction.copy}
+        for item in plan.video_streams
+        if item.action != TranscodeStreamAction.drop
+    ):
+        errors.append("Dynamic-range conversion requires encoding every selected video stream")
+
+    if plan.attachments == "keep" and plan.container == "mkv":
+        arguments.extend(["-map", "0:t?", "-c:t", "copy"])
+    elif plan.attachments == "keep" and plan.container != "mkv":
+        warnings.append(f"Attachments are not copied to {plan.container}")
+    if plan.cover == "keep" and media_file.has_embedded_cover:
+        if media_file.embedded_cover_stream_index is None:
+            warnings.append("The embedded cover has no source stream index and cannot be copied")
+        elif plan.container not in {"mkv", "mp4"}:
+            warnings.append(f"Embedded covers are not copied to {plan.container}")
+        else:
+            cover_output_index = output_counts["video"]
+            arguments.extend(
+                [
+                    "-map",
+                    f"0:{media_file.embedded_cover_stream_index}",
+                    f"-c:v:{cover_output_index}",
+                    "copy",
+                    f"-disposition:v:{cover_output_index}",
+                    "attached_pic",
+                ]
+            )
+            added.append("embedded cover")
+    arguments.extend(["-map_metadata", "0" if plan.metadata == "keep" else "-1"])
+    arguments.extend(["-map_chapters", "0" if plan.chapters == "keep" else "-1"])
+    arguments.extend(["-progress", "pipe:1", "-stats_period", "0.5", "-f", CONTAINER_FORMATS[plan.container], str(output_path)])
+
+    # There is no executable command when codec-to-encoder resolution failed.
+    # Showing a partial command would let FFmpeg pick unintended defaults.
+    if encoder_errors:
+        arguments = []
+    hardware = [item.name for item in capabilities.encoders if item.hardware and item.available]
+    return TranscodeValidationRead(
+        valid=not errors,
+        output_path=str(output_path),
+        output_filename=output_filename,
+        normalized_plan=plan,
+        ffmpeg_arguments=arguments,
+        ffmpeg_command=_quote_command(arguments),
+        kept_streams=kept,
+        changed_streams=changed,
+        removed_streams=removed,
+        added_streams=added,
+        warnings=warnings,
+        errors=errors,
+        detected_hardware_encoders=hardware,
+        output_mode=output_mode,
+        execution_mode=execution_mode,
+        device_id=device_id,
+        hardware_backend=hardware_backend,
+        ffmpeg_version=capabilities.version,
+        cpu_thread_budget=int(transcode_capacity(settings, app_settings)["cpu_threads_per_job"]),
+        cpu_budget_percent=app_settings.transcoding.cpu_budget_percent,
+    )
+
+
+def _group_for_source(db: Session, media_file: MediaFile) -> TranscodeVariantGroup | None:
+    group = db.scalar(
+        select(TranscodeVariantGroup).where(TranscodeVariantGroup.original_file_id == media_file.id).limit(1)
+    )
+    if group is not None:
+        return group
+    return db.scalar(
+        select(TranscodeVariantGroup)
+        .join(TranscodeVariant, TranscodeVariant.group_id == TranscodeVariantGroup.id)
+        .where(TranscodeVariant.output_file_id == media_file.id)
+        .limit(1)
+    )
+
+
+def queue_transcode_job(
+    db: Session,
+    settings: Settings,
+    media_file: MediaFile,
+    plan: TranscodePlan,
+    *,
+    profile_id: int | None = None,
+    profile_version: int | None = None,
+    rule_id: int | None = None,
+    rule_version: int | None = None,
+    rule_snapshot: dict | None = None,
+    automation_run_id: int | None = None,
+    automation_trigger: str | None = None,
+    output_subfolder: str | None = None,
+) -> tuple[TranscodeJob, TranscodeValidationRead]:
+    validation = validate_transcode_plan(
+        db,
+        settings,
+        media_file,
+        plan,
+        output_subfolder=output_subfolder,
+    )
+    if not validation.valid:
+        raise TranscodeValidationError(validation)
+    plan = validation.normalized_plan
+    paths = _source_paths(media_file)
+    source_stat = paths.source.stat()
+    group = _group_for_source(db, media_file)
+    if group is None:
+        group = TranscodeVariantGroup(
+            library_id=media_file.library_id,
+            original_file_id=media_file.id,
+            original_library_root_id=media_file.library_root_id,
+            original_relative_path=media_file.relative_path,
+            original_filename=media_file.filename,
+        )
+        db.add(group)
+        db.flush()
+    output_path = Path(validation.output_path)
+    if validation.output_mode == "transcode_output":
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_name(
+        f".{output_path.stem}.medialyze-{uuid4().hex}{output_path.suffix}.part"
+    )
+    actual_validation = validate_transcode_plan(
+        db,
+        settings,
+        media_file,
+        plan,
+        output_path_override=temporary_path,
+        output_subfolder=output_subfolder,
+    )
+    if not actual_validation.valid:
+        raise TranscodeValidationError(actual_validation)
+    actual_arguments = list(actual_validation.ffmpeg_arguments)
+    app_settings = get_app_settings(db, settings)
+    # Every job gets a stable federation correlation id, even when it stays
+    # local.  This makes local and remote history rows comparable and gives a
+    # future retry/remote reassignment a collision-free identity.
+    try:
+        from backend.app.services.transcode_federation import get_federation_state
+
+        origin_installation_id = get_federation_state(db, settings)["installation_id"]
+    except Exception:
+        # A capability-only or legacy migration context may not have the
+        # federation setting yet.  The local job remains fully usable.
+        origin_installation_id = None
+    if validation.output_mode == "transcode_output":
+        output_storage_root = Path(
+            getattr(settings, "transcode_output_root", None)
+            or (Path(settings.config_path) / "Transcode_Output")
+        ).resolve()
+        output_relative_path = output_path.relative_to(output_storage_root).as_posix()
+    else:
+        output_storage_root = paths.root
+        output_relative_path = output_path.relative_to(paths.root).as_posix()
+    job = TranscodeJob(
+        group_id=group.id,
+        library_id=media_file.library_id,
+        source_file_id=media_file.id,
+        status=JobStatus.queued,
+        profile=plan.profile,
+        profile_id=profile_id,
+        profile_version=profile_version,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        rule_snapshot=rule_snapshot,
+        automation_run_id=automation_run_id,
+        automation_trigger=automation_trigger,
+        plan_version=plan.version,
+        plan=plan.model_dump(mode="json"),
+        ffmpeg_arguments=actual_arguments,
+        ffmpeg_command=_quote_command(actual_arguments),
+        warnings=validation.warnings,
+        source_path_snapshot=str(paths.source),
+        source_size_snapshot=source_stat.st_size,
+        source_mtime_snapshot=source_stat.st_mtime,
+        output_path_snapshot=validation.output_path,
+        output_relative_path=output_relative_path,
+        output_mode=validation.output_mode,
+        output_storage_root=str(output_storage_root),
+        retry_count=app_settings.transcoding.retry_count,
+        cpu_budget_percent=app_settings.transcoding.cpu_budget_percent,
+        cpu_thread_budget=validation.cpu_thread_budget,
+        device_id=validation.device_id,
+        hardware_backend=validation.hardware_backend,
+        ffmpeg_version=validation.ffmpeg_version,
+        remove_partial_output=app_settings.transcoding.remove_partial_output,
+        on_error=app_settings.transcoding.on_error,
+        temporary_path=str(temporary_path),
+        global_job_id=uuid4().hex,
+        origin_installation_id=origin_installation_id,
+        assignment_mode="local",
+        processing_phase="queued",
+        execution_attempt=0,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job, validation
+
+
+def _publish_without_overwrite(temporary_path: Path, output_path: Path) -> None:
+    if output_path.exists():
+        raise FileExistsError("The output file appeared while transcoding and was not overwritten")
+    try:
+        os.link(temporary_path, output_path)
+    except FileExistsError:
+        raise FileExistsError("The output file appeared while transcoding and was not overwritten") from None
+    except OSError:
+        if os.name != "nt":
+            raise RuntimeError("The target filesystem cannot atomically publish the transcoded file without overwrite") from None
+        os.rename(temporary_path, output_path)
+        return
+    temporary_path.unlink()
+
+
+def _remove_temporary_output(temporary_path: Path, output_path: Path) -> None:
+    expected_prefix = f".{output_path.stem}.medialyze-"
+    expected_suffix = f"{output_path.suffix}.part"
+    if (
+        temporary_path.parent.resolve() != output_path.parent.resolve()
+        or not temporary_path.name.startswith(expected_prefix)
+        or not temporary_path.name.endswith(expected_suffix)
+    ):
+        return
+    temporary_path.unlink(missing_ok=True)
+
+
+def _verify_job_paths(db: Session, job: TranscodeJob, source: Path, output: Path, temporary: Path) -> None:
+    group = db.get(TranscodeVariantGroup, job.group_id)
+    root = db.get(LibraryRoot, group.original_library_root_id) if group and group.original_library_root_id else None
+    if root is None:
+        raise ValueError("The original library root no longer exists")
+    resolved_root = Path(root.path).resolve()
+    output_root = Path(job.output_storage_root or resolved_root).resolve()
+    try:
+        source.resolve().relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("The source path escapes the original library root") from exc
+    for label, candidate in (("output", output), ("temporary output", temporary)):
+        try:
+            candidate.resolve().relative_to(output_root)
+        except ValueError as exc:
+            raise ValueError(f"The {label} path escapes the configured output root") from exc
+    if job.output_mode != "replace_original" and source.resolve() == output.resolve():
+        raise ValueError("Source and output paths must be different")
+    if source.resolve() == temporary.resolve():
+        raise ValueError("Source and temporary output paths must be different")
+
+
+def _update_progress(
+    job: TranscodeJob,
+    report: dict[str, str],
+    duration: float,
+    *,
+    frame_rate: float = 0.0,
+    elapsed: float = 0.0,
+) -> None:
+    def number(value: str | None) -> float | None:
+        try:
+            parsed = float(value or "")
+        except ValueError:
+            return None
+        return parsed if isfinite(parsed) and parsed >= 0 else None
+
+    raw_time = number(report.get("out_time_us"))
+    if raw_time is None:
+        raw_time = number(report.get("out_time_ms"))
+    seconds = raw_time / 1_000_000 if raw_time is not None else None
+    # Some multi-stream outputs report N/A timestamps throughout the encode,
+    # even though FFmpeg continues reporting the first video output's frames.
+    frames = number(report.get("frame"))
+    if seconds is None and frames is not None and frame_rate > 0:
+        seconds = frames / frame_rate
+    if seconds is not None:
+        job.processed_seconds = max(job.processed_seconds, seconds)
+        if duration > 0:
+            job.progress_percent = min(99.9, job.processed_seconds / duration * 100)
+
+    multiplier = number((report.get("speed") or "").strip().removesuffix("x"))
+    if not multiplier and job.processed_seconds > 0 and elapsed > 0:
+        multiplier = job.processed_seconds / elapsed
+    job.speed = f"{multiplier:.2f}x" if multiplier else None
+    remaining = max(0.0, duration - job.processed_seconds)
+    job.eta_seconds = remaining / multiplier if multiplier and duration > 0 else None
+
+
+def execute_transcode_job(
+    job_id: int,
+    *,
+    is_cancel_requested: Callable[[int], bool],
+) -> int:
+    db = SessionLocal()
+    process: subprocess.Popen[str] | None = None
+    temporary_path: Path | None = None
+    try:
+        job = db.get(TranscodeJob, job_id)
+        if job is None:
+            raise ValueError("Transcoding job not found")
+        if job.status != JobStatus.queued:
+            return job.library_id
+        job.status = JobStatus.running
+        job.started_at = utc_now()
+        job.attempt = (job.attempt or 0) + 1
+        job.execution_attempt = (job.execution_attempt or 0) + 1
+        job.processing_phase = "preparing_transcode"
+        job.phase_detail = "Preparing the local FFmpeg workspace"
+        job.error = None
+        db.commit()
+        source_path = Path(job.source_path_snapshot)
+        output_path = Path(job.output_path_snapshot)
+        temporary_path = Path(job.temporary_path or "")
+        if not temporary_path.name:
+            raise ValueError("Transcoding job has no temporary output path")
+        _verify_job_paths(db, job, source_path, output_path, temporary_path)
+        current_stat = source_path.stat()
+        if current_stat.st_size != job.source_size_snapshot or current_stat.st_mtime != job.source_mtime_snapshot:
+            raise ValueError("The source file changed before transcoding started")
+        if output_path.exists() and job.output_mode != "replace_original":
+            raise FileExistsError("The output file already exists and was not overwritten")
+        _remove_temporary_output(temporary_path, output_path)
+        duration = 0.0
+        source = db.get(MediaFile, job.source_file_id) if job.source_file_id else None
+        if source is not None:
+            duration = float(source.duration_seconds or 0.0)
+        frame_rate = 0.0
+        if source is not None:
+            video = next((item for item in (job.plan or {}).get("video_streams", []) if item.get("action") != "drop"), None)
+            if video is not None:
+                stream = next((item for item in source.video_streams if item.stream_index == video.get("stream_index")), None)
+                frame_rate = float(video.get("frame_rate") or (stream.frame_rate if stream else 0) or 0)
+        encode_started = monotonic()
+        report: dict[str, str] = {}
+        process = subprocess.Popen(
+            list(job.ffmpeg_arguments),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+            **get_hidden_subprocess_kwargs(),
+        )
+        job.processing_phase = "transcoding"
+        job.phase_detail = "FFmpeg is processing the source file"
+        db.commit()
+        last_commit = utc_now()
+        if process.stdout is not None:
+            for raw_line in process.stdout:
+                if is_cancel_requested(job_id):
+                    process.terminate()
+                    raise TranscodeCancelled("Transcoding was canceled")
+                line = raw_line.strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                report[key] = value
+                if key == "progress":
+                    _update_progress(job, report, duration, frame_rate=frame_rate, elapsed=monotonic() - encode_started)
+                    report.clear()
+                now = utc_now()
+                if (now - last_commit).total_seconds() >= 0.5 or key == "progress":
+                    db.commit()
+                    last_commit = now
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        return_code = process.wait()
+        if is_cancel_requested(job_id):
+            raise TranscodeCancelled("Transcoding was canceled")
+        if return_code != 0:
+            raise RuntimeError((stderr or f"FFmpeg exited with code {return_code}").strip()[-32000:])
+        current_stat = source_path.stat()
+        if current_stat.st_size != job.source_size_snapshot or current_stat.st_mtime != job.source_mtime_snapshot:
+            raise ValueError("The source file changed while transcoding; the temporary result was discarded")
+        if not temporary_path.exists() or temporary_path.stat().st_size <= 0:
+            raise RuntimeError("FFmpeg completed without producing a valid output file")
+        job.processing_phase = "validating_result"
+        job.phase_detail = "Validating the temporary result"
+        db.commit()
+        if job.output_mode == "replace_original":
+            job.processing_phase = "publishing"
+            job.phase_detail = "Publishing the replacement result"
+            os.replace(temporary_path, output_path)
+        else:
+            job.processing_phase = "publishing"
+            job.phase_detail = "Publishing the transcoded variant"
+            _publish_without_overwrite(temporary_path, output_path)
+        variant = TranscodeVariant(
+            group_id=job.group_id,
+            job_id=job.id,
+            original_file_id=job.source_file_id,
+            library_root_id=source.library_root_id if source else None,
+            output_relative_path=job.output_relative_path,
+            output_filename=output_path.name,
+            source_path_snapshot=job.source_path_snapshot,
+            output_path_snapshot=job.output_path_snapshot,
+            output_mode=job.output_mode,
+            analysis_status="awaiting_analysis",
+            output_file_id=source.id if job.output_mode == "replace_original" and source is not None else None,
+        )
+        if source is not None and job.output_mode == "replace_original":
+            source.is_transcode_variant = False
+            job.result_file_id = source.id
+        db.add(variant)
+        job.status = JobStatus.completed
+        job.processing_phase = "completed"
+        job.phase_detail = None
+        job.progress_percent = 100.0
+        job.processed_seconds = duration or job.processed_seconds
+        job.eta_seconds = 0.0
+        job.finished_at = utc_now()
+        db.commit()
+        return job.library_id
+    except TranscodeCancelled as exc:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        job = db.get(TranscodeJob, job_id)
+        if job is not None:
+            job.status = JobStatus.canceled
+            job.processing_phase = "canceled"
+            job.phase_detail = None
+            job.error = str(exc)
+            job.finished_at = utc_now()
+            db.commit()
+        return job.library_id if job is not None else 0
+    except Exception as exc:
+        if process is not None and process.poll() is None:
+            process.kill()
+        job = db.get(TranscodeJob, job_id)
+        if job is not None:
+            job.status = JobStatus.failed
+            job.processing_phase = "failed"
+            job.phase_detail = None
+            job.error = (str(exc) or exc.__class__.__name__)[-32000:]
+            job.finished_at = utc_now()
+            db.commit()
+            return job.library_id
+        raise
+    finally:
+        job_for_cleanup = db.get(TranscodeJob, job_id)
+        if (
+            temporary_path is not None
+            and "output_path" in locals()
+            and (job_for_cleanup is None or job_for_cleanup.remove_partial_output)
+        ):
+            _remove_temporary_output(temporary_path, output_path)
+        db.close()
+
+
+def delete_transcode_job(db: Session, job_id: int) -> None:
+    """Remove terminal run history while retaining media and linked variants."""
+    job = db.get(TranscodeJob, job_id)
+    if job is None:
+        raise LookupError("Transcoding job not found")
+    if job.status not in {JobStatus.completed, JobStatus.failed, JobStatus.canceled}:
+        raise ValueError("Active transcoding jobs cannot be deleted")
+    db.execute(update(TranscodeVariant).where(TranscodeVariant.job_id == job_id).values(job_id=None))
+    db.execute(delete(TranscodeJob).where(TranscodeJob.id == job_id))
+    db.commit()
+
+
+def cancel_transcode_job(db: Session, job_id: int) -> TranscodeJob:
+    job = db.get(TranscodeJob, job_id)
+    if job is None:
+        raise ValueError("Transcoding job not found")
+    if job.status == JobStatus.queued:
+        job.status = JobStatus.canceled
+        job.processing_phase = "canceled"
+        job.finished_at = utc_now()
+        if job.temporary_path and job.remove_partial_output:
+            _remove_temporary_output(Path(job.temporary_path), Path(job.output_path_snapshot))
+        db.commit()
+        db.refresh(job)
+    return job
+
+
+def recover_orphaned_transcode_jobs(db: Session) -> int:
+    jobs = db.scalars(
+        select(TranscodeJob).where(TranscodeJob.status.in_([JobStatus.queued, JobStatus.running]))
+    ).all()
+    finished = utc_now()
+    for job in jobs:
+        job.status = JobStatus.canceled
+        job.processing_phase = "canceled"
+        job.error = "Canceled during startup recovery"
+        job.finished_at = finished
+        if job.temporary_path and job.remove_partial_output:
+            _remove_temporary_output(Path(job.temporary_path), Path(job.output_path_snapshot))
+    if jobs:
+        db.commit()
+    # Process restarts can bypass the worker's finally block. Terminal jobs
+    # must stop holding resource slots even when their lease is still valid.
+    from backend.app.services.transcode_federation import expire_resource_reservations
+
+    expire_resource_reservations(db)
+    return len(jobs)
+
+
+def reconcile_transcode_variants(db: Session, library_id: int) -> int:
+    variants = db.scalars(
+        select(TranscodeVariant)
+        .join(TranscodeVariantGroup, TranscodeVariant.group_id == TranscodeVariantGroup.id)
+        .where(TranscodeVariantGroup.library_id == library_id)
+    ).all()
+    reconciled = 0
+    dirty = False
+    for variant in variants:
+        variant_changed = False
+        if variant.output_mode == "transcode_output":
+            if variant.analysis_status != "external":
+                variant.analysis_status = "external"
+                variant_changed = True
+                dirty = True
+                reconciled += 1
+            continue
+        media_file = db.get(MediaFile, variant.output_file_id) if variant.output_file_id else None
+        if media_file is None:
+            media_file = db.scalar(
+                select(MediaFile).where(
+                    MediaFile.library_id == library_id,
+                    MediaFile.library_root_id == variant.library_root_id,
+                    MediaFile.relative_path == variant.output_relative_path,
+                ).limit(1)
+            )
+        if media_file is None:
+            if variant.analysis_status != "awaiting_analysis":
+                variant.analysis_status = "awaiting_analysis"
+                variant_changed = True
+                dirty = True
+                reconciled += 1
+            continue
+        next_status = "ready" if media_file.scan_status.value == "ready" else media_file.scan_status.value
+        desired_variant_flag = variant.output_mode == "same_directory"
+        if media_file.is_transcode_variant != desired_variant_flag:
+            media_file.is_transcode_variant = desired_variant_flag
+            variant_changed = True
+            dirty = True
+        if variant.output_file_id != media_file.id or variant.analysis_status != next_status:
+            variant.output_file_id = media_file.id
+            variant.analysis_status = next_status
+            variant_changed = True
+            dirty = True
+        job = db.get(TranscodeJob, variant.job_id) if variant.job_id else None
+        if job is not None and job.result_file_id != media_file.id:
+            job.result_file_id = media_file.id
+            variant_changed = True
+            dirty = True
+        if variant_changed:
+            reconciled += 1
+    if dirty:
+        db.commit()
+    return reconciled
+
+
+def _file_summary(media_file: MediaFile) -> TranscodeFileSummary:
+    library_type = getattr(getattr(media_file.library, "type", None), "value", None)
+    return TranscodeFileSummary(
+        id=media_file.id,
+        filename=media_file.filename,
+        relative_path=media_file.relative_path,
+        library_type=str(library_type or getattr(media_file.library, "type", "")) or None,
+        size_bytes=media_file.size_bytes,
+        duration_seconds=media_file.duration_seconds,
+        width=media_file.primary_video_width,
+        height=media_file.primary_video_height,
+        dynamic_range=media_file.primary_video_hdr_type,
+        video_codec=media_file.primary_video_codec,
+        audio_codecs=sorted({item.codec for item in media_file.audio_streams if item.codec}),
+        audio_languages=sorted({item.language for item in media_file.audio_streams if item.language}),
+    )
+
+
+def _attachment_summaries(media_file: MediaFile) -> list[TranscodeAttachmentSummary]:
+    payload = media_file.raw_ffprobe_json if isinstance(media_file.raw_ffprobe_json, dict) else {}
+    streams = payload.get("streams") if isinstance(payload, dict) else None
+    if not isinstance(streams, list):
+        return []
+    attachments: list[TranscodeAttachmentSummary] = []
+    for stream in streams:
+        if not isinstance(stream, dict) or stream.get("codec_type") != "attachment":
+            continue
+        tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
+        normalized_tags = {str(key).lower(): str(value) for key, value in tags.items()}
+        try:
+            stream_index = int(stream.get("index"))
+        except (TypeError, ValueError):
+            continue
+        attachments.append(
+            TranscodeAttachmentSummary(
+                stream_index=stream_index,
+                codec=str(stream.get("codec_name")) if stream.get("codec_name") else None,
+                filename=normalized_tags.get("filename"),
+                mimetype=normalized_tags.get("mimetype"),
+                title=normalized_tags.get("title"),
+            )
+        )
+    return attachments
+
+
+def serialize_transcode_job(job: TranscodeJob, source_file: MediaFile | None = None) -> TranscodeJobRead:
+    payload = TranscodeJobRead.model_validate(job)
+    payload.status = job.status.value if hasattr(job.status, "value") else str(job.status)
+    if source_file is not None:
+        payload.source_video_codec = source_file.primary_video_codec
+        payload.source_dynamic_range = source_file.primary_video_hdr_type
+    return payload
+
+
+def _source_files_for_jobs(db: Session, jobs: list[TranscodeJob]) -> dict[int, MediaFile]:
+    source_ids = {job.source_file_id for job in jobs if job.source_file_id is not None}
+    if not source_ids:
+        return {}
+    return {
+        media_file.id: media_file
+        for media_file in db.scalars(select(MediaFile).where(MediaFile.id.in_(source_ids))).all()
+    }
+
+
+def _serialize_transcode_jobs(db: Session, jobs: list[TranscodeJob]) -> list[TranscodeJobRead]:
+    source_files = _source_files_for_jobs(db, jobs)
+    member_ids = {job.target_member_id for job in jobs if job.target_member_id}
+    member_names = {
+        member.installation_id: member.display_name
+        for member in db.scalars(
+            select(TranscodeFederationMember).where(
+                TranscodeFederationMember.installation_id.in_(member_ids or {""})
+            )
+        ).all()
+    }
+    payloads: list[TranscodeJobRead] = []
+    for job in jobs:
+        payload = serialize_transcode_job(job, source_files.get(job.source_file_id))
+        if job.target_member_id:
+            payload.target_member_name = member_names.get(job.target_member_id)
+        payloads.append(payload)
+    return payloads
+
+
+def _serialize_variant(db: Session, variant: TranscodeVariant) -> TranscodeVariantRead:
+    payload = TranscodeVariantRead.model_validate(variant)
+    if variant.output_file_id:
+        media_file = db.get(MediaFile, variant.output_file_id)
+        if media_file is not None:
+            payload.file = _file_summary(media_file)
+    return payload
+
+
+def get_file_transcode(db: Session, settings: Settings, media_file: MediaFile) -> FileTranscodeRead:
+    capabilities = get_transcode_capabilities(settings)
+    app_settings = get_app_settings(db, settings)
+    from backend.app.services.transcode_automation import materialize_saved_preset_plan
+
+    saved_presets = []
+    for preset in db.scalars(
+        select(TranscodePreset)
+        .where(TranscodePreset.is_builtin.is_(False))
+        .order_by(
+            TranscodePreset.is_builtin.desc(), TranscodePreset.name.collate("NOCASE"), TranscodePreset.id
+        )
+    ).all():
+        try:
+            saved_presets.append(
+                materialize_saved_preset_plan(preset, media_file, capabilities, app_settings)
+            )
+        except ValueError:
+            # A malformed legacy custom preset should not make the file
+            # detail page unusable.  The management endpoint reports it for
+            # correction; the transient plans remain available here.
+            continue
+    groups = list(
+        db.scalars(
+            select(TranscodeVariantGroup).where(
+                or_(
+                    TranscodeVariantGroup.original_file_id == media_file.id,
+                    TranscodeVariantGroup.id.in_(
+                        select(TranscodeVariant.group_id).where(TranscodeVariant.output_file_id == media_file.id)
+                    ),
+                )
+            )
+        )
+    )
+    group_ids = [item.id for item in groups]
+    variants = list(
+        db.scalars(
+            select(TranscodeVariant)
+            .where(TranscodeVariant.group_id.in_(group_ids or [-1]))
+            .order_by(TranscodeVariant.created_at.desc())
+        )
+    )
+    jobs = list(
+        db.scalars(
+            select(TranscodeJob)
+            .where(TranscodeJob.group_id.in_(group_ids or [-1]))
+            .order_by(TranscodeJob.created_at.desc())
+        )
+    )
+    original = media_file
+    if groups and groups[0].original_file_id:
+        original = db.get(MediaFile, groups[0].original_file_id) or media_file
+    initial_presets = initial_transcode_presets(
+        media_file,
+        capabilities,
+        output_mode=app_settings.transcoding.default_output_mode,
+        execution_mode=app_settings.transcoding.execution_mode,
+    )
+    initial_presets = {"compatibility": initial_presets["compatibility"]}
+    return FileTranscodeRead(
+        original=_file_summary(original),
+        presets=initial_presets,
+        profiles=initial_presets,
+        saved_presets=saved_presets,
+        saved_profiles=saved_presets,
+        attachments=_attachment_summaries(media_file),
+        variants=[_serialize_variant(db, item) for item in variants],
+        jobs=_serialize_transcode_jobs(db, jobs),
+    )
+
+
+def list_transcode_jobs(
+    db: Session,
+    *,
+    active_only: bool = False,
+    library_id: int | None = None,
+    status: JobStatus | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> TranscodeJobPageRead:
+    filters = []
+    if active_only:
+        filters.append(TranscodeJob.status.in_([JobStatus.queued, JobStatus.running]))
+    if library_id is not None:
+        filters.append(TranscodeJob.library_id == library_id)
+    if status is not None:
+        filters.append(TranscodeJob.status == status)
+    effective_start = func.coalesce(TranscodeJob.started_at, TranscodeJob.created_at)
+    if started_after is not None:
+        filters.append(effective_start >= started_after)
+    if started_before is not None:
+        filters.append(effective_start <= started_before)
+    total = int(db.scalar(select(func.count(TranscodeJob.id)).where(*filters)) or 0)
+    jobs = db.scalars(
+        select(TranscodeJob)
+        .where(*filters)
+        .order_by(TranscodeJob.created_at.desc(), TranscodeJob.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return TranscodeJobPageRead(items=_serialize_transcode_jobs(db, jobs), total=total)
+
+
+# Legacy service alias retained for integrations using the former name.
+initial_transcode_profiles = initial_transcode_presets

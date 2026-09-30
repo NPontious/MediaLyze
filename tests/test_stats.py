@@ -20,7 +20,9 @@ from backend.app.models.entities import (
     SubtitleStream,
     VideoStream,
 )
+import pytest
 from backend.app.services.stats import build_dashboard
+from backend.app.services.stats_cache import stats_cache
 
 
 def test_dashboard_requested_panels_skip_unrelated_queries_and_keep_full_cache_independent() -> None:

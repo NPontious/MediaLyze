@@ -12,6 +12,9 @@ PARALLEL_SCAN_JOB_COUNT_MAX = 8
 COMPARISON_SCATTER_POINT_LIMIT_MIN = 1
 COMPARISON_SCATTER_POINT_LIMIT_MAX = 500000
 DEFAULT_COMPARISON_SCATTER_POINT_LIMIT = 5000
+DUPLICATE_DURATION_TOLERANCE_MIN = 0
+DUPLICATE_DURATION_TOLERANCE_MAX = 300
+DEFAULT_DUPLICATE_DURATION_TOLERANCE_SECONDS = 10
 
 
 class ResolutionCategory(BaseModel):
@@ -63,6 +66,30 @@ class ScanPerformanceUpdate(BaseModel):
     )
 
 
+class TranscodingSettingsRead(BaseModel):
+    execution_mode: Literal["hardware_required", "cpu_only"] = "hardware_required"
+    cpu_budget_percent: int = Field(default=90, ge=1, le=100)
+    cpu_parallel_jobs: Literal["auto"] | int = Field(default="auto")
+    gpu_parallel_jobs_per_device: int = Field(default=1, ge=1, le=8)
+    default_output_mode: Literal["transcode_output", "same_directory", "replace_original"] = "transcode_output"
+    on_error: Literal["continue", "stop_queue"] = "continue"
+    retry_count: int = Field(default=0, ge=0, le=5)
+    existing_output: Literal["fail", "skip"] = "fail"
+    remove_partial_output: bool = True
+
+
+class TranscodingSettingsUpdate(BaseModel):
+    execution_mode: Literal["hardware_required", "cpu_only"] | None = None
+    cpu_budget_percent: int | None = Field(default=None, ge=1, le=100)
+    cpu_parallel_jobs: Literal["auto"] | int | None = Field(default=None, ge=1, le=64)
+    gpu_parallel_jobs_per_device: int | None = Field(default=None, ge=1, le=8)
+    default_output_mode: Literal["transcode_output", "same_directory", "replace_original"] | None = None
+    on_error: Literal["continue", "stop_queue"] | None = None
+    retry_count: int | None = Field(default=None, ge=0, le=5)
+    existing_output: Literal["fail", "skip"] | None = None
+    remove_partial_output: bool | None = None
+
+
 InterfaceLanguage = Literal["en", "de", "es", "uk"]
 
 
@@ -91,12 +118,14 @@ class HistoryRetentionRead(BaseModel):
     file_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=30))
     library_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=365))
     scan_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=30))
+    transcode_history: HistoryRetentionBucketRead = Field(default_factory=lambda: HistoryRetentionBucketRead(days=90))
 
 
 class HistoryRetentionUpdate(BaseModel):
     file_history: HistoryRetentionBucketUpdate | None = None
     library_history: HistoryRetentionBucketUpdate | None = None
     scan_history: HistoryRetentionBucketUpdate | None = None
+    transcode_history: HistoryRetentionBucketUpdate | None = None
 
 
 class ShowSeasonRecognitionMode(str, Enum):
@@ -122,6 +151,27 @@ class ShowSeasonPatternSettingsUpdate(BaseModel):
     episode_file_regexes: list[str] | None = None
 
 
+class DuplicateMatchingSettings(BaseModel):
+    duration_tolerance_seconds: int = Field(
+        default=DEFAULT_DUPLICATE_DURATION_TOLERANCE_SECONDS,
+        ge=DUPLICATE_DURATION_TOLERANCE_MIN,
+        le=DUPLICATE_DURATION_TOLERANCE_MAX,
+    )
+    user_filename_suffix_regexes: list[str] = Field(default_factory=list)
+    default_filename_suffix_regexes: list[str] = Field(default_factory=list)
+    effective_filename_suffix_regexes: list[str] = Field(default_factory=list)
+
+
+class DuplicateMatchingSettingsUpdate(BaseModel):
+    duration_tolerance_seconds: int | None = Field(
+        default=None,
+        ge=DUPLICATE_DURATION_TOLERANCE_MIN,
+        le=DUPLICATE_DURATION_TOLERANCE_MAX,
+    )
+    user_filename_suffix_regexes: list[str] | None = None
+    default_filename_suffix_regexes: list[str] | None = None
+
+
 class BonusContentPatternSettings(BaseModel):
     user_folder_patterns: list[str] = Field(default_factory=list)
     default_folder_patterns: list[str] = Field(default_factory=list)
@@ -140,12 +190,14 @@ class BonusContentPatternSettingsUpdate(BaseModel):
 
 class PatternRecognitionSettings(BaseModel):
     analyze_bonus_content: bool = True
+    duplicate_matching: DuplicateMatchingSettings = Field(default_factory=DuplicateMatchingSettings)
     show_season_patterns: ShowSeasonPatternSettings = Field(default_factory=ShowSeasonPatternSettings)
     bonus_content: BonusContentPatternSettings = Field(default_factory=BonusContentPatternSettings)
 
 
 class PatternRecognitionSettingsUpdate(BaseModel):
     analyze_bonus_content: bool | None = None
+    duplicate_matching: DuplicateMatchingSettingsUpdate | None = None
     show_season_patterns: ShowSeasonPatternSettingsUpdate | None = None
     bonus_content: BonusContentPatternSettingsUpdate | None = None
 
@@ -158,6 +210,7 @@ class AppSettingsRead(BaseModel):
     resolution_categories: list[ResolutionCategory] = Field(default_factory=list)
     feature_flags: FeatureFlagsRead = Field(default_factory=FeatureFlagsRead)
     scan_performance: ScanPerformanceRead = Field(default_factory=ScanPerformanceRead)
+    transcoding: TranscodingSettingsRead = Field(default_factory=TranscodingSettingsRead)
     ui_preferences: UiPreferencesRead = Field(default_factory=UiPreferencesRead)
     history_retention: HistoryRetentionRead = Field(default_factory=HistoryRetentionRead)
 
@@ -170,5 +223,6 @@ class AppSettingsUpdate(BaseModel):
     resolution_categories: list[ResolutionCategory] | None = None
     feature_flags: FeatureFlagsUpdate | None = None
     scan_performance: ScanPerformanceUpdate | None = None
+    transcoding: TranscodingSettingsUpdate | None = None
     ui_preferences: UiPreferencesUpdate | None = None
     history_retention: HistoryRetentionUpdate | None = None

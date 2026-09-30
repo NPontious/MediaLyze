@@ -124,6 +124,42 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE transcode_federation_members (
+                    id INTEGER PRIMARY KEY,
+                    installation_id VARCHAR(128) NOT NULL,
+                    federation_id VARCHAR(128) NOT NULL,
+                    display_name VARCHAR(255) NOT NULL,
+                    endpoint_urls JSON NOT NULL,
+                    protocol_version INTEGER NOT NULL,
+                    status VARCHAR(24) NOT NULL,
+                    connection_status VARCHAR(24) NOT NULL,
+                    reachable BOOLEAN NOT NULL,
+                    accept_jobs BOOLEAN NOT NULL,
+                    resources JSON NOT NULL,
+                    capabilities JSON NOT NULL,
+                    capability_matrix JSON NOT NULL,
+                    active_jobs INTEGER NOT NULL,
+                    network_mbps FLOAT NOT NULL,
+                    shared_secret VARCHAR(128),
+                    last_seen_at DATETIME,
+                    last_sync_at DATETIME,
+                    last_error VARCHAR(2048)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE transcode_jobs (
+                    id INTEGER PRIMARY KEY
+                )
+                """
+            )
+        )
 
     init_db(engine)
 
@@ -136,13 +172,25 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
     scan_job_columns = {column["name"] for column in inspector.get_columns("scan_jobs")}
     media_file_history_columns = {column["name"] for column in inspector.get_columns("media_file_history")}
     library_history_columns = {column["name"] for column in inspector.get_columns("library_history")}
+    federation_member_columns = {
+        column["name"] for column in inspector.get_columns("transcode_federation_members")
+    }
     jellyfin_sync_job_columns = {
         column["name"] for column in inspector.get_columns("jellyfin_sync_jobs")
     }
+    transcode_job_columns = {column["name"] for column in inspector.get_columns("transcode_jobs")}
 
     assert "app_settings" in inspector.get_table_names()
     assert "media_file_history" in inspector.get_table_names()
     assert "library_history" in inspector.get_table_names()
+    assert {
+        "application_version",
+        "preferred_endpoint_url",
+        "favorite_endpoint_url",
+        "endpoint_metrics",
+        "network_latency_ms",
+        "network_probe_at",
+    }.issubset(federation_member_columns)
     assert {"last_scan_at", "scan_mode", "duplicate_detection_mode", "scan_config"}.issubset(library_columns)
     assert {
         "last_seen_at",
@@ -151,6 +199,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
         "quality_score",
         "raw_ffprobe_json",
         "filename_signature",
+        "filename_pattern_signature",
         "content_hash",
         "content_hash_algorithm",
         "max_audio_bit_depth",
@@ -182,6 +231,21 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
         "progress_current",
         "progress_total",
     }.issubset(jellyfin_sync_job_columns)
+    assert {
+        "profile_id",
+        "output_mode",
+        "global_job_id",
+        "origin_installation_id",
+        "target_installation_id",
+        "target_member_id",
+        "assignment_mode",
+        "processing_phase",
+        "remote_attempt_id",
+        "source_transfer_id",
+        "result_transfer_id",
+        "transfer_speed_bytes_per_second",
+        "transfer_eta_seconds",
+    }.issubset(transcode_job_columns)
     assert {
         "jellyfin_sync_stage_libraries",
         "jellyfin_sync_stage_users",
@@ -312,6 +376,7 @@ def test_init_db_adds_missing_indexes_for_existing_sqlite_schema() -> None:
     assert "ix_media_files_library_last_analyzed_at" in index_names
     assert "ix_media_files_library_quality_score" in index_names
     assert "ix_media_files_library_filename_signature" in index_names
+    assert "ix_media_files_library_filename_pattern_signature" in index_names
     assert "ix_media_files_library_content_hash" in index_names
     assert "ix_video_streams_bit_depth" in video_stream_index_names
     assert "ix_subtitle_streams_codec" in subtitle_index_names

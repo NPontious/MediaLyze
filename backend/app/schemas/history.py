@@ -39,6 +39,7 @@ class HistoryStorageCategoriesRead(BaseModel):
     file_history: HistoryStorageCategoryRead = Field(default_factory=HistoryStorageCategoryRead)
     library_history: HistoryStorageCategoryRead = Field(default_factory=HistoryStorageCategoryRead)
     scan_history: HistoryStorageCategoryRead = Field(default_factory=HistoryStorageCategoryRead)
+    transcode_history: HistoryStorageCategoryRead = Field(default_factory=HistoryStorageCategoryRead)
 
 
 class HistoryStorageRead(BaseModel):

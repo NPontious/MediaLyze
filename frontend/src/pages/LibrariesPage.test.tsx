@@ -10,6 +10,7 @@ import {
   DEFAULT_QUALITY_PROFILE,
   type AppSettings,
   type BrowseResponse,
+  type ConnectorConnection,
   type HistoryReconstructionStatus,
   type DashboardResponse,
   type HistoryReconstructionResult,
@@ -36,6 +37,7 @@ type AppSettingsOverrides = Omit<
     file_history?: Partial<NonNullable<AppSettings["history_retention"]>["file_history"]>;
     library_history?: Partial<NonNullable<AppSettings["history_retention"]>["library_history"]>;
     scan_history?: Partial<NonNullable<AppSettings["history_retention"]>["scan_history"]>;
+    transcode_history?: Partial<NonNullable<AppSettings["history_retention"]>["transcode_history"]>;
   };
   feature_flags?: Partial<AppSettings["feature_flags"]>;
   ui_preferences?: Partial<NonNullable<AppSettings["ui_preferences"]>>;
@@ -55,6 +57,12 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
     default_ignore_patterns: ["*/@eaDir/*"],
     pattern_recognition: {
       analyze_bonus_content: true,
+      duplicate_matching: {
+        duration_tolerance_seconds: 10,
+        user_filename_suffix_regexes: [],
+        default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+        effective_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+      },
       show_season_patterns: {
         recognition_mode: "folder_depth",
         series_folder_depth: 1,
@@ -83,11 +91,13 @@ function createAppSettings(overrides: AppSettingsOverrides = {}): AppSettings {
       file_history: { days: 30, storage_limit_gb: 0, ...overrideHistoryRetention.file_history },
       library_history: { days: 365, storage_limit_gb: 0, ...overrideHistoryRetention.library_history },
       scan_history: { days: 30, storage_limit_gb: 0, ...overrideHistoryRetention.scan_history },
+      transcode_history: { days: 90, storage_limit_gb: 0, ...overrideHistoryRetention.transcode_history },
     },
     ui_preferences: {
       interface_language: "en",
       color_theme: "system",
       ...overrideUiPreferences,
+    },
     feature_flags: {
       hide_automatic_update_reminders: false,
       show_analyzed_files_csv_export: false,
@@ -141,6 +151,17 @@ function createHistoryStorage(overrides: Partial<HistoryStorage> = {}): HistoryS
         storage_limit_bytes: 0,
         oldest_recorded_at: "2026-02-15T10:03:00Z",
         newest_recorded_at: "2026-03-16T10:03:00Z",
+      },
+      transcode_history: {
+        entry_count: 0,
+        current_estimated_bytes: 0,
+        average_daily_bytes: 0,
+        projected_bytes_30d: 0,
+        projected_bytes_for_configured_days: 0,
+        days_limit: 90,
+        storage_limit_bytes: 0,
+        oldest_recorded_at: null,
+        newest_recorded_at: null,
       },
     },
     ...overrides,
@@ -221,6 +242,32 @@ function createLibrarySummary(overrides: Partial<LibrarySummary> = {}): LibraryS
     total_duration_seconds: 0,
     ready_files: 0,
     pending_files: 0,
+    ...overrides,
+  };
+}
+
+function createConnectorConnection(overrides: Partial<ConnectorConnection> = {}): ConnectorConnection {
+  return {
+    id: 1,
+    provider: "jellyfin",
+    name: "Jellyfin",
+    base_url: "http://jellyfin:8096",
+    config: {},
+    capabilities: {},
+    enabled: true,
+    sync_interval_minutes: 60,
+    path_mapping_mode: "automatic",
+    library_mapping_mode: "automatic",
+    server_name: "Jellyfin",
+    server_version: "10.10",
+    last_status: "success",
+    last_error: null,
+    last_sync_started_at: null,
+    last_sync_finished_at: null,
+    last_successful_sync_at: null,
+    has_secret: true,
+    created_at: "2026-03-15T12:00:00Z",
+    updated_at: "2026-03-15T12:00:00Z",
     ...overrides,
   };
 }
@@ -447,6 +494,7 @@ async function expandLibrarySettings() {
 
 beforeEach(() => {
   vi.spyOn(api, "libraries").mockResolvedValue([]);
+  vi.spyOn(api, "connectors").mockResolvedValue([]);
   vi.spyOn(api, "jellyfinLibraries").mockResolvedValue([]);
   vi.spyOn(api, "jellyfinPathMappings").mockResolvedValue([]);
   vi.spyOn(api, "updateJellyfinPathMappingsBatch").mockResolvedValue([]);
@@ -509,19 +557,95 @@ describe("LibrariesPage settings navigation", () => {
     expect(desktopNavigationQueries.getByText("Maintenance & Diagnostics")).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), {
-      target: { value: "telemetry" },
+      target: { value: "transcoding" },
     });
 
-    expect(desktopNavigationQueries.getByRole("button", { name: "Telemetry" })).toBeInTheDocument();
-    expect(desktopNavigationQueries.queryByRole("button", { name: "Quality profiles" })).not.toBeInTheDocument();
+    expect(desktopNavigationQueries.getByRole("button", { name: "Transcoding" })).toBeInTheDocument();
+    expect(desktopNavigationQueries.getByRole("button", { name: "Quality profiles" })).toBeInTheDocument();
 
-    fireEvent.click(desktopNavigationQueries.getByRole("button", { name: "Telemetry" }));
+    fireEvent.click(desktopNavigationQueries.getByRole("button", { name: "Transcoding" }));
     expect(screen.getByRole("searchbox", { name: "Search settings" })).toHaveValue("");
     expect(desktopNavigationQueries.getByRole("button", { name: "Quality profiles" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), {
+      target: { value: "zzzz" },
+    });
+    expect(screen.getAllByText("No settings match this search.")).not.toHaveLength(0);
+    expect(desktopNavigationQueries.getByRole("button", { name: "App settings" })).toBeInTheDocument();
+  });
+
+  it("shows the active selection pill for the selected settings panel", async () => {
+    renderPage({ initialEntry: "/settings?section=transcoding" });
+
+    const settingsMenu = await screen.findByLabelText("Settings menu");
+    const activeItem = settingsMenu.querySelector<HTMLButtonElement>(
+      '.settings-navigation-list .settings-navigation-item.active[data-settings-panel-id="transcoding"]',
+    );
+    expect(activeItem).not.toBeNull();
+    expect(activeItem).toHaveAttribute("aria-current", "page");
+
+    const activePill = activeItem?.querySelector<HTMLElement>(".nav-active-pill");
+    expect(activePill).not.toBeNull();
+    if (!activePill) throw new Error("The active settings navigation pill was not rendered");
+    expect(activePill).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("opens and highlights the best nested settings match, including a small typo", async () => {
+    vi.spyOn(api, "hardwareProfiles").mockResolvedValue([]);
+    vi.spyOn(api, "softwareProfiles").mockResolvedValue([]);
+    vi.spyOn(api, "compatibilityProfiles").mockResolvedValue([]);
+    renderPage({ initialEntry: "/settings?section=libraries" });
+
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Search settings" }), {
+      target: { value: "Combinaton" },
+    });
+
+    const combinationTab = await waitFor(() => {
+      const target = document.querySelector<HTMLButtonElement>(
+        '[data-settings-search-target="compatibility-tab-combination"]',
+      );
+      if (!target) throw new Error("Combination tab has not rendered yet");
+      return target;
+    });
+    await waitFor(() => {
+      expect(combinationTab).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "/settings?section=compatibility-profiles&settingsFocus=compatibility-tab-combination",
+      );
+    });
+    expect(document.querySelector(".settings-navigation-panel .is-settings-search-highlighted")).not.toBeInTheDocument();
+  });
+
+  it("does not highlight the sidebar or page shell for a top-level settings match", async () => {
+    renderPage({ initialEntry: "/settings?section=libraries" });
+
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Search settings" }), {
+      target: { value: "Transcoding" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "/settings?section=transcoding&settingsFocus=settings-panel-transcoding",
+      );
+    });
+    expect(document.querySelector(".is-settings-search-highlighted")).not.toBeInTheDocument();
   });
 
   it("opens a linked library at the central connector status", async () => {
-    const library = createLibrarySummary({ id: 3, name: "Movies" });
+    const library = createLibrarySummary({
+      id: 3,
+      name: "Movies",
+      connector_links: [
+        {
+          connection_id: 7,
+          connection_name: "Jellyfin",
+          provider: "jellyfin",
+          connector_library_id: 1,
+          connector_library_name: "Movies",
+          link_method: "path",
+        },
+      ],
+    });
     const jellyfinLibrary = createJellyfinLibrary({
       linked_library_id: 3,
       linked_library_name: "Movies",
@@ -534,7 +658,8 @@ describe("LibrariesPage settings navigation", () => {
       initialEntry: "/settings?section=libraries&library=3&focus=path-mapping",
     });
 
-    expect(await screen.findByRole("heading", { name: "Connector assignments" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Open connector" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connectors" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Path mapping (optional)" })).not.toBeInTheDocument();
   });
 });
@@ -565,6 +690,60 @@ describe("LibrariesPage ignore patterns", () => {
 
     expect(combinedToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByDisplayValue("*/@eaDir/*")).not.toBeInTheDocument();
+  });
+
+  it("places restore icon actions between pattern counts and chevrons", async () => {
+    renderPage({ activePanel: "patternRecognition" });
+
+    expect(screen.getByRole("button", { name: "Explain folder and pattern recognition" })).toBeInTheDocument();
+    expect(screen.queryByText("Configure scan-time series, bonus, and duplicate filename patterns plus ignored paths.")).not.toBeInTheDocument();
+    const docsLink = await screen.findByRole("link", { name: "Open pattern docs" });
+    expect(docsLink.querySelector("svg")).toBeInTheDocument();
+    expect(docsLink.closest(".async-panel-header-status")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Explain when a new scan is needed after changing patterns" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Explain maximum runtime difference" })).toBeInTheDocument();
+    expect(screen.queryByText("10 seconds is the default. Set 0 for equal runtimes only. Changes to suffix regexes require a new scan.")).not.toBeInTheDocument();
+
+    const assertRestoreActionPosition = async (toggleName: RegExp, restoreName: string) => {
+      const toggle = await screen.findByRole("button", { name: toggleName });
+      const row = toggle.closest<HTMLElement>(".ignore-pattern-section-toggle-row");
+      expect(row).not.toBeNull();
+      if (!row) {
+        throw new Error("Pattern section header row is missing");
+      }
+
+      const restoreButton = within(row).getByRole("button", { name: restoreName });
+      const count = row.querySelector(".ignore-pattern-section-meta");
+      const chevron = row.querySelector(".ignore-pattern-section-chevron");
+      expect(restoreButton).toHaveClass("tooltip-trigger", "icon-only-button", "pattern-recognition-restore-button");
+      expect(restoreButton.querySelector("svg")).toBeInTheDocument();
+      expect(count).not.toBeNull();
+      expect(chevron).not.toBeNull();
+      if (!count || !chevron) {
+        throw new Error("Pattern section header controls are missing");
+      }
+      expect(chevron.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(count.compareDocumentPosition(restoreButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    };
+
+    await assertRestoreActionPosition(/^filename suffix regexes\d+$/i, "Restore duplicate matching defaults");
+    await assertRestoreActionPosition(/^bonus folder patterns\d+$/i, "Restore bonus defaults");
+    await assertRestoreActionPosition(/^ignore patterns\d+$/i, "Restore ignore defaults");
+    expect(screen.queryByText("Bonus content", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Ignore patterns", { exact: true })).toHaveLength(1);
+
+    const settingsGrid = screen.getByText("Recognition mode").closest(".pattern-recognition-settings-grid");
+    expect(settingsGrid).not.toBeNull();
+    expect(settingsGrid?.querySelectorAll(":scope > .field")).toHaveLength(3);
+
+    const duplicateField = screen.getByText("Duplicate filename matching", { exact: true }).closest<HTMLElement>(".field");
+    const showField = screen.getByText("Show & Seasons", { exact: true }).closest<HTMLElement>(".field");
+    expect(duplicateField).not.toBeNull();
+    expect(showField).not.toBeNull();
+    const divider = duplicateField?.nextElementSibling;
+    expect(divider).toHaveClass("app-settings-divider", "pattern-recognition-section-divider");
+    expect(divider?.nextElementSibling).toBe(showField);
+    expect(document.querySelectorAll(".pattern-recognition-section-divider")).toHaveLength(1);
   });
 
   it("saves combined ignore patterns through the shared section", async () => {
@@ -653,6 +832,12 @@ describe("LibrariesPage ignore patterns", () => {
   it("persists bonus-content folder recognition settings through app settings", async () => {
     const patternRecognition = {
       analyze_bonus_content: true,
+      duplicate_matching: {
+        duration_tolerance_seconds: 10,
+        user_filename_suffix_regexes: [],
+        default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+        effective_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+      },
       show_season_patterns: {
         recognition_mode: "folder_depth" as const,
         series_folder_depth: 1,
@@ -687,6 +872,11 @@ describe("LibrariesPage ignore patterns", () => {
       expect(updateSpy).toHaveBeenCalledWith({
         pattern_recognition: {
           analyze_bonus_content: true,
+          duplicate_matching: {
+            duration_tolerance_seconds: 10,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
           show_season_patterns: patternRecognition.show_season_patterns,
           bonus_content: {
             user_folder_patterns: ["Featurettes/*", "extras/*"],
@@ -696,6 +886,30 @@ describe("LibrariesPage ignore patterns", () => {
           },
         },
       }),
+    );
+  });
+
+  it("persists duplicate runtime tolerance from pattern recognition settings", async () => {
+    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+
+    renderPage({ activePanel: "patternRecognition" });
+
+    await screen.findByDisplayValue("(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$");
+    const durationInput = await screen.findByLabelText("Maximum runtime difference (seconds)");
+    fireEvent.change(durationInput, { target: { value: "18" } });
+    fireEvent.blur(durationInput);
+
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+        pattern_recognition: expect.objectContaining({
+          duplicate_matching: {
+            duration_tolerance_seconds: 18,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
+        }),
+      })),
     );
   });
 
@@ -716,6 +930,12 @@ describe("LibrariesPage ignore patterns", () => {
       createAppSettings({
         pattern_recognition: {
           analyze_bonus_content: true,
+          duplicate_matching: {
+            duration_tolerance_seconds: 10,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+            effective_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
           show_season_patterns: {
             recognition_mode: "regex",
             series_folder_depth: 1,
@@ -744,6 +964,11 @@ describe("LibrariesPage ignore patterns", () => {
       expect(updateSpy).toHaveBeenCalledWith({
         pattern_recognition: {
           analyze_bonus_content: true,
+          duplicate_matching: {
+            duration_tolerance_seconds: 10,
+            user_filename_suffix_regexes: [],
+            default_filename_suffix_regexes: ["(?:\\s+\\(\\d{4}\\)|\\s+\\[[^\\]]*\\])+\\s*$"],
+          },
           show_season_patterns: {
             recognition_mode: "regex",
             series_folder_depth: 1,
@@ -1175,14 +1400,16 @@ describe("LibrariesPage ignore patterns", () => {
     expect(screen.getAllByText("File history")).toHaveLength(2);
     expect(screen.getAllByText("Media library history")).toHaveLength(2);
     expect(screen.getAllByText("Scan history")).toHaveLength(2);
+    expect(screen.getAllByText("Transcoding history").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole("button", { name: "Reconstruct history" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Explain retention days" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Explain storage limit" })).toBeInTheDocument();
     expect(screen.getByText(/File history retention only affects per-file snapshots/)).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Retention days")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Retention days")).toHaveLength(4);
     expect(screen.getAllByLabelText("Retention days")[0]).toHaveClass("settings-choice-input", "history-retention-input");
-    expect(screen.getAllByLabelText("Storage limit (GB)")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Storage limit (GB)")).toHaveLength(4);
     expect(screen.getAllByLabelText("Storage limit (GB)")[0]).toHaveClass("settings-choice-input", "history-retention-input");
+    expect(screen.getAllByLabelText("Retention days")[3]).toHaveValue(90);
     expect(await screen.findByText("977 KB")).toBeInTheDocument();
     expect((await screen.findAllByText("2.9 MB")).length).toBeGreaterThan(0);
   });
@@ -1333,6 +1560,34 @@ describe("LibrariesPage ignore patterns", () => {
     await waitFor(() => expect(historyStorageSpy).toHaveBeenCalledTimes(2));
   });
 
+  it("persists the independent transcoding history retention bucket", async () => {
+    const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
+      createAppSettings({
+        history_retention: {
+          transcode_history: { days: 45, storage_limit_gb: 2 },
+        },
+      }),
+    );
+    renderPage({ activePanel: "historyRetention" });
+
+    const daysInput = await screen.findByLabelText("Retention days", {
+      selector: "#transcode_history-history-days",
+    });
+    const storageInput = screen.getByLabelText("Storage limit (GB)", {
+      selector: "#transcode_history-history-gb",
+    });
+    await waitFor(() => expect(daysInput).toBeEnabled());
+    fireEvent.change(daysInput, { target: { value: "45" } });
+    fireEvent.change(storageInput, { target: { value: "2" } });
+    fireEvent.blur(storageInput);
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+      history_retention: expect.objectContaining({
+        transcode_history: { days: 45, storage_limit_gb: 2 },
+      }),
+    })));
+  });
+
   it("auto-saves renamed resolution categories on blur", async () => {
     const updateSpy = vi.spyOn(api, "updateAppSettings").mockResolvedValue(
       createAppSettings({
@@ -1391,7 +1646,28 @@ describe("LibrariesPage ignore patterns", () => {
     renderPage({ activePanel: "resolutionCategories" });
 
     await screen.findByDisplayValue("UHD");
-    fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }));
+    const restoreButton = await screen.findByRole("button", { name: "Restore defaults" });
+    expect(restoreButton).toHaveClass(
+      "tooltip-trigger",
+      "icon-only-button",
+      "resolution-category-restore-button",
+    );
+    expect(restoreButton.querySelector("svg")).toBeInTheDocument();
+    expect(restoreButton.closest(".async-panel-toggle-actions")).not.toBeNull();
+
+    const heading = screen.getByRole("heading", { name: "Resolution categories" });
+    expect(heading.closest(".resolution-categories-async-panel")).not.toBeNull();
+    const titleRow = heading.closest(".panel-title-row");
+    expect(titleRow).not.toBeNull();
+    const titleActions = titleRow?.querySelector(".async-panel-toggle-actions");
+    expect(titleActions).toContainElement(restoreButton);
+    const addButton = screen.getByRole("button", { name: "Add category" });
+    expect(titleActions).toContainElement(addButton);
+    expect(titleActions?.firstElementChild).toBe(restoreButton);
+    expect(titleActions?.lastElementChild).toBe(addButton);
+    expect(document.querySelector(".resolution-category-actions")).not.toBeInTheDocument();
+
+    fireEvent.click(restoreButton);
 
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith(
@@ -1437,14 +1713,26 @@ describe("LibrariesPage ignore patterns", () => {
 
     renderPage({ activePanel: "resolutionCategories" });
 
-    fireEvent.change(await screen.findByPlaceholderText("New category"), { target: { value: "480p" } });
-    fireEvent.change(screen.getByLabelText("Min width", { selector: "#resolution-category-new-width" }), {
+    const addButton = await screen.findByRole("button", { name: "Add category" });
+    await screen.findByDisplayValue("4k");
+    await waitFor(() => expect(addButton).toBeEnabled());
+    expect(addButton).toHaveClass("secondary", "small", "settings-panel-header-action", "resolution-category-add");
+    expect(addButton.closest(".resolution-category-table-shell")).toBeNull();
+    expect(addButton.closest(".async-panel-toggle-actions")).not.toBeNull();
+    expect(screen.queryByPlaceholderText("New category")).not.toBeInTheDocument();
+
+    fireEvent.click(addButton);
+
+    const newLabelInput = await screen.findByPlaceholderText("New category");
+    const newRow = newLabelInput.closest("tr");
+    expect(newRow).toHaveClass("resolution-category-new-row");
+    fireEvent.change(newLabelInput, { target: { value: "480p" } });
+    fireEvent.change(within(newRow as HTMLElement).getByLabelText("Min width"), {
       target: { value: "854" },
     });
-    fireEvent.change(screen.getByLabelText("Min height", { selector: "#resolution-category-new-height" }), {
-      target: { value: "480" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add resolution category" }));
+    const heightInput = within(newRow as HTMLElement).getByLabelText("Min height");
+    fireEvent.change(heightInput, { target: { value: "480" } });
+    fireEvent.blur(heightInput);
 
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith(
@@ -1460,6 +1748,11 @@ describe("LibrariesPage ignore patterns", () => {
   it("shows active metrics in the quality profiles settings panel", async () => {
     const library = createLibrarySummary();
     vi.spyOn(api, "libraries").mockResolvedValue([library]);
+    vi.spyOn(api, "qualityProfiles").mockResolvedValue([
+      createQualityProfileDefinition(),
+      createQualityProfileDefinition({ id: 2, name: "Default music", media_type: "music" }),
+      createQualityProfileDefinition({ id: 3, name: "Default audiobook", media_type: "audiobook" }),
+    ]);
     vi.spyOn(api, "appSettings").mockResolvedValue(
       createAppSettings({
         resolution_categories: [
@@ -1476,8 +1769,54 @@ describe("LibrariesPage ignore patterns", () => {
     renderPage({ activePanel: "configuredLibraries" });
 
     fireEvent.click(await screen.findByRole("button", { name: "Quality profiles" }));
+    const mediaTypeTabs = await screen.findByRole("tablist", { name: "Media type" });
+    expect(mediaTypeTabs).toHaveClass("transcode-automation-tab-list");
+    expect(within(mediaTypeTabs).getAllByRole("tab")).toHaveLength(3);
+    expect(within(mediaTypeTabs).getByRole("tab", { name: "Video" })).toHaveClass("transcode-automation-tab-button", "active");
+    const videoProfileTrigger = await screen.findByRole("button", { name: /Default video/ });
+    expect(videoProfileTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Visual density")).not.toBeInTheDocument();
+    fireEvent.click(videoProfileTrigger);
     expect(await screen.findByText("Visual density")).toBeInTheDocument();
     expect(screen.getByText("Video codec")).toBeInTheDocument();
+
+    fireEvent.click(within(mediaTypeTabs).getByRole("tab", { name: "Music" }));
+    expect(await screen.findByRole("button", { name: /Default music/ })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(within(mediaTypeTabs).getByRole("tab", { name: "Audiobook" }));
+    expect(await screen.findByRole("button", { name: /Default audiobook/ })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("lists profiles and expands their nested metric settings", async () => {
+    vi.spyOn(api, "qualityProfiles").mockResolvedValue([
+      createQualityProfileDefinition(),
+      createQualityProfileDefinition({
+        id: 2,
+        name: "Cinema",
+        is_default: false,
+        profile: {
+          ...DEFAULT_QUALITY_PROFILE,
+          active_metrics: ["resolution"],
+        },
+      }),
+    ]);
+
+    renderPage({ activePanel: "qualityProfiles" });
+
+    expect(await screen.findByText("Default video")).toBeInTheDocument();
+    expect(screen.getByText("Cinema")).toBeInTheDocument();
+    const cinemaTrigger = screen.getByRole("button", { name: /Cinema/ });
+    expect(cinemaTrigger).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(cinemaTrigger);
+
+    expect(cinemaTrigger).toHaveAttribute("aria-expanded", "true");
+    const resolutionToggle = screen.getByRole("button", { name: "Configure Resolution metric" });
+    expect(resolutionToggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(resolutionToggle);
+
+    expect(resolutionToggle).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByLabelText("Minimum")).toBeInTheDocument();
   });
 
   it("shows built-in quality profiles as protected and read-only", async () => {
@@ -1497,8 +1836,9 @@ describe("LibrariesPage ignore patterns", () => {
     expect(await screen.findByRole("button", { name: "Built-in default profile protection" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rename profile" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Delete profile" })).toBeDisabled();
-    expect(screen.getByLabelText("Add metric")).toBeDisabled();
 
+    fireEvent.click(screen.getByRole("button", { name: /Default video/ }));
+    expect(screen.getByLabelText("Add metric")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Configure Visual density metric" }));
     expect(await screen.findByLabelText("Minimum (GB/hour)")).toBeDisabled();
     expect(screen.getAllByLabelText("Explain metric weight").every((input) => input.hasAttribute("disabled"))).toBe(true);
@@ -1509,6 +1849,7 @@ describe("LibrariesPage ignore patterns", () => {
 
     renderPage({ activePanel: "qualityProfiles" });
 
+    fireEvent.click(await screen.findByRole("button", { name: /Default video/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Configure Visual density metric" }));
     const minimumInput = await screen.findByLabelText("Minimum (GB/hour)");
     const idealInput = screen.getByLabelText("Ideal (GB/hour)");
@@ -1566,7 +1907,8 @@ describe("LibrariesPage ignore patterns", () => {
 
     renderPage({ activePanel: "qualityProfiles" });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Music" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Music" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Default music/ }));
     fireEvent.change(await screen.findByLabelText("Add metric"), { target: { value: "music_tags" } });
     expect(await screen.findByText("Music tags")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
@@ -1601,7 +1943,11 @@ describe("LibrariesPage media type selection", () => {
     fireEvent.change(mediaTypeSelect, { target: { value: "audiobooks" } });
     const createForm = mediaTypeSelect.closest("form");
     expect(createForm).not.toBeNull();
-    fireEvent.click(within(createForm as HTMLFormElement).getByRole("button", { name: "Create library" }));
+    const createButton = within(createForm as HTMLFormElement).getByRole("button", { name: "Create library" });
+    expect(createButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add current folder" }));
+    expect(createButton).toBeEnabled();
+    fireEvent.click(createButton);
 
     await waitFor(() =>
       expect(createSpy).toHaveBeenCalledWith(
@@ -1616,14 +1962,36 @@ describe("LibrariesPage media type selection", () => {
 
 describe("LibrariesPage Jellyfin library assignments", () => {
   it("shows connector assignments as status instead of a library-side editor", async () => {
-    const medialyzeLibrary = createLibrarySummary();
+    const medialyzeLibrary = createLibrarySummary({
+      connector_links: [
+        {
+          connection_id: 7,
+          connection_name: "Jellyfin",
+          provider: "jellyfin",
+          connector_library_id: 1,
+          connector_library_name: "Movies",
+          link_method: "path",
+        },
+      ],
+    });
     const jellyfinLibrary = createJellyfinLibrary();
     vi.spyOn(api, "libraries").mockResolvedValue([medialyzeLibrary]);
     vi.mocked(api.jellyfinLibraries).mockResolvedValue([jellyfinLibrary]);
     renderPage({ activePanel: "configuredLibraries" });
 
     await expandLibrarySettings();
-    expect(await screen.findByRole("heading", { name: "Connector assignments" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connectors" })).not.toBeInTheDocument();
+    const openConnectorLink = await screen.findByRole("link", { name: "Open connector" });
+    expect(openConnectorLink).toHaveClass(
+      "secondary",
+      "small",
+      "settings-panel-header-action",
+      "connector-action-button",
+    );
+    expect(openConnectorLink.querySelector("svg")).toHaveAttribute("width", "16");
+    expect(openConnectorLink.querySelector("svg")).toHaveAttribute("height", "16");
+    expect(openConnectorLink.closest(".library-connector-inline-list")).not.toBeNull();
+    expect(openConnectorLink.closest(".library-settings-section")).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Associated Jellyfin library" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Path mapping (optional)" })).not.toBeInTheDocument();
   });
@@ -1642,7 +2010,9 @@ describe("LibrariesPage desktop mode", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add library" }));
     expect(await screen.findByRole("button", { name: "Choose folder" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Up" })).not.toBeInTheDocument();
-    expect(screen.getByText("Select a local folder, mounted network share, or UNC path to analyze.")).toBeInTheDocument();
+    const pathHelp = screen.getByRole("button", { name: "Select a local folder, mounted network share, or UNC path to analyze." });
+    fireEvent.focus(pathHelp);
+    expect(await screen.findByText("Select a local folder, mounted network share, or UNC path to analyze.")).toBeInTheDocument();
   });
 
   it("falls back to scheduled scans when watch is selected for a network path", async () => {
@@ -1742,13 +2112,32 @@ describe("LibrariesPage settings panels", () => {
 
     expect(await screen.findByLabelText("Interface language")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Ukrainian" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add resolution category" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add category" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^resolution categories$/i }));
 
-    expect(await screen.findByRole("button", { name: "Add resolution category" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add category" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Interface language")).not.toBeInTheDocument();
     expect(window.localStorage.getItem("medialyze-settings-active-panel")).toBe("resolutionCategories");
+  });
+
+  it("opens the separate transcoding presets submenu with filename and foldername management", async () => {
+    vi.spyOn(api, "transcodePresets").mockResolvedValue([]);
+    vi.spyOn(api, "transcodeFormattingPresets").mockResolvedValue([]);
+    renderPage({ activePanel: "appSettings" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Transcoding Presets" }));
+
+    expect(await screen.findByRole("heading", { name: "Transcoding Presets" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Transcoding Presets" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Filename Presets" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Foldername Presets" })).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Filename Presets" }));
+    expect(await screen.findByText("No filename presets are configured yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New preset" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Foldername Presets" }));
+    expect(await screen.findByText("No foldername presets are configured yet.")).toBeInTheDocument();
   });
 
   it("collapses and restores the settings navigation", async () => {
@@ -1778,11 +2167,13 @@ describe("LibrariesPage settings panels", () => {
       "true",
     );
     expect(menu).toHaveAttribute("aria-hidden", "false");
+    expect(within(menu as HTMLElement).getByRole("searchbox", { name: "Search settings" })).toBeInTheDocument();
     expect(within(menu as HTMLElement).getByRole("button", { name: "full scan" })).toBeInTheDocument();
+    expect(within(menu as HTMLElement).getByRole("button", { name: "Sync connectors" })).toBeInTheDocument();
 
     fireEvent.click(within(menu as HTMLElement).getByRole("button", { name: "Resolution categories" }));
 
-    expect(await screen.findByRole("button", { name: "Add resolution category" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add category" })).toBeInTheDocument();
     expect(window.localStorage.getItem("medialyze-settings-active-panel")).toBe("resolutionCategories");
     expect(menu).toHaveAttribute("aria-hidden", "true");
     expect(await screen.findByRole("button", { name: "Open settings menu" })).toHaveTextContent(
@@ -1860,7 +2251,7 @@ describe("LibrariesPage settings panels", () => {
     expect(screen.getByRole("button", { name: /^libraries$/i })).not.toHaveAttribute("aria-expanded");
   });
 
-  it("queues a full scan for all configured libraries from the quick action", async () => {
+  it("queues a full scan for all configured libraries from the Libraries header", async () => {
     vi.spyOn(api, "libraries").mockResolvedValue([
       createLibrarySummary(),
       createLibrarySummary({ id: 2, name: "Series", path: "/media/series", type: "series" }),
@@ -1872,11 +2263,21 @@ describe("LibrariesPage settings panels", () => {
 
     renderPage();
 
-    const settingsMenu = await screen.findByLabelText("Settings menu");
-    const desktopQuickActions = settingsMenu.querySelector(".settings-navigation-quick-actions") as HTMLElement | null;
-    expect(desktopQuickActions).not.toBeNull();
-    expect(within(desktopQuickActions as HTMLElement).getByText("Quickactions")).toBeInTheDocument();
-    fireEvent.click(within(desktopQuickActions as HTMLElement).getByRole("button", { name: /^full scan$/i }));
+    const headerActions = document.querySelector(
+      ".libraries-settings-panel .async-panel-toggle-actions",
+    ) as HTMLElement | null;
+    expect(headerActions).not.toBeNull();
+    expect(within(headerActions as HTMLElement).getByRole("button", { name: /^full scan$/i })).toHaveClass(
+      "library-scan-button",
+    );
+    expect(within(headerActions as HTMLElement).getByRole("button", { name: "Add library" })).toBeInTheDocument();
+    expect(
+      Array.from((headerActions as HTMLElement).querySelectorAll("button")).map((button) => button.textContent?.trim()),
+    ).toEqual(["full scan", "Add library"]);
+    expect(document.querySelector(".settings-navigation-quick-actions")?.textContent).toContain("full scan");
+    const fullScanButton = within(headerActions as HTMLElement).getByRole("button", { name: /^full scan$/i });
+    await waitFor(() => expect(fullScanButton).toBeEnabled());
+    fireEvent.click(fullScanButton);
 
     await waitFor(() => {
       expect(scanSpy).toHaveBeenNthCalledWith(1, 1, "full");
@@ -1884,8 +2285,61 @@ describe("LibrariesPage settings panels", () => {
     });
   });
 
+  it("queues a full scan for all configured libraries from the Settings quick action", async () => {
+    vi.spyOn(api, "libraries").mockResolvedValue([
+      createLibrarySummary(),
+      createLibrarySummary({ id: 2, name: "Series", path: "/media/series", type: "series" }),
+    ]);
+    const scanSpy = vi
+      .spyOn(api, "scanLibrary")
+      .mockResolvedValueOnce(createScanJob({ id: 41, library_id: 1, library_name: "Movies", job_type: "full" }))
+      .mockResolvedValueOnce(createScanJob({ id: 42, library_id: 2, library_name: "Series", job_type: "full" }));
+
+    renderPage();
+
+    const quickActions = document.querySelector(".settings-navigation-quick-actions") as HTMLElement | null;
+    expect(quickActions).not.toBeNull();
+    const fullScanButton = within(quickActions as HTMLElement).getByRole("button", { name: /^full scan$/i });
+    await waitFor(() => expect(fullScanButton).toBeEnabled());
+    fireEvent.click(fullScanButton);
+
+    await waitFor(() => {
+      expect(scanSpy).toHaveBeenNthCalledWith(1, 1, "full");
+      expect(scanSpy).toHaveBeenNthCalledWith(2, 2, "full");
+    });
+  });
+
+  it("queues synchronization for every enabled connector from the quick action", async () => {
+    vi.mocked(api.connectors).mockResolvedValue([
+      createConnectorConnection({ id: 7 }),
+      createConnectorConnection({ id: 8, enabled: false }),
+      createConnectorConnection({ id: 9, enabled: true }),
+    ]);
+    const syncSpy = vi.spyOn(api, "syncConnector").mockResolvedValue({
+      job_id: 41,
+      status: "queued",
+      trigger_source: "manual",
+      accepted: true,
+    });
+
+    renderPage();
+
+    const settingsMenu = await screen.findByLabelText("Settings menu");
+    fireEvent.click(within(settingsMenu).getByRole("button", { name: "Sync connectors" }));
+
+    await waitFor(() => {
+      expect(syncSpy).toHaveBeenNthCalledWith(1, 7);
+      expect(syncSpy).toHaveBeenNthCalledWith(2, 9);
+      expect(syncSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("shows editable library sources while keeping summary details in the title tooltip", async () => {
-    vi.spyOn(api, "libraries").mockResolvedValue([createLibrarySummary()]);
+    vi.spyOn(api, "libraries").mockResolvedValue([
+      createLibrarySummary({
+        roots: [{ id: 1, path: "/media/movies", display_name: "Movies", path_key: "/media/movies" }],
+      }),
+    ]);
 
     renderPage();
 
@@ -1899,9 +2353,22 @@ describe("LibrariesPage settings panels", () => {
     expect(screen.queryByText("/media/movies")).not.toBeInTheDocument();
     await expandLibrarySettings();
     expect(screen.getByRole("button", { name: "Hide settings for Movies" })).toHaveAttribute("aria-expanded", "true");
-    expect(await screen.findByText("/media/movies")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Change path" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Connector assignments" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "MediaLyze paths: /media/movies" })).toBeInTheDocument();
+    const changePathButton = screen.getByRole("button", { name: "Change path" });
+    expect(changePathButton).toHaveClass("secondary", "small", "settings-panel-header-action", "library-change-path-button");
+    const sourceHeading = changePathButton.closest(".library-source-section-heading");
+    expect(sourceHeading).not.toBeNull();
+    expect(sourceHeading).not.toHaveTextContent("MediaLyze paths");
+    expect(changePathButton.querySelector("svg")).not.toBeNull();
+    expect(screen.getByRole("textbox", { name: "Root alias" })).toHaveClass("library-root-alias-input");
+    expect(screen.getByRole("textbox", { name: "MediaLyze paths: /media/movies" })).toHaveAttribute("readonly");
+    expect(screen.queryByRole("button", { name: "Save root alias" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connectors" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Explain connector assignments" })).not.toBeInTheDocument();
+    expect(screen.getByText("No connector library is currently assigned.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Explain the media source settings" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Explain the scanning and analysis settings" })).toBeInTheDocument();
+    expect(screen.queryByText("Configure scan scheduling, duplicate detection, historical dates, and the quality profile used for this library.")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Associated Jellyfin library" })).not.toBeInTheDocument();
 
     const detailsButton = await screen.findByRole("button", { name: "Show library details for Movies" });
@@ -1917,8 +2384,33 @@ describe("LibrariesPage settings panels", () => {
 
     fireEvent.focus(detailsButton);
 
-    await waitFor(() => expect(screen.getAllByText("/media/movies")).toHaveLength(2));
-    expect(screen.getByText("0 files")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("0 files")).toBeInTheDocument());
+  });
+
+  it("saves a changed root alias automatically while keeping the MediaLyze path read-only", async () => {
+    const library = createLibrarySummary({
+      roots: [{ id: 1, path: "/media/movies", display_name: "Movies", path_key: "/media/movies" }],
+    });
+    vi.spyOn(api, "libraries").mockResolvedValue([library]);
+    const updateSpy = vi.spyOn(api, "updateLibrarySettings").mockResolvedValue(
+      createLibrarySummary({
+        roots: [{ id: 1, path: "/media/movies", display_name: "Films", path_key: "/media/movies" }],
+      }),
+    );
+
+    renderPage();
+    await expandLibrarySettings();
+
+    const aliasInput = screen.getByRole("textbox", { name: "Root alias" });
+    const pathInput = screen.getByRole("textbox", { name: "MediaLyze paths: /media/movies" });
+    fireEvent.change(aliasInput, { target: { value: "Films" } });
+    expect(pathInput).toHaveAttribute("readonly");
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledWith(1, {
+        roots: [{ id: 1, path: "/media/movies", display_name: "Films" }],
+      });
+    }, { timeout: 2000 });
   });
 
   it("toggles dashboard visibility from the library action button and refreshes dashboard data", async () => {
@@ -2059,10 +2551,13 @@ describe("LibrariesPage settings panels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change path" }));
 
     expect(await screen.findByRole("dialog", { name: "Change path for Movies" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-    fireEvent.click(screen.getByRole("button", { name: /media/ }));
+    expect(document.body.style.overflow).toBe("hidden");
+    const pathDialog = screen.getByRole("dialog", { name: "Change path for Movies" });
+    fireEvent.click(within(pathDialog).getByRole("button", { name: "Remove" }));
+    expect(within(pathDialog).getByRole("button", { name: "Save selection" })).toBeDisabled();
+    fireEvent.click(within(pathDialog).getByRole("button", { name: /^media/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add current folder" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
 
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith(1, {
@@ -2101,11 +2596,12 @@ describe("LibrariesPage settings panels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change path" }));
 
     expect(await screen.findByText("Path does not exist")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const pathDialog = screen.getByRole("dialog", { name: "Change path for Movies" });
+    fireEvent.click(within(pathDialog).getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Up" }));
-    fireEvent.click(await screen.findByRole("button", { name: /media/ }));
+    fireEvent.click(await within(pathDialog).findByRole("button", { name: /^media/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add current folder" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
 
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith(1, {
@@ -2139,10 +2635,11 @@ describe("LibrariesPage settings panels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change path" }));
 
     expect(await screen.findByRole("dialog", { name: "Change path for Movies" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const pathDialog = screen.getByRole("dialog", { name: "Change path for Movies" });
+    fireEvent.click(within(pathDialog).getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
     expect(await screen.findByText("/mnt/new-media")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
 
     await waitFor(() =>
       expect(updateSpy).toHaveBeenCalledWith(1, {
@@ -2255,6 +2752,6 @@ describe("LibrariesPage settings panels", () => {
         beforeId: 10,
       }),
     );
-    expect(await screen.findByText("Mar 15, 2026, 11:03 AM")).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelectorAll(".scan-log-card")).toHaveLength(2));
   });
 });

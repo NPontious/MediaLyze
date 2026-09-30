@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { releaseVisibility } from "../lib/release-visibility";
 import {
   AlertTriangle,
   Activity,
@@ -7,15 +8,23 @@ import {
   ArrowUp,
   ArrowUpRight,
   AudioLines,
+  Ban,
+  Bug,
   CalendarDays,
   Check,
+  Captions,
+  Clock3,
+  CircleCheck,
   CircleStop,
+  CircleX,
+  Clapperboard,
   ChevronDown,
   ChevronRight,
   Columns3,
   Columns3Cog,
   Copy,
-  Database,
+  Cpu,
+  DatabaseSearch,
   Diff,
   Download,
   Eye,
@@ -28,35 +37,58 @@ import {
   FileText,
   FileVideo,
   Files,
+  Film,
   Folder,
+  FlaskConical,
   GitCompare,
+  Gauge,
+  Gpu,
+  Hash,
   History,
+  HardDrive,
+  ImageIcon,
   House,
+  KeyRound,
   Info,
   Layers,
   LayoutPanelTop,
+  Library,
+  ListVideo,
   ListFilter,
   Lock,
   Map,
+  Network,
   PanelBottomClose,
   PanelLeftClose,
   PanelRightClose,
   PanelTopClose,
+  Percent,
+  Play,
   Plus,
+  PlugZap,
+  RefreshCw,
+  Radio,
+  Rss,
+  RotateCcw,
   Save,
   SaveOff,
   Search,
   Settings,
+  Square,
   Server,
   SlidersHorizontal,
   Sparkles,
+  Star,
   SquareArrowOutUpRight,
   Trash2,
+  Unplug,
   UserRoundCheck,
   X,
 } from "lucide-react";
 
+import { AnimatedConnectIcon } from "../components/AnimatedConnectIcon";
 import { AnimatedSearchIcon } from "../components/AnimatedSearchIcon";
+import { TranscodeProgressSummary } from "../components/TranscodeProgressSummary";
 import { AsyncPanel } from "../components/AsyncPanel";
 import { ComparisonChartPanel } from "../components/ComparisonChartPanel";
 import { DistributionChartPanel } from "../components/DistributionChartPanel";
@@ -69,6 +101,7 @@ import { DashboardVisibilityIcon } from "../components/DashboardVisibilityIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
 import { GitCompareArrowsIcon } from "../components/GitCompareArrowsIcon";
 import { GithubIcon } from "../components/GithubIcon";
+import { HandCoinsIcon } from "../components/HandCoinsIcon";
 import { JellyfinIcon } from "../components/JellyfinIcon";
 import { ConnectorProviderIcon } from "../components/ConnectorProviderIcon";
 import { ConnectorStreamingDetails } from "../components/JellyfinMetadataDetails";
@@ -87,6 +120,8 @@ import { StatisticPanelLayoutMigrationNotice } from "../components/StatisticPane
 import { StreamDetailsList } from "../components/StreamDetailsList";
 import { TableViewSettingsEditor } from "../components/TableViewSettingsEditor";
 import { TooltipTrigger } from "../components/TooltipTrigger";
+import { LanguageCodeFormatField } from "../components/LanguageCodeFormatField";
+import { VideoWipeCompare } from "../components/VideoWipeCompare";
 import { api, type BrowseResponse, type ComparisonResponse, type MediaFileStreamDetails } from "../lib/api";
 import { buildDefaultLibraryStatisticsSettings } from "../lib/library-statistics-settings";
 import type { ComparisonSelection } from "../lib/statistic-comparisons";
@@ -143,6 +178,11 @@ const colorTokens = [
   { name: "--muted", value: "var(--muted)" },
   { name: "--panel", value: "var(--panel)" },
   { name: "--panel-strong", value: "var(--panel-strong)" },
+  { name: "--surface", value: "var(--surface)" },
+  { name: "--surface-subtle", value: "var(--surface-subtle)" },
+  { name: "--border", value: "var(--border)" },
+  { name: "--scrollbar-thumb", value: "var(--scrollbar-thumb)" },
+  { name: "--scrollbar-thumb-hover", value: "var(--scrollbar-thumb-hover)" },
   { name: "--accent", value: "var(--accent)" },
   { name: "--accent-2", value: "var(--accent-2)" },
   { name: "--accent-3", value: "var(--accent-3)" },
@@ -280,7 +320,7 @@ const streamDetails: MediaFileStreamDetails = {
   subtitle_streams: [
     { stream_index: 2, codec: "subrip", language: "de", default_flag: false, forced_flag: false, subtitle_type: "text" },
   ],
-  external_subtitles: [{ path: "Arrival.2016.de.srt", language: "de", format: "srt" }],
+  external_subtitles: [{ id: 1, path: "Arrival.2016.de.srt", language: "de", format: "srt" }],
 };
 
 const availablePanelDefinitions: StatisticPanelLayoutMenuDefinition[] = [
@@ -421,7 +461,7 @@ function AnalyzedFilesTable() {
   );
 }
 
-function SettingsNavigationFixture({ collapsed = false }: { collapsed?: boolean }) {
+function SettingsNavigationFixture({ collapsed = false, noResults = false }: { collapsed?: boolean; noResults?: boolean }) {
   return (
     <div className={`settings-layout${collapsed ? " is-settings-nav-collapsed" : ""}`}>
       <aside className="settings-navigation-panel" aria-label="Settings navigation">
@@ -441,9 +481,16 @@ function SettingsNavigationFixture({ collapsed = false }: { collapsed?: boolean 
           <ChevronDown aria-hidden="true" className="settings-mobile-menu-chevron" />
         </button>
         <div id="settings-mobile-navigation-menu" className="settings-mobile-navigation-menu" aria-hidden="true">
+          <div className="settings-navigation-search-stack settings-mobile-navigation-search-stack">
+            <label className="settings-navigation-search settings-mobile-navigation-search">
+              <span className="sr-only">Search settings</span>
+              <Search aria-hidden="true" />
+              <input type="search" value={noResults ? "zzzz" : "Combinaton"} readOnly placeholder="Search settings…" />
+            </label>
+          </div>
           <nav className="settings-mobile-navigation-list" aria-label="Mobile settings navigation">
             <button type="button" className="settings-navigation-item settings-mobile-navigation-item active" aria-current="page" tabIndex={-1}>
-              <span className="nav-active-pill" />
+              <span className="nav-active-pill" aria-hidden="true" />
               <span className="settings-navigation-item-content">
                 <Folder className="nav-icon" aria-hidden="true" />
                 <span>Libraries</span>
@@ -466,21 +513,33 @@ function SettingsNavigationFixture({ collapsed = false }: { collapsed?: boolean 
             title={collapsed ? "Expand settings navigation" : "Collapse settings navigation"}
             aria-expanded={!collapsed}
           >
-            <PanelLeftToggleIcon aria-hidden="true" collapsed={collapsed} className="settings-navigation-toggle-icon" size={24} />
+            <PanelLeftToggleIcon aria-hidden="true" collapsed={collapsed} className="settings-navigation-toggle-icon" />
           </button>
         </div>
         {!collapsed ? (
-          <label className="settings-navigation-search">
-            <span className="sr-only">Search settings</span>
-            <Search aria-hidden="true" />
-            <input type="search" placeholder="Search settings…" />
-          </label>
+          <div className="settings-navigation-search-stack">
+            <label className="settings-navigation-search">
+              <span className="sr-only">Search settings</span>
+              <Search aria-hidden="true" />
+              <input type="search" value={noResults ? "zzzz" : "Combinaton"} readOnly placeholder="Search settings…" />
+            </label>
+            <div className="settings-search-results" role="listbox" aria-label="Settings search results">
+              {noResults ? (
+                <div className="settings-search-result-empty">No settings match this search.</div>
+              ) : (
+                <button type="button" role="option" aria-selected="true" className="settings-search-result is-best-match">
+                  <span className="settings-search-result-label">Combination</span>
+                  <span className="settings-search-result-context">Hardware &amp; software profiles</span>
+                </button>
+              )}
+            </div>
+          </div>
         ) : null}
         <nav className="settings-navigation-list">
           <div className="settings-navigation-group">
             {!collapsed ? <div className="settings-navigation-group-label">Libraries &amp; Sources</div> : null}
             <button type="button" className="settings-navigation-item active" aria-current="page" aria-label="Libraries" data-settings-panel-id="configuredLibraries">
-              <span className="nav-active-pill" />
+              <span className="nav-active-pill" aria-hidden="true" />
               <span className="settings-navigation-item-content">
                 <Folder className="nav-icon" aria-hidden="true" />
                 {!collapsed ? <span>Libraries</span> : null}
@@ -525,8 +584,12 @@ function SettingsNavigationFixture({ collapsed = false }: { collapsed?: boolean 
           <div className="settings-navigation-divider" />
           {!collapsed ? <div className="settings-navigation-section-label">Quick actions</div> : null}
           <button type="button" className="secondary settings-navigation-quick-action" aria-label="Full scan" title="Full scan">
-            <Database className="nav-icon" aria-hidden="true" />
+            <DatabaseSearch className="nav-icon" aria-hidden="true" />
             {!collapsed ? <span>Full scan</span> : null}
+          </button>
+          <button type="button" className="secondary settings-navigation-quick-action" aria-label="Sync connectors" title="Sync connectors">
+            <RefreshCw className="nav-icon" aria-hidden="true" />
+            {!collapsed ? <span>Sync connectors</span> : null}
           </button>
         </div>
       </aside>
@@ -580,64 +643,150 @@ function QualityPickerFixture({ open = false }: { open?: boolean }) {
 function QualityProfileFixture() {
   return (
     <div className="quality-profile-panel-stack">
-      <div className="quality-profile-segments">
-        <button type="button" className="quality-profile-segment is-active">
-          <span className="quality-profile-segment-pill" />
-          <span>Video</span>
-        </button>
-        <button type="button" className="quality-profile-segment">
-          <span>Music</span>
-        </button>
-      </div>
-      <div className="quality-profile-picker is-protected">
-        <div className="quality-profile-picker-control">
-          <select className="quality-profile-picker-trigger" defaultValue="default-video" aria-label="Select profile">
-            <option value="default-video">Default video — Default — Built-in</option>
-            <option value="cinema">Cinema</option>
-          </select>
-          <div className="quality-profile-picker-actions">
-            <TooltipTrigger
-              ariaLabel="Built-in default profile protection"
-              className="quality-profile-protected-tooltip"
-              content="Built-in default profiles are protected for app updates. Duplicate this profile or create a new one to make changes."
-              align="start"
-            >
-              <Lock className="nav-icon" aria-hidden="true" size={16} />
-            </TooltipTrigger>
-            <button type="button" className="quality-profile-action-button" disabled title="Built-in default profiles are protected for app updates.">
-              <Save className="nav-icon" aria-hidden="true" />
-            </button>
-            <button type="button" className="quality-profile-action-button" title="Duplicate profile">
-              <CopyIcon className="nav-icon" aria-hidden="true" />
+      <div className="compatibility-profile-list quality-profile-list">
+        <div className="settings-profile-toggle-row transcode-automation-toggle-row quality-profile-toggle-row">
+          <div className="transcode-automation-tab-controls">
+            <div className="transcode-automation-tab-list" role="tablist" aria-label="Media type" aria-orientation="horizontal">
+              <button type="button" role="tab" className="transcode-automation-tab-button active" aria-selected="true" tabIndex={0}>
+                <span className="transcode-automation-tab-label">Video</span>
+              </button>
+              <button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false" tabIndex={-1}>
+                <span className="transcode-automation-tab-label">Music</span>
+              </button>
+              <button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false" tabIndex={-1}>
+                <span className="transcode-automation-tab-label">Audiobook</span>
+              </button>
+            </div>
+          </div>
+          <div className="settings-profile-toggle-actions">
+            <button type="button" className="secondary small settings-panel-header-action">
+              <Plus aria-hidden="true" className="nav-icon" />
+              <span>New profile</span>
             </button>
           </div>
         </div>
-      </div>
-      <div className="quality-profile-metric-list">
-        <div className="quality-profile-metric-item">
-          <div className="quality-profile-metric-row">
-            <button type="button" className="quality-profile-metric-toggle" aria-pressed="true">
-              <CheckIcon className="nav-icon" aria-hidden="true" />
+        <article className="compatibility-profile-list-item">
+          <div className="compatibility-profile-list-row quality-profile-list-row">
+            <button type="button" className="compatibility-profile-list-trigger" aria-expanded="false">
+              <span className="transcode-automation-list-copy quality-profile-list-copy">
+                <strong>Default video</strong>
+                <small>Default · Built-in</small>
+              </span>
+              <ChevronDown aria-hidden="true" />
             </button>
-            <div className="quality-profile-metric-name">
-              <strong>Resolution</strong>
-              <span className="subtitle">Weight and boundary controls</span>
-            </div>
-            <div className="quality-profile-weight-control">
-              <input className="quality-profile-weight-input" type="number" defaultValue={8} aria-label="Weight" />
+            <div className="compatibility-profile-quick-actions quality-profile-quick-actions">
+              <TooltipTrigger
+                ariaLabel="Built-in default profile protection"
+                className="quality-profile-protected-tooltip"
+                content="Built-in default profiles are protected for app updates. Duplicate this profile or create a new one to make changes."
+                align="start"
+              >
+                <Lock className="nav-icon" aria-hidden="true" size={16} />
+              </TooltipTrigger>
+              <button type="button" className="quality-profile-action-button" disabled title="Built-in default profiles are protected for app updates.">
+                <Save className="nav-icon" aria-hidden="true" />
+              </button>
+              <button type="button" className="quality-profile-action-button" disabled title="Built-in default profiles are protected for app updates.">
+                <SquarePenIcon className="nav-icon" aria-hidden="true" />
+              </button>
+              <button type="button" className="quality-profile-action-button" title="Duplicate profile">
+                <CopyIcon className="nav-icon" aria-hidden="true" />
+              </button>
+              <button type="button" className="quality-profile-action-button" disabled title="Built-in default profiles are protected for app updates.">
+                <DeleteIcon className="nav-icon" aria-hidden="true" />
+              </button>
             </div>
           </div>
-          <div className="quality-profile-metric-settings-grid">
-            <label className="quality-profile-boundary-field">
-              <span>Minimum</span>
-              <QualityPickerFixture />
-            </label>
-            <label className="quality-profile-boundary-field">
-              <span>Ideal</span>
-              <QualityPickerFixture open />
-            </label>
+        </article>
+        <article className="compatibility-profile-list-item is-expanded">
+          <div className="compatibility-profile-list-row quality-profile-list-row">
+            <button type="button" className="compatibility-profile-list-trigger" aria-expanded="true" aria-controls="catalog-quality-profile-details-cinema">
+              <span className="transcode-automation-list-copy quality-profile-list-copy">
+                <strong>Cinema</strong>
+                <small>Custom</small>
+              </span>
+              <ChevronDown aria-hidden="true" />
+            </button>
+            <div className="compatibility-profile-quick-actions quality-profile-quick-actions">
+              <button type="button" className="quality-profile-action-button" aria-label="Set as default" title="Set as default">
+                <CheckIcon className="nav-icon" aria-hidden="true" />
+              </button>
+              <button type="button" className="quality-profile-action-button" aria-label="Duplicate profile" title="Duplicate profile">
+                <CopyIcon className="nav-icon" aria-hidden="true" />
+              </button>
+              <button type="button" className="quality-profile-action-button" aria-label="Delete profile" title="Delete profile">
+                <DeleteIcon className="nav-icon" aria-hidden="true" />
+              </button>
+            </div>
           </div>
-        </div>
+          <div id="catalog-quality-profile-details-cinema" className="quality-profile-details">
+            <div className="quality-profile-editor">
+              <div className="quality-profile-add-row">
+                <select className="settings-choice-input" defaultValue="" aria-label="Add metric">
+                  <option value="">Add metric…</option>
+                  <option value="dynamic_range">Dynamic range</option>
+                  <option value="language_preferences">Language preferences</option>
+                </select>
+              </div>
+              <div className="quality-profile-metric-list">
+                <div className="quality-profile-metric-item">
+                  <div className="quality-profile-metric-row">
+                    <div className="quality-profile-metric-title">
+                      <button type="button" className="quality-profile-metric-toggle" aria-expanded="false" aria-label="Configure Resolution metric">
+                        <ChevronRight className="nav-icon" aria-hidden="true" size={16} />
+                      </button>
+                      <span className="quality-profile-metric-name">
+                        <strong>Resolution</strong>
+                        <TooltipTrigger ariaLabel="Explain Resolution metric" className="quality-profile-metric-tooltip" content="Resolution score based on the selected resolution categories." />
+                        <span role="button" tabIndex={0} className="quality-profile-metric-link-button" aria-label="Edit resolution categories" title="Edit resolution categories">
+                          <SquarePenIcon aria-hidden="true" className="nav-icon" size={16} />
+                        </span>
+                      </span>
+                    </div>
+                    <div className="quality-profile-weight-control">
+                      <input className="quality-profile-weight-input" type="number" defaultValue={8} aria-label="Explain metric weight" />
+                    </div>
+                    <button type="button" className="secondary icon-only-button quality-profile-metric-remove-button" aria-label="Remove Resolution metric">
+                      <Trash2 aria-hidden="true" className="nav-icon" size={18} />
+                    </button>
+                  </div>
+                </div>
+                <div className="quality-profile-metric-item is-expanded">
+                  <div className="quality-profile-metric-row">
+                    <div className="quality-profile-metric-title">
+                      <button type="button" className="quality-profile-metric-toggle" aria-expanded="true" aria-label="Configure Visual density metric">
+                        <ChevronDown className="nav-icon" aria-hidden="true" size={16} />
+                      </button>
+                      <span className="quality-profile-metric-name"><strong>Visual density</strong></span>
+                    </div>
+                    <div className="quality-profile-weight-control">
+                      <input className="quality-profile-weight-input" type="number" defaultValue={10} aria-label="Explain metric weight" />
+                    </div>
+                    <button type="button" className="secondary icon-only-button quality-profile-metric-remove-button" aria-label="Remove Visual density metric">
+                      <Trash2 aria-hidden="true" className="nav-icon" size={18} />
+                    </button>
+                  </div>
+                  <div className="quality-profile-metric-settings">
+                    <div className="quality-profile-metric-settings-grid">
+                      <div className="quality-profile-boundary-field">
+                        <span>Minimum</span>
+                        <input className="settings-choice-input" type="number" defaultValue={1.2} aria-label="Minimum (GB/hour)" />
+                      </div>
+                      <div className="quality-profile-boundary-field">
+                        <span>Ideal</span>
+                        <input className="settings-choice-input" type="number" defaultValue={2.4} aria-label="Ideal (GB/hour)" />
+                      </div>
+                      <div className="quality-profile-boundary-field">
+                        <span>Maximum</span>
+                        <input className="settings-choice-input" type="number" defaultValue={4.8} aria-label="Maximum (GB/hour)" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
       </div>
     </div>
   );
@@ -650,7 +799,7 @@ function SearchFilterFixture({ invalid = false }: { invalid?: boolean }) {
         <button type="button" className="metadata-search-icon-button" aria-label="Search field">
           <Search aria-hidden="true" className="nav-icon" />
         </button>
-        <input defaultValue={invalid ? ">=4GB,<" : "codec:hevc, hdr:!sdr"} aria-label="Structured search" />
+        <input type="search" defaultValue={invalid ? ">=4GB,<" : "codec:hevc, hdr:!sdr"} aria-label="Structured search" />
         <button type="button" className="metadata-search-remove" aria-label="Clear search">
           <X aria-hidden="true" className="nav-icon" />
         </button>
@@ -663,13 +812,20 @@ function SearchFilterFixture({ invalid = false }: { invalid?: boolean }) {
 function IgnorePatternFixture() {
   return (
     <div className="ignore-pattern-section">
-      <button type="button" className="secondary ignore-pattern-section-toggle">
-        <span className="ignore-pattern-section-title">User ignore patterns</span>
+      <div className="ignore-pattern-section-toggle-row">
+        <button type="button" className="secondary icon-only-button ignore-pattern-section-chevron" aria-label="Collapse User ignore patterns" aria-expanded="true">
+          <ChevronDown aria-hidden="true" className="nav-icon" />
+        </button>
+        <div className="ignore-pattern-section-toggle-lead">
+          <button type="button" className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain" aria-expanded="true">
+            <span className="ignore-pattern-section-title">User ignore patterns</span>
+            <span className="sr-only">2</span>
+          </button>
+        </div>
         <span className="ignore-pattern-section-meta">
           <span className="badge">2</span>
-          <ChevronDown aria-hidden="true" className="nav-icon" />
         </span>
-      </button>
+      </div>
       <div className="ignore-pattern-section-body">
         <div className="ignore-pattern-row ignore-pattern-row-draft">
           <div className="ignore-pattern-control">
@@ -838,12 +994,23 @@ function FileDetailNavigationFixture() {
                 <span>Overview</span>
               </span>
             </button>
-            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="streams" data-toggle-key="streams" tabIndex={-1}>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="videoStreams" data-toggle-key="videoStreams" tabIndex={-1}>
               <span className="settings-navigation-item-content">
-                <Database className="nav-icon" aria-hidden="true" />
-                <span>Streams</span>
+                <Film className="nav-icon" aria-hidden="true" />
+                <span>Video streams</span>
               </span>
             </button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="audioStreams" data-toggle-key="audioStreams" tabIndex={-1}><span className="settings-navigation-item-content"><AudioLines className="nav-icon" aria-hidden="true" /><span>Audio streams</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="subtitles" data-toggle-key="subtitles" tabIndex={-1}><span className="settings-navigation-item-content"><Captions className="nav-icon" aria-hidden="true" /><span>Subtitles</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="chapters" data-toggle-key="chapters" tabIndex={-1}><span className="settings-navigation-item-content"><ListVideo className="nav-icon" aria-hidden="true" /><span>Chapters</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="transcoding" data-toggle-key="transcoding" tabIndex={-1}><span className="settings-navigation-item-content"><Clapperboard className="nav-icon" aria-hidden="true" /><span>Transcode</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="compatibility" data-toggle-key="compatibility" tabIndex={-1}><span className="settings-navigation-item-content"><Cpu className="nav-icon" aria-hidden="true" /><span>Compatibility</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="preview" data-toggle-key="preview" tabIndex={-1}><span className="settings-navigation-item-content"><Play className="nav-icon" aria-hidden="true" /><span>Preview</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="qualityBreakdown" data-toggle-key="qualityBreakdown" tabIndex={-1}><span className="settings-navigation-item-content"><Gauge className="nav-icon" aria-hidden="true" /><span>Quality breakdown</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="jellyfin" data-toggle-key="jellyfin" tabIndex={-1}><span className="settings-navigation-item-content"><Radio className="nav-icon" aria-hidden="true" /><span>Streaming</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="cover" data-toggle-key="cover" tabIndex={-1}><span className="settings-navigation-item-content"><ImageIcon className="nav-icon" aria-hidden="true" /><span>Cover</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="fileHistory" data-toggle-key="fileHistory" tabIndex={-1}><span className="settings-navigation-item-content"><History className="nav-icon" aria-hidden="true" /><span>File history</span></span></button>
+            <button type="button" className="settings-navigation-item settings-mobile-navigation-item" data-file-detail-panel-id="rawJson" data-toggle-key="rawJson" tabIndex={-1}><span className="settings-navigation-item-content"><FileText className="nav-icon" aria-hidden="true" /><span>Raw ffprobe JSON</span></span></button>
           </nav>
         </div>
         <div className="settings-navigation-quick-actions file-detail-navigation-actions">
@@ -855,7 +1022,7 @@ function FileDetailNavigationFixture() {
         <div className="settings-navigation-header">
           <span>File details</span>
           <button type="button" className="secondary icon-only-button settings-navigation-collapse-button" aria-label="Collapse file detail navigation" aria-expanded="true">
-            <PanelLeftToggleIcon aria-hidden="true" collapsed={false} className="settings-navigation-toggle-icon" size={24} />
+            <PanelLeftToggleIcon aria-hidden="true" collapsed={false} className="settings-navigation-toggle-icon" />
           </button>
         </div>
         <nav className="settings-navigation-list">
@@ -866,12 +1033,23 @@ function FileDetailNavigationFixture() {
               <span>Overview</span>
             </span>
           </button>
-          <button type="button" className="settings-navigation-item" aria-label="Streams" data-file-detail-panel-id="streams" data-toggle-key="streams">
+          <button type="button" className="settings-navigation-item" aria-label="Video streams" data-file-detail-panel-id="videoStreams" data-toggle-key="videoStreams">
             <span className="settings-navigation-item-content">
-              <Database className="nav-icon" aria-hidden="true" />
-              <span>Streams</span>
+              <Film className="nav-icon" aria-hidden="true" />
+              <span>Video streams</span>
             </span>
           </button>
+          <button type="button" className="settings-navigation-item" aria-label="Audio streams" data-file-detail-panel-id="audioStreams" data-toggle-key="audioStreams"><span className="settings-navigation-item-content"><AudioLines className="nav-icon" aria-hidden="true" /><span>Audio streams</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Subtitles" data-file-detail-panel-id="subtitles" data-toggle-key="subtitles"><span className="settings-navigation-item-content"><Captions className="nav-icon" aria-hidden="true" /><span>Subtitles</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Chapters" data-file-detail-panel-id="chapters" data-toggle-key="chapters"><span className="settings-navigation-item-content"><ListVideo className="nav-icon" aria-hidden="true" /><span>Chapters</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Transcode" data-file-detail-panel-id="transcoding" data-toggle-key="transcoding"><span className="settings-navigation-item-content"><Clapperboard className="nav-icon" aria-hidden="true" /><span>Transcode</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Compatibility" data-file-detail-panel-id="compatibility" data-toggle-key="compatibility"><span className="settings-navigation-item-content"><Cpu className="nav-icon" aria-hidden="true" /><span>Compatibility</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Preview" data-file-detail-panel-id="preview" data-toggle-key="preview"><span className="settings-navigation-item-content"><Play className="nav-icon" aria-hidden="true" /><span>Preview</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Quality breakdown" data-file-detail-panel-id="qualityBreakdown" data-toggle-key="qualityBreakdown"><span className="settings-navigation-item-content"><Gauge className="nav-icon" aria-hidden="true" /><span>Quality breakdown</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Streaming" data-file-detail-panel-id="jellyfin" data-toggle-key="jellyfin"><span className="settings-navigation-item-content"><Radio className="nav-icon" aria-hidden="true" /><span>Streaming</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Cover" data-file-detail-panel-id="cover" data-toggle-key="cover"><span className="settings-navigation-item-content"><ImageIcon className="nav-icon" aria-hidden="true" /><span>Cover</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="File history" data-file-detail-panel-id="fileHistory" data-toggle-key="fileHistory"><span className="settings-navigation-item-content"><History className="nav-icon" aria-hidden="true" /><span>File history</span></span></button>
+          <button type="button" className="settings-navigation-item" aria-label="Raw ffprobe JSON" data-file-detail-panel-id="rawJson" data-toggle-key="rawJson"><span className="settings-navigation-item-content"><FileText className="nav-icon" aria-hidden="true" /><span>Raw ffprobe JSON</span></span></button>
         </nav>
       </aside>
       <section className="panel file-detail-active-panel">
@@ -898,15 +1076,25 @@ function FileDetailNavigationFixture() {
 function PreviewFixture() {
   return (
     <div className="file-detail-preview-panel">
+      <div className="panel-title-row">
+        <h2>Preview</h2>
+        <TooltipTrigger
+          ariaLabel="Show preview playback help"
+          className="file-detail-preview-warning-tooltip"
+          content={(
+            <div className="file-detail-preview-help-tooltip">
+              <p>Preview playback is best effort and may start slowly or stutter.</p>
+              <p>Best browser support: MP4/WebM video and MP3, M4A, WAV, OGG, or FLAC audio; codecs vary by browser.</p>
+              <p>Playback issue? Report the file or upload a sample.</p>
+              <a href="https://www.medialyze.app/report?source=file_detail_page" rel="noreferrer" target="_blank"><ArrowUpRight size={14} aria-hidden="true" />Report file</a>
+            </div>
+          )}
+        >
+          <Info size={14} aria-hidden="true" />
+        </TooltipTrigger>
+      </div>
       <div className="file-detail-preview-player-shell">
         <video className="file-detail-preview-player" controls aria-label="Preview player" />
-      </div>
-      <div className="file-detail-preview-report">
-        <p>Browser playback is a best-effort preview and may not support every codec.</p>
-        <button type="button" className="file-detail-preview-report-button file-detail-cover-button secondary small">
-          <Download className="nav-icon" aria-hidden="true" />
-          Download file
-        </button>
       </div>
     </div>
   );
@@ -1024,21 +1212,27 @@ function ComparisonChartFixture() {
   );
 }
 
-function ReleaseDialogFixture() {
+function ReleaseDialogFixture({ telemetryOff = false }: { telemetryOff?: boolean }) {
   return (
     <div className="release-notes-dialog ui-elements-dialog-surface" role="presentation">
-      <div className="release-notes-header release-notes-header-menu-open">
-        <div className="release-notes-title-block">
+      <div className="release-notes-header">
+        <div className="release-notes-title-block page-heading-row">
+          <Rss aria-hidden="true" className="page-heading-icon" />
           <h2>Release history</h2>
         </div>
         <div className="release-notes-actions">
-          <button type="button" className="release-notes-download release-notes-download-success">
-            <Download className="nav-icon" aria-hidden="true" />
-            <span>Downloaded</span>
-          </button>
-          <a href="/releases" className="release-notes-icon-link" aria-label="Open GitHub repository" onClick={preventCatalogNavigation}>
-            <GithubIcon className="release-notes-github-icon" size={18} aria-hidden="true" />
-          </a>
+          <button type="button" className="release-notes-menu-toggle" aria-label="Show release history actions" aria-expanded="false"><ChevronDown aria-hidden="true" className="nav-icon" /></button>
+          <div className="release-notes-secondary-actions">
+            <button type="button" className="release-notes-download release-notes-download-success">
+              <Download className="nav-icon" aria-hidden="true" />
+              <span>Downloaded</span>
+            </button>
+            <a href="/issues" className="release-notes-icon-link" aria-label="Report an issue" onClick={preventCatalogNavigation}><Bug aria-hidden="true" className="nav-icon" /></a>
+            <a href="/sponsors" className="release-notes-icon-link" aria-label="Support MediaLyze" onClick={preventCatalogNavigation}><HandCoinsIcon aria-hidden="true" className="release-notes-hand-coins-icon" size={18} /></a>
+            <a href="/releases" className="release-notes-icon-link" aria-label="Open GitHub repository" onClick={preventCatalogNavigation}>
+              <GithubIcon className="release-notes-github-icon" size={18} aria-hidden="true" />
+            </a>
+          </div>
           <button type="button" className="release-notes-close" aria-label="Close">
             <X aria-hidden="true" className="nav-icon" />
           </button>
@@ -1110,7 +1304,7 @@ export function UiElementsPage() {
           <span className="badge scan-badge">{t("uiElements.devOnly")}</span>
           <label className="field ui-elements-theme-field">
             <span>{t("uiElements.themePreview")}</span>
-            <select value={themePreference} onChange={(event) => updateThemePreview(event.target.value as ThemePreference)}>
+            <select className="settings-choice-input" value={themePreference} onChange={(event) => updateThemePreview(event.target.value as ThemePreference)}>
               <option value="system">{t("theme.system")}</option>
               <option value="light">{t("theme.light")}</option>
               <option value="dark">{t("theme.dark")}</option>
@@ -1136,7 +1330,7 @@ export function UiElementsPage() {
         <div className="ui-elements-content">
           <CatalogSection definition={catalogSections[0]}>
             <VariantGroup title="Tokens and type">
-              <VariantCard title="Theme tokens" source={`${source}: globals.css`} classes={["--bg", "--panel", "--accent", "--accent-2"]} wide>
+              <VariantCard title="Theme tokens" source={`${source}: globals.css`} classes={["--bg", "--panel", "--surface", "--surface-subtle", "--border", "--scrollbar-thumb", "--scrollbar-thumb-hover", "--accent", "--accent-2"]} wide>
                 <div className="ui-elements-token-grid">
                   {colorTokens.map((token) => (
                     <article key={token.name} className="ui-elements-token">
@@ -1161,46 +1355,40 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[1]}>
             <VariantGroup title="Header variants">
-              <VariantCard title="Primary and library nav" source={header} classes={["media-nav-panel", "media-nav-icons", "media-nav-libraries", "library-nav-link", "icon-nav-button", "nav-active-pill"]}>
+              <VariantCard title="Primary and library nav" source={header} status="Icons show page names after two seconds of hover. The Library icon opens a list on hover or click." classes={["media-nav-panel", "media-nav-icons", "media-nav-library-menu", "media-nav-library-list", "library-nav-link", "icon-nav-button", "nav-active-pill", "data-tooltip"]}>
+                <div style={{ minHeight: 165 }}>
                 <div className="media-nav-panel">
                   <div className="media-nav-icons">
-                    <a href="/" className="icon-nav-button active" aria-label="Dashboard" onClick={preventCatalogNavigation}>
-                      <span className="nav-active-pill" />
-                      <span className="nav-link-content">
-                        <House aria-hidden="true" className="nav-icon" />
-                      </span>
-                    </a>
-                    <a href="/files/compare" className="icon-nav-button" aria-label="Compare files" onClick={preventCatalogNavigation}>
-                      <span className="nav-link-content">
-                        <GitCompare aria-hidden="true" className="nav-icon" />
-                      </span>
-                    </a>
-                    <a href="/settings" className="icon-nav-button is-first-library-attention" aria-label="Settings" onClick={preventCatalogNavigation}>
-                      <span className="nav-link-content">
-                        <Settings aria-hidden="true" className="nav-icon" />
-                      </span>
-                    </a>
-                    <a href="/storage-map" className="icon-nav-button" aria-label="Storage map" onClick={preventCatalogNavigation}>
-                      <span className="nav-link-content">
-                        <Map aria-hidden="true" className="nav-icon" />
-                      </span>
-                    </a>
+                    <a href="/" className="icon-nav-button" aria-label="Dashboard" data-tooltip="Dashboard" onClick={preventCatalogNavigation}><span className="nav-link-content"><House aria-hidden="true" className="nav-icon" /></span></a>
+                    <div className="media-nav-library-menu">
+                      <button type="button" className="icon-nav-button active" aria-label="Libraries" data-tooltip="Libraries" aria-expanded="true" aria-controls="catalog-library-list"><span className="nav-active-pill" /><span className="nav-link-content"><Library aria-hidden="true" className="nav-icon" /></span></button>
+                      <div id="catalog-library-list" className="media-nav-library-list">
+                        <a href="/libraries/1" className="library-nav-link active" onClick={preventCatalogNavigation}>Movies</a>
+                        <a href="/libraries/2" className="library-nav-link" onClick={preventCatalogNavigation}>Music</a>
+                      </div>
+                    </div>
+                    <a href="/files/compare" className="icon-nav-button" aria-label="Compare files" data-tooltip="Compare files" onClick={preventCatalogNavigation}><span className="nav-link-content"><GitCompare aria-hidden="true" className="nav-icon" /></span></a>
+                    <a href="/storage-map" className="icon-nav-button" aria-label="Storage map" data-tooltip="Storage map" onClick={preventCatalogNavigation}><span className="nav-link-content"><Map aria-hidden="true" className="nav-icon" /></span></a>
+                    <a href="/transcoding" className="icon-nav-button is-first-library-attention" aria-label="Transcoding" data-tooltip="Transcoding" onClick={preventCatalogNavigation}><span className="nav-link-content"><Activity aria-hidden="true" className="nav-icon" /></span></a>
+                    <a href="/settings" className="icon-nav-button" aria-label="Settings" data-tooltip="Settings" onClick={preventCatalogNavigation}><span className="nav-link-content"><Settings aria-hidden="true" className="nav-icon" /></span></a>
                   </div>
-                  <div className="media-nav-libraries ui-elements-library-nav">
-                    <a href="/libraries/1" className="library-nav-link active" onClick={preventCatalogNavigation}>
-                      <span className="nav-active-pill" />
-                      <span className="nav-link-content">Movies</span>
-                    </a>
-                    <a href="/libraries/2" className="library-nav-link" onClick={preventCatalogNavigation}>
-                      <span className="nav-link-content">Music</span>
-                    </a>
+                </div>
+                </div>
+                <div className="media-nav-panel" style={{ width: "100%", maxWidth: 290, marginTop: 12, marginLeft: 0 }}>
+                  <div className="media-nav-icons">
+                    <a href="/" className="icon-nav-button active" aria-label="Dashboard" data-tooltip="Dashboard" onClick={preventCatalogNavigation}><span className="nav-active-pill" /><span className="nav-link-content"><House aria-hidden="true" className="nav-icon" /></span></a>
+                    <div className="media-nav-library-menu"><button type="button" className="icon-nav-button" aria-label="Libraries" data-tooltip="Libraries" aria-expanded="false"><span className="nav-link-content"><Library aria-hidden="true" className="nav-icon" /></span></button></div>
+                    <a href="/files/compare" className="icon-nav-button" aria-label="Compare files" data-tooltip="Compare files" onClick={preventCatalogNavigation}><span className="nav-link-content"><GitCompare aria-hidden="true" className="nav-icon" /></span></a>
+                    <a href="/storage-map" className="icon-nav-button" aria-label="Storage map" data-tooltip="Storage map" onClick={preventCatalogNavigation}><span className="nav-link-content"><Map aria-hidden="true" className="nav-icon" /></span></a>
+                    <a href="/transcoding" className="icon-nav-button" aria-label="Transcoding" data-tooltip="Transcoding" onClick={preventCatalogNavigation}><span className="nav-link-content"><Activity aria-hidden="true" className="nav-icon" /></span></a>
+                    <a href="/settings" className="icon-nav-button" aria-label="Settings" data-tooltip="Settings" onClick={preventCatalogNavigation}><span className="nav-link-content"><Settings aria-hidden="true" className="nav-icon" /></span></a>
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Brand, version, and update labels" source={header} classes={["app-title-link", "app-version", "app-version-update"]}>
+              <VariantCard title="Brand, version, and update labels" source={header} classes={["app-title-link", "app-title-icon", "app-version", "app-version-update"]} status="On phones, the 42px logo uses balanced header spacing; the version pill stays compact on wider screens.">
                 <div className="app-title-block">
                   <a href="/" className="app-title-link" aria-label="Dashboard" onClick={preventCatalogNavigation}>
-                    <h1>MediaLyze</h1>
+                    <h1><span className="app-title-text">MediaLyze</span><img className="app-title-icon" src="/favicon.svg" alt="" /></h1>
                   </a>
                   <button type="button" className="app-version">dev</button>
                   <span className="app-version-update">Update available: v0.15.0</span>
@@ -1211,24 +1399,49 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[2]}>
             <VariantGroup title="Navigation and settings controls">
-              <VariantCard title="Settings sidebar" source={`${settings} > Navigation`} classes={["settings-navigation-panel", "settings-navigation-item", "settings-navigation-quick-action"]} wide>
+              <VariantCard title="Settings sidebar" source={`${settings} > Navigation`} classes={["settings-navigation-panel", "settings-navigation-item", "settings-navigation-quick-action", "settings-navigation-search-stack", "settings-mobile-navigation-search-stack", "settings-mobile-navigation-search", "settings-search-results", "settings-search-result", "settings-search-result-label", "settings-search-result-context"]} wide>
                 <SettingsNavigationFixture />
               </VariantCard>
-              <VariantCard title="Compatibility profile list" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-list", "compatibility-profile-search", "compatibility-profile-list-row", "compatibility-profile-quick-actions"]} wide>
-                <div className="compatibility-profile-list">
+              <VariantCard title="Settings sidebar · no search match" source={`${settings} > Navigation > Search empty`} classes={["settings-navigation-panel", "settings-navigation-search-stack", "settings-search-results", "settings-search-result-empty"]} wide>
+                <SettingsNavigationFixture noResults />
+              </VariantCard>
+              <VariantCard title="Libraries panel header actions" source={`${settings} > Libraries`} classes={["libraries-settings-panel", "async-panel-toggle-actions", "library-scan-button", "settings-panel-header-action"]} wide>
+                <section className="panel async-panel libraries-settings-panel">
+                  <div className="panel-header">
+                    <div>
+                      <div className="panel-title-row">
+                        <h2>Libraries</h2>
+                        <div className="async-panel-toggle-actions">
+                          <button type="button" className="small library-scan-button" aria-label="Full scan">
+                            <DatabaseSearch aria-hidden="true" className="nav-icon" />
+                            <span>Full scan</span>
+                          </button>
+                          <button type="button" className="secondary small settings-panel-header-action">
+                            <Plus aria-hidden="true" className="nav-icon" />
+                            <span>Add library</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="async-panel-body"><div className="notice">Configured libraries</div></div>
+                </section>
+              </VariantCard>
+              <VariantCard title="Compatibility profile list" source={`${settings} > Hard/Software Profiles`} status="Hover and keyboard focus highlight the full profile row including actions; favorite actions fill their symbol" classes={["compatibility-profile-list", "compatibility-profile-search", "compatibility-profile-list-item", "compatibility-profile-list-row", "quality-profile-list-row", "compatibility-profile-list-trigger", "compatibility-profile-quick-actions", "transcode-automation-list-copy", "compatibility-profile-list-copy", "compatibility-profile-details", "settings-choice-input"]} wide>
+                <div className="compatibility-profile-list compatibility-profile-catalog-list">
                   <div className="compatibility-profile-search">
                     <Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" />
                     <input type="search" placeholder="Search profiles" aria-label="Search hardware profiles" />
                   </div>
                   <article className="compatibility-profile-list-item">
-                    <div className="compatibility-profile-list-row">
+                    <div className="compatibility-profile-list-row quality-profile-list-row">
                       <button type="button" className="compatibility-profile-list-trigger">
-                        <span>Apple TV 4K 3rd Gen</span>
+                        <span className="transcode-automation-list-copy compatibility-profile-list-copy"><strong>Apple TV 4K 3rd Gen</strong></span>
                         <ChevronDown aria-hidden="true" />
                       </button>
                       <div className="compatibility-profile-quick-actions">
                         <button type="button" className="secondary icon-only-button compatibility-profile-quick-action is-favorite" aria-label="Remove Apple TV profile from favorites" aria-pressed="true">
-                          <AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" />
+                          <AnimatedSparklesIcon size={18} active aria-hidden="true" className="nav-icon" />
                         </button>
                         <button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Edit Apple TV profile">
                           <SquarePenIcon size={18} aria-hidden="true" className="nav-icon" />
@@ -1243,9 +1456,9 @@ export function UiElementsPage() {
                     </div>
                   </article>
                   <article className="compatibility-profile-list-item is-expanded">
-                    <div className="compatibility-profile-list-row">
+                    <div className="compatibility-profile-list-row quality-profile-list-row">
                       <button type="button" className="compatibility-profile-list-trigger" aria-expanded="true">
-                        <span>VLC 3 Desktop</span>
+                        <span className="transcode-automation-list-copy compatibility-profile-list-copy"><strong>VLC 3 Desktop</strong></span>
                         <ChevronDown aria-hidden="true" />
                       </button>
                       <div className="compatibility-profile-quick-actions">
@@ -1265,32 +1478,32 @@ export function UiElementsPage() {
                     </div>
                     <div className="compatibility-profile-details">
                       <div className="compatibility-profile-form-grid">
-                        <label>Name<input readOnly value="VLC 3 Desktop" /></label>
+                        <label>Name<input className="settings-choice-input" readOnly value="VLC 3 Desktop" /></label>
                         <label>
                           Category
-                          <select disabled defaultValue="player">
+                          <select className="settings-choice-input" disabled defaultValue="player">
                             <option value="player">Media player</option>
                             <option value="other">Other</option>
                           </select>
                         </label>
-                        <label>Developer<input readOnly value="VideoLAN" /></label>
-                        <label>Verified by<select disabled defaultValue="project-documentation"><option value="project-documentation">Project documentation</option></select></label>
+                        <label>Developer<input className="settings-choice-input" readOnly value="VideoLAN" /></label>
+                        <label>Verified by<select className="settings-choice-input" disabled defaultValue="project-documentation"><option value="project-documentation">Project documentation</option></select></label>
                       </div>
                     </div>
                   </article>
                 </div>
               </VariantCard>
-              <VariantCard title="Structured compatibility capability editor" source={`${settings} > Hard/Software Profiles > Profile details`} classes={["compatibility-capability-section", "compatibility-capability-row", "compatibility-capability-limits"]} wide>
+              <VariantCard title="Structured compatibility capability editor" source={`${settings} > Hard/Software Profiles > Profile details`} classes={["compatibility-capability-section", "compatibility-capability-row", "compatibility-capability-limits", "settings-choice-input"]} status="Nested surfaces follow the active theme without light gray fallbacks." wide>
                 <details className="compatibility-capability-section" open>
                   <summary>Sources</summary>
                   <div className="compatibility-capability-section-body">
                     <div className="compatibility-capability-editor">
                       <div className="compatibility-capability-row compatibility-source-row">
-                        <label>Label<input defaultValue="Technical specifications" /></label>
+                        <label>Label<input className="settings-choice-input" defaultValue="Technical specifications" /></label>
                         <label>
                           URL
                           <span className="compatibility-source-url-control is-readonly">
-                            <input type="url" readOnly value="https://example.com/specifications" />
+                            <input className="settings-choice-input" type="url" readOnly value="https://example.com/specifications" />
                             <button type="button" className="secondary icon-only-button compatibility-source-open-button" aria-label="Open source in a new tab">
                               <SquareArrowOutUpRight size={17} aria-hidden="true" />
                             </button>
@@ -1307,7 +1520,7 @@ export function UiElementsPage() {
                       <div className="compatibility-capability-row">
                         <label>
                           Format
-                          <select defaultValue="truehd">
+                          <select className="settings-choice-input" defaultValue="truehd">
                             <option value="aac">AAC (aac)</option>
                             <option value="eac3">Dolby Digital Plus / E-AC-3 (eac3)</option>
                             <option value="truehd">Dolby TrueHD (truehd)</option>
@@ -1317,7 +1530,7 @@ export function UiElementsPage() {
                         </label>
                         <label>
                           Support
-                          <select defaultValue="passthrough_only">
+                          <select className="settings-choice-input" defaultValue="passthrough_only">
                             <option value="true">Supported</option>
                             <option value="limited">Limited</option>
                             <option value="passthrough_only">Passthrough only</option>
@@ -1335,7 +1548,7 @@ export function UiElementsPage() {
                   <div className="compatibility-capability-row">
                     <label>
                       Codec
-                      <select defaultValue="hevc">
+                      <select className="settings-choice-input" defaultValue="hevc">
                         <option value="h264">H.264 / AVC (h264)</option>
                         <option value="hevc">H.265 / HEVC (hevc)</option>
                         <option value="vvc">H.266 / VVC (vvc)</option>
@@ -1351,16 +1564,16 @@ export function UiElementsPage() {
                     </label>
                   </div>
                   <div className="compatibility-capability-limits">
-                    <label>Max. resolution<input placeholder="e.g. 4K" /></label>
-                    <label>Max. FPS<input placeholder="e.g. 60" /></label>
-                    <label>Bit depth<input placeholder="e.g. 8, 10" /></label>
-                    <label>HDR formats<input placeholder="e.g. HDR10, Dolby Vision" /></label>
+                    <label>Max. resolution<input className="settings-choice-input" placeholder="e.g. 4K" /></label>
+                    <label>Max. FPS<input className="settings-choice-input" placeholder="e.g. 60" /></label>
+                    <label>Bit depth<input className="settings-choice-input" placeholder="e.g. 8, 10" /></label>
+                    <label>HDR formats<input className="settings-choice-input" placeholder="e.g. HDR10, Dolby Vision" /></label>
                   </div>
                 </div>
                 <div className="compatibility-capability-row compatibility-container-row">
                   <label>
                     Container
-                    <select defaultValue="mkv">
+                    <select className="settings-choice-input" defaultValue="mkv">
                       <option value="mp4">MP4 / ISO Base Media (mp4)</option>
                       <option value="mkv">Matroska Video (mkv)</option>
                       <option value="webm">WebM (webm)</option>
@@ -1372,7 +1585,7 @@ export function UiElementsPage() {
                 <div className="compatibility-capability-row">
                   <label>
                     Subtitle format
-                    <select defaultValue="subrip">
+                    <select className="settings-choice-input" defaultValue="subrip">
                       <option value="subrip">SubRip / SRT (subrip)</option>
                       <option value="ass">Advanced SubStation Alpha (ass)</option>
                       <option value="webvtt">WebVTT (webvtt)</option>
@@ -1383,10 +1596,10 @@ export function UiElementsPage() {
                 </div>
                 <div className="compatibility-video-capability">
                   <div className="compatibility-capability-row">
-                    <label>Codec<select defaultValue="hevc"><option value="hevc">H.265 / HEVC (hevc)</option></select></label>
+                    <label>Codec<select className="settings-choice-input" defaultValue="hevc"><option value="hevc">H.265 / HEVC (hevc)</option></select></label>
                     <label>
                       Playback mode
-                      <select defaultValue="conditional">
+                      <select className="settings-choice-input" defaultValue="conditional">
                         <option value="direct">Direct</option>
                         <option value="direct_stream">Direct stream / remux</option>
                         <option value="video_transcode">Video transcode</option>
@@ -1396,7 +1609,7 @@ export function UiElementsPage() {
                   </div>
                   <label className="compatibility-profile-reason">
                     Conditions (JSON)
-                    <textarea readOnly rows={3} value={'[{"kind":"device_capability","value":"HEVC decoder"}]'} />
+                    <textarea className="settings-choice-input" readOnly rows={3} value={'[{"kind":"device_capability","value":"HEVC decoder"}]'} />
                   </label>
                 </div>
                 <details className="compatibility-capability-section" open>
@@ -1406,45 +1619,69 @@ export function UiElementsPage() {
                   </div>
                 </details>
               </VariantCard>
-              <VariantCard title="Combination profile tabs" source={`${settings} > Hard/Software Profiles`} classes={["quality-profile-segments", "quality-profile-segment", "quality-profile-segment-pill"]} wide>
-                <div className="compatibility-profile-panel">
-                  <p className="compatibility-profile-development-note">
-                    This is a very early version of the profile catalog and it still needs to grow. MediaLyze improves through community contributions, so please suggest your own profiles, additions, and corrections.
-                  </p>
-                  <div className="quality-profile-segments" role="tablist" aria-label="Hardware & software profiles">
-                    <SlidingTogglePill activeKey="hardware" className="nav-active-pill quality-profile-segment-pill" />
-                    {(["hardware", "software", "compatibility"] as const).map((profileTab) => (
-                      <button
-                        key={profileTab}
-                        type="button"
-                        data-toggle-key={profileTab}
-                        className={`quality-profile-segment${profileTab === "hardware" ? " is-active" : ""}`}
-                        aria-pressed={profileTab === "hardware"}
-                      >
-                        <span>
-                          {profileTab === "hardware"
-                            ? "Hardware"
-                            : profileTab === "software"
-                              ? "Software / Player"
-                              : "Combination"}
-                        </span>
+              <VariantCard title="Compact combination profile tabs" source={`${settings} > Hard/Software Profiles`} classes={["panel-title-row", "tooltip-trigger", "compatibility-profile-list", "compatibility-profile-catalog-list", "settings-profile-toggle-row", "transcode-automation-toggle-row", "transcode-automation-tab-controls", "transcode-automation-tab-list", "transcode-automation-tab-button", "transcode-automation-tab-label", "settings-profile-toggle-actions", "settings-panel-header-action", "compatibility-profile-header-action"]} wide>
+                <div className="compatibility-profile-list compatibility-profile-catalog-list">
+                  <div className="panel-title-row">
+                    <h2>Hardware &amp; software profiles</h2>
+                    <TooltipTrigger
+                      ariaLabel="Explain the compatibility profile catalog status"
+                      content="This is a very early version of the profile catalog and it still needs to grow. MediaLyze improves through community contributions, so please suggest your own profiles, additions, and corrections."
+                    >
+                      ?
+                    </TooltipTrigger>
+                  </div>
+                  <div className="settings-profile-toggle-row transcode-automation-toggle-row">
+                    <div className="transcode-automation-tab-controls">
+                      <div className="transcode-automation-tab-list" role="tablist" aria-label="Hardware & software profiles" aria-orientation="horizontal">
+                      {(["hardware", "software", "compatibility"] as const).map((profileTab) => (
+                        <button
+                          key={profileTab}
+                          type="button"
+                          id={`catalog-compatibility-profile-tab-${profileTab}`}
+                          role="tab"
+                          data-toggle-key={profileTab}
+                          className={`transcode-automation-tab-button${profileTab === "hardware" ? " active" : ""}`}
+                          aria-selected={profileTab === "hardware"}
+                          tabIndex={profileTab === "hardware" ? 0 : -1}
+                        >
+                          <span className="transcode-automation-tab-label">
+                            {profileTab === "hardware"
+                              ? "Hardware"
+                              : profileTab === "software"
+                                ? "Software / Player"
+                                : "Combination"}
+                          </span>
+                        </button>
+                      ))}
+                      </div>
+                    </div>
+                    <div className="settings-profile-toggle-actions">
+                      <button type="button" className="secondary small settings-panel-header-action compatibility-profile-header-action">
+                        <Plus aria-hidden="true" size={16} />
+                        <span>Profile</span>
                       </button>
-                    ))}
+                    </div>
                   </div>
+                  <div className="compatibility-profile-search">
+                    <Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" />
+                    <input type="search" placeholder="Search profiles" aria-label="Search Hardware profiles" />
+                  </div>
+                  <article className="compatibility-profile-list-item">
+                    <div className="compatibility-profile-list-row quality-profile-list-row">
+                      <button type="button" className="compatibility-profile-list-trigger" aria-expanded="false">
+                        <span className="transcode-automation-list-copy compatibility-profile-list-copy"><strong>Apple TV 4K 3rd Gen</strong></span>
+                        <ChevronDown aria-hidden="true" />
+                      </button>
+                      <div className="compatibility-profile-quick-actions">
+                        <button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Add Apple TV profile to favorites">
+                          <AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
                 </div>
               </VariantCard>
-              <VariantCard title="Compact profile header action" source={`${settings} > Libraries / Quality / Hard/Software Profiles`} classes={["panel-title-row", "settings-panel-header-action", "compatibility-profile-header-action"]} wide>
-                <div className="panel-title-row">
-                  <h2>Hardware &amp; software profiles</h2>
-                  <div className="async-panel-toggle-actions">
-                    <button type="button" className="secondary small settings-panel-header-action compatibility-profile-header-action">
-                      <Plus aria-hidden="true" size={16} />
-                      <span>Add local profile</span>
-                    </button>
-                  </div>
-                </div>
-              </VariantCard>
-              <VariantCard title="Library title actions" source={`${settings} > Libraries`} classes={["library-title-actions", "library-action-tooltip-trigger", "library-change-path-button"]}>
+              <VariantCard title="Library title actions" source={`${settings} > Libraries`} classes={["library-title-actions", "library-action-tooltip-trigger"]}>
                 <div className="library-title-actions">
                   <button type="button" className="secondary icon-only-button library-action-tooltip-trigger" aria-label="Show library on dashboard">
                     <DashboardVisibilityIcon visible />
@@ -1455,9 +1692,32 @@ export function UiElementsPage() {
                   <button type="button" className="secondary icon-only-button library-action-tooltip-trigger" aria-label="Delete library">
                     <DeleteIcon size={20} aria-hidden="true" className="nav-icon" />
                   </button>
-                  <button type="button" className="secondary small library-change-path-button">
-                    Change path
-                  </button>
+                </div>
+              </VariantCard>
+              <VariantCard title="Library connector status action" source={`${settings} > Libraries`} classes={["connector-library-status-row", "settings-panel-header-action", "connector-action-button"]} wide>
+                <div className="connector-library-status-row">
+                  <div><strong>Jellyfin</strong><span>jellyfin · Movies</span></div>
+                  <span className="badge">derived</span>
+                  <a href="#connector" className="secondary small settings-panel-header-action connector-action-button" onClick={preventCatalogNavigation}>
+                    Open connector
+                    <SquareArrowOutUpRight aria-hidden="true" size={16} />
+                  </a>
+                </div>
+              </VariantCard>
+              <VariantCard title="Compact history retention tables" source="Settings > History retention" status="Tighter rows and shorter forecast headings" classes={["history-retention-tables", "settings-table-shell", "history-retention-table-shell", "settings-data-table", "history-retention-table", "history-retention-input"]} wide>
+                <div className="history-retention-tables">
+                  <div className="settings-table-shell history-retention-table-shell">
+                    <table className="settings-data-table history-retention-table">
+                      <thead><tr><th>History type</th><th>Retention days</th><th>Storage limit (GB)</th></tr></thead>
+                      <tbody><tr><th scope="row">File history</th><td><input className="settings-choice-input history-retention-input" value="30" readOnly /></td><td><input className="settings-choice-input history-retention-input" value="8.0" readOnly /></td></tr><tr><th scope="row">Scan history</th><td><input className="settings-choice-input history-retention-input" value="90" readOnly /></td><td><input className="settings-choice-input history-retention-input" value="2.0" readOnly /></td></tr></tbody>
+                    </table>
+                  </div>
+                  <div className="settings-table-shell history-retention-table-shell">
+                    <table className="settings-data-table history-retention-table">
+                      <thead><tr><th>History type</th><th>Current storage</th><th>Daily average</th><th>30-day projection</th><th>Configured forecast</th></tr></thead>
+                      <tbody><tr><th scope="row">File history</th><td>1.2 GB</td><td>24 MB</td><td>720 MB</td><td>3.4 GB</td></tr><tr><th scope="row">Scan history</th><td>84 MB</td><td>3 MB</td><td>90 MB</td><td>270 MB</td></tr></tbody>
+                    </table>
+                  </div>
                 </div>
               </VariantCard>
               <VariantCard title="History reconstruction action" source={`${settings} > History retention`} classes={["settings-panel-header-action", "history-retention-reconstruct-button"]}>
@@ -1465,34 +1725,109 @@ export function UiElementsPage() {
                   Reconstruct history
                 </button>
               </VariantCard>
-              <VariantCard title="Pattern recognition actions" source={`${settings} > Pattern recognition`} classes={["pattern-recognition-doc-button", "pattern-recognition-action-button", "ignore-pattern-action-button"]} wide>
-                <div className="pattern-recognition-doc-row">
-                  <div className="pattern-recognition-doc-copy">
-                    <p>Configure scan-time series and bonus folder patterns plus ignored paths.</p>
-                    <p>Pattern examples and matching rules are documented separately.</p>
+              <VariantCard title="Pattern recognition actions" source={`${settings} > Pattern recognition`} classes={["panel-header", "panel-title-row", "async-panel-header-status", "pattern-recognition-doc-button", "pattern-recognition-restore-button", "ignore-pattern-section-toggle-row", "ignore-pattern-section-header-action"]} wide>
+                <div className="panel-header">
+                  <div>
+                    <div className="panel-title-row">
+                      <h2>Folder &amp; pattern recognition</h2>
+                      <TooltipTrigger
+                        ariaLabel="Explain folder and pattern recognition"
+                        content={"Configure scan-time series, bonus, and duplicate filename patterns plus ignored paths.\nPattern examples and matching rules are documented separately."}
+                        preserveLineBreaks
+                      >
+                        ?
+                      </TooltipTrigger>
+                    </div>
                   </div>
-                  <a href="#pattern-docs" className="secondary small settings-panel-header-action pattern-recognition-doc-button">
-                    Open pattern docs
-                  </a>
+                  <div className="async-panel-header-status">
+                    <a href="#pattern-docs" target="_blank" rel="noreferrer" className="secondary small settings-panel-header-action pattern-recognition-doc-button">
+                      Open pattern docs
+                      <SquareArrowOutUpRight aria-hidden="true" size={16} />
+                    </a>
+                  </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Pattern recognition mode spacing" source={`${settings} > Pattern recognition`} classes={["distribution-copy", "pattern-recognition-mode-field", "settings-choice-input"]}>
-                <div>
+              <VariantCard title="Pattern recognition mode spacing" source={`${settings} > Pattern recognition`} classes={["pattern-recognition-settings-grid", "pattern-recognition-mode-field", "settings-choice-input"]}>
+                <div className="pattern-recognition-settings-grid">
+                  <div className="field pattern-recognition-mode-field">
+                    <label><span>Recognition mode</span><select className="settings-choice-input" defaultValue="folder-depth"><option value="folder-depth">Folder depth</option></select></label>
+                  </div>
+                  <div className="field">
+                    <label><span>Series folder depth</span><select className="settings-choice-input" defaultValue="1"><option value="1">1</option></select></label>
+                  </div>
+                  <div className="field">
+                    <label><span>Season folder depth</span><select className="settings-choice-input" defaultValue="2"><option value="2">2</option></select></label>
+                  </div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Duplicate filename matching settings" source={`${settings} > Pattern recognition`} classes={["distribution-copy", "pattern-recognition-field-label-row", "pattern-recognition-restore-button", "app-settings-divider", "pattern-recognition-section-divider", "ignore-pattern-section", "pattern-recognition-section", "ignore-pattern-section-toggle-row", "ignore-pattern-section-toggle-lead", "ignore-pattern-section-toggle", "ignore-pattern-section-meta", "ignore-pattern-section-title", "ignore-pattern-section-chevron"]} wide>
+                <div className="field">
                   <div className="distribution-copy">
+                    <div className="field-label-row">
+                      <strong>Duplicate filename matching</strong>
+                      <TooltipTrigger
+                        ariaLabel="Explain duplicate filename matching"
+                        content="Filename duplicates use a cleaned title core. Trailing years and square-bracketed release metadata are ignored; every file in a group must have a known runtime within the configured tolerance."
+                        preserveLineBreaks
+                      >
+                        ?
+                      </TooltipTrigger>
+                    </div>
+                  </div>
+                  <div className="inline-form-grid">
+                    <div className="field">
+                      <div className="field-label-row pattern-recognition-field-label-row">
+                        <label htmlFor="ui-pattern-duration-tolerance">Maximum runtime difference (seconds)</label>
+                        <TooltipTrigger
+                          ariaLabel="Explain maximum runtime difference"
+                          content="10 seconds is the default. Set 0 for equal runtimes only. Changes to suffix regexes require a new scan."
+                          preserveLineBreaks
+                        >
+                          ?
+                        </TooltipTrigger>
+                      </div>
+                      <input id="ui-pattern-duration-tolerance" className="settings-choice-input" type="number" min={0} max={300} defaultValue={10} />
+                    </div>
+                  </div>
+                  <div className="ignore-pattern-section pattern-recognition-section">
+                    <div className="ignore-pattern-section-toggle-row">
+                      <button type="button" className="secondary icon-only-button ignore-pattern-section-chevron" aria-label="Collapse Filename suffix regexes" aria-expanded="true">
+                        <ChevronDown aria-hidden="true" className="nav-icon" />
+                      </button>
+                      <div className="ignore-pattern-section-toggle-lead">
+                        <button type="button" className="secondary ignore-pattern-section-toggle ignore-pattern-section-toggle-plain" aria-expanded="true">
+                          <span className="ignore-pattern-section-title">Filename suffix regexes</span>
+                          <span className="sr-only">1</span>
+                        </button>
+                      </div>
+                      <span className="ignore-pattern-section-meta"><span className="badge">1</span></span>
+                      <div className="ignore-pattern-section-header-action">
+                        <TooltipTrigger
+                          ariaLabel="Restore duplicate matching defaults"
+                          content="Restore duplicate matching defaults"
+                          className="secondary icon-only-button pattern-recognition-restore-button"
+                          pinOnClick={false}
+                        >
+                          <History aria-hidden="true" className="nav-icon" size={16} />
+                        </TooltipTrigger>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="app-settings-divider pattern-recognition-section-divider" aria-hidden="true" />
+                <div className="field">
+                  <div className="field-label-row">
                     <strong>Show &amp; Seasons</strong>
                   </div>
-                  <div className="field pattern-recognition-mode-field">
-                    <label>Recognition mode<select className="settings-choice-input" defaultValue="folder-depth"><option value="folder-depth">Folder depth</option></select></label>
-                  </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Compatibility profile actions" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-action-button"]}>
+              <VariantCard title="Compatibility profile actions" source={`${settings} > Hard/Software Profiles`} classes={["compatibility-profile-action-button", "settings-panel-header-action", "transcode-action-button"]}>
                 <div className="compatibility-profile-card-actions">
-                  <button type="button" className="secondary compatibility-profile-action-button">
+                  <button type="button" className="secondary small settings-panel-header-action compatibility-profile-action-button">
                     <Copy aria-hidden="true" size={16} />
                     Edit local copy
                   </button>
-                  <button type="button" className="compatibility-profile-action-button is-primary">
+                  <button type="button" className="transcode-action-button compatibility-profile-action-button">
                     <Save aria-hidden="true" size={16} />
                     Save
                   </button>
@@ -1501,33 +1836,37 @@ export function UiElementsPage() {
               <VariantCard title="Collapsed settings sidebar" source={`${settings} > Navigation`} classes={["is-settings-nav-collapsed", "settings-navigation-item-content"]}>
                 <SettingsNavigationFixture collapsed />
               </VariantCard>
-              <VariantCard title="Native settings select · single chevron" source={`${settings} > Libraries / Quality profiles`} classes={["settings-choice-input"]}>
-                <select className="settings-choice-input" defaultValue="system" aria-label="Theme">
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
+              <VariantCard title="Native settings select · persistent single chevron" source={`${settings} > Libraries / Quality profiles`} classes={["settings-choice-input"]} status="Theme-aware native popup surfaces keep option text readable in light and dark mode.">
+                <div className="settings-main-column">
+                  <div className="field">
+                    <select className="settings-choice-input" defaultValue="system" aria-label="Theme">
+                      <option value="system">System</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                    </select>
+                  </div>
+                </div>
               </VariantCard>
               <VariantCard title="Table view editor" source={`${settings} > Table View`} classes={["settings-data-table", "statistics-drag-handle", "settings-checkbox-cell"]} wide>
                 <TableViewSettingsFixture />
               </VariantCard>
-              <VariantCard title="Connector panel title action" source={`${settings} > Connectors`} classes={["async-panel", "panel-title-row", "settings-panel-header-action", "connector-action-button"]} wide>
+              <VariantCard title="Connector heading help tooltip" source={`${settings} > Connectors`} classes={["async-panel", "panel-title-row", "tooltip-trigger", "settings-panel-header-action"]} wide>
                 <div className="settings-main-column">
-                  <AsyncPanel title="Connectors" subtitle="Connect MediaLyze to one or more media servers and map each external library location to a stable MediaLyze root." collapseActions={<button type="button" className="secondary small settings-panel-header-action connector-action-button"><Plus aria-hidden="true" />Add connection</button>}>
-                    <div className="notice">Connector accordions follow below the full-width description.</div>
+                  <AsyncPanel title="Connectors" titleAddon={<TooltipTrigger ariaLabel="Explain connector setup" content="Connect MediaLyze to one or more media servers and map each external library location to a stable MediaLyze root.">?</TooltipTrigger>} collapseActions={<button type="button" className="secondary small settings-panel-header-action"><Plus aria-hidden="true" className="nav-icon" /><span>Add connection</span></button>}>
+                    <div className="notice">Connection accordions appear below the heading.</div>
                   </AsyncPanel>
                 </div>
               </VariantCard>
-              <VariantCard title="Shared connector accordion · expanded Jellyfin connection" source={`${settings} > Connectors`} classes={["library-settings-card", "connector-connection-card", "connector-connection-header", "connector-connection-url", "library-settings-body", "connector-connection-body", "connector-form-grid", "connector-users-section", "connector-users-toggle"]} wide>
+              <VariantCard title="Shared connector accordion · expanded Jellyfin connection" source={`${settings} > Connectors`} classes={["library-settings-card", "connector-connection-card", "connector-connection-header", "connector-connection-header-main", "connector-connection-toggle", "connector-connection-url", "toggle-switch", "connector-enabled-switch", "connector-enabled-switch-track", "connector-enabled-switch-thumb", "library-settings-body", "connector-connection-body", "connector-form-grid", "connector-action-button", "connector-secret-action-button", "connector-users-section", "connector-users-toggle"]} wide>
                 <article className="media-card library-settings-card connector-connection-card is-expanded">
                   <header className="connector-connection-header">
-                    <button type="button" className="connector-connection-toggle" aria-expanded="true"><span className="connector-connection-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span><span className="connector-connection-identity"><span className="connector-connection-title"><span className="connector-provider-icon" data-provider="jellyfin" title="Jellyfin"><ConnectorProviderIcon provider="jellyfin" aria-hidden="true" /><span className="sr-only">Jellyfin</span></span><strong>Living Room</strong><span className="connector-connection-url">https://living-room.example</span></span></span></button>
+                    <div className="connector-connection-header-main"><label className="toggle-switch connector-enabled-switch" title="Disable"><input type="checkbox" role="switch" defaultChecked aria-label="Disable" /><span className="toggle-switch-track connector-enabled-switch-track" aria-hidden="true"><span className="toggle-switch-thumb connector-enabled-switch-thumb" /></span></label><button type="button" className="connector-connection-toggle" aria-expanded="true"><span className="connector-connection-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span><span className="connector-connection-identity"><span className="connector-connection-title"><span className="connector-provider-icon" data-provider="jellyfin" title="Jellyfin"><ConnectorProviderIcon provider="jellyfin" aria-hidden="true" /><span className="sr-only">Jellyfin</span></span><strong>Living Room</strong><span className="connector-connection-url">https://living-room.example</span></span></span></button></div>
                     <span className="connector-status status-running">Running</span>
                   </header>
                   <div className="library-settings-body connector-connection-body">
                     <section className="connector-detail-section">
-                      <div className="connector-form-grid"><label><span>Name</span><input className="settings-choice-input" defaultValue="Living Room" /></label><label><span>Server URL</span><input className="settings-choice-input" defaultValue="https://living-room.example" /></label><label><span>API key / secret</span><input className="settings-choice-input" type="password" placeholder="Secret configured" /></label><label><span>Sync interval (minutes)</span><input className="settings-choice-input" type="number" defaultValue="60" /></label></div>
-                      <div className="jellyfin-actions"><button type="button" className="connector-action-button"><Check aria-hidden="true" />Save</button><button type="button" className="secondary small connector-action-button">Disable</button><button type="button" className="secondary small connector-action-button">Test connection</button><button type="button" className="secondary small connector-action-button">Sync now</button><button type="button" className="secondary small connector-action-button"><CircleStop aria-hidden="true" />Cancel sync</button><button type="button" className="secondary small danger connector-action-button"><Trash2 aria-hidden="true" />Remove</button></div>
+                      <div className="connector-form-grid"><label><span>Name</span><input className="settings-choice-input" defaultValue="Living Room" /></label><label><span>Server URL</span><input className="settings-choice-input" defaultValue="https://living-room.example" /></label><label><span>Sync interval (minutes)</span><input className="settings-choice-input" type="number" defaultValue="60" /></label></div>
+                      <div className="jellyfin-actions"><button type="button" className="connector-action-button"><Check aria-hidden="true" />Save</button><button type="button" className="secondary small connector-action-button"><Network aria-hidden="true" />Test</button><button type="button" className="secondary small connector-action-button"><RefreshCw aria-hidden="true" />Sync now</button><button type="button" className="secondary small connector-action-button"><CircleStop aria-hidden="true" />Cancel sync</button><button type="button" className="secondary small connector-action-button connector-secret-action-button"><KeyRound aria-hidden="true" />Replace key</button><button type="button" className="secondary small danger connector-action-button"><Trash2 aria-hidden="true" />Remove</button></div>
                     </section>
                     <section className="connector-detail-section connector-mapping-section">
                       <div className="connector-mapping-section-header"><button type="button" className="connector-users-toggle connector-mapping-section-copy-toggle" aria-expanded="false"><div><h4>Library assignments</h4><p>Assign connector libraries automatically from verified paths or choose them manually.</p></div></button><div className="library-history-range-toggle connector-mapping-mode" role="group" aria-label="Library assignment mode"><SlidingTogglePill activeKey="automatic" className="nav-active-pill library-history-range-pill" /><button type="button" data-toggle-key="automatic" className="library-history-range-button active" aria-pressed="true"><span className="library-history-range-button-content"><span>Automatic</span></span></button><button type="button" data-toggle-key="manual" className="library-history-range-button" aria-pressed="false"><span className="library-history-range-button-content"><span>Manual</span></span></button></div><button type="button" className="connector-mapping-expand-toggle" aria-label="Expand Library assignments" aria-expanded="false"><ChevronRight className="nav-icon" /></button></div>
@@ -1541,7 +1880,7 @@ export function UiElementsPage() {
                   </div>
                 </article>
               </VariantCard>
-              <VariantCard title="Connector mapping modes · auto, manual, stale, multi-root" source={`${settings} > Connectors > Connection`} classes={["connector-mapping-section", "connector-mapping-mode", "connector-mapping-card", "connector-technical-details", "mapping-stale"]} wide>
+              <VariantCard title="Connector mapping modes · auto, manual, stale, multi-root" source={`${settings} > Connectors > Connection`} classes={["connector-mapping-section", "connector-mapping-mode", "connector-mapping-card", "connector-technical-details", "settings-choice-input", "mapping-stale"]} wide>
                 <section className="connector-detail-section connector-mapping-section">
                   <div className="connector-mapping-section-header"><button type="button" className="connector-users-toggle connector-mapping-section-copy-toggle" aria-expanded="true"><div><h4>Path mappings</h4><p>Map connector locations to one or more MediaLyze roots.</p></div></button><div className="library-history-range-toggle connector-mapping-mode" role="group" aria-label="Path mapping mode"><SlidingTogglePill activeKey="manual" className="nav-active-pill library-history-range-pill" /><button type="button" data-toggle-key="automatic" className="library-history-range-button" aria-pressed="false"><span className="library-history-range-button-content"><span>Automatic</span></span></button><button type="button" data-toggle-key="manual" className="library-history-range-button active" aria-pressed="true"><span className="library-history-range-button-content"><span>Manual</span></span></button></div><button type="button" className="connector-mapping-expand-toggle" aria-label="Collapse Path mappings" aria-expanded="true"><ChevronDown className="nav-icon" /></button></div>
                   <div className="connector-mapping-body">
@@ -1564,8 +1903,8 @@ export function UiElementsPage() {
                   </div>
                 </section>
               </VariantCard>
-              <VariantCard title="Shared connector accordion · collapsed connection" source={`${settings} > Connectors`} classes={["connector-connection-card", "is-collapsed", "connector-connection-url", "connector-status"]}>
-                <article className="media-card library-settings-card connector-connection-card is-collapsed"><header className="connector-connection-header"><button type="button" className="connector-connection-toggle" aria-expanded="false"><span className="connector-connection-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span><span className="connector-connection-identity"><span className="connector-connection-title"><span className="connector-provider-icon" data-provider="plex" title="Plex"><ConnectorProviderIcon provider="plex" aria-hidden="true" /><span className="sr-only">Plex</span></span><strong>Archive</strong><span className="connector-connection-url">https://archive.example</span></span></span></button><span className="connector-status status-success">Synchronized</span></header></article>
+              <VariantCard title="Shared connector accordion · collapsed connection" source={`${settings} > Connectors`} classes={["connector-connection-card", "is-collapsed", "connector-connection-header", "connector-connection-header-main", "connector-connection-toggle", "connector-connection-url", "toggle-switch", "connector-enabled-switch", "connector-enabled-switch-track", "connector-enabled-switch-thumb", "connector-status"]}>
+                <article className="media-card library-settings-card connector-connection-card is-collapsed"><header className="connector-connection-header"><div className="connector-connection-header-main"><label className="toggle-switch connector-enabled-switch" title="Enable"><input type="checkbox" role="switch" aria-label="Enable" /><span className="toggle-switch-track connector-enabled-switch-track" aria-hidden="true"><span className="toggle-switch-thumb connector-enabled-switch-thumb" /></span></label><button type="button" className="connector-connection-toggle" aria-expanded="false"><span className="connector-connection-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span><span className="connector-connection-identity"><span className="connector-connection-title"><span className="connector-provider-icon" data-provider="plex" title="Plex"><ConnectorProviderIcon provider="plex" aria-hidden="true" /><span className="sr-only">Plex</span></span><strong>Archive</strong><span className="connector-connection-url">https://archive.example</span></span></span></button></div><span className="connector-status status-success">Synchronized</span></header></article>
               </VariantCard>
               <VariantCard title="Add connector dialog · provider dropdown with Plex Soon™" source={`${settings} > Connectors > Add connection`} classes={["connector-add-dialog", "connector-provider-field", "settings-choice-input"]} wide>
                 <section className="settings-create-library-dialog connector-add-dialog">
@@ -1595,22 +1934,22 @@ export function UiElementsPage() {
                   <div className="progress library-scan-progress"><span style={{ width: "42%" }} /></div>
                 </article>
               </VariantCard>
-              <VariantCard title="Expanded MediaLyze library settings" source={`${settings} > Libraries`} classes={["library-settings-card", "is-expanded", "library-settings-body", "library-settings-section", "settings-choice-input"]} wide>
+              <VariantCard title="Expanded MediaLyze library settings" status="Media source uses compact 12px vertical insets." source={`${settings} > Libraries`} classes={["library-settings-card", "is-expanded", "library-settings-body", "library-connector-inline-list", "connector-library-status-row", "library-settings-section", "library-source-section", "library-source-section-heading", "library-root-alias-input", "library-change-path-button", "settings-choice-input"]} wide>
                 <article className="media-card library-settings-card is-expanded">
                   <div className="library-settings-header">
                     <div className="item-meta"><div className="library-title-row"><div className="library-title-meta"><div className="library-title-main"><div className="library-title-heading"><button type="button" className="library-settings-chevron" aria-label="Hide settings for Movies" aria-expanded="true"><ChevronDown aria-hidden="true" className="nav-icon" /></button><h3>Movies</h3></div><div className="meta-tags library-title-tags"><span className="badge">Movies</span><span className="badge">Manual</span></div></div></div><div className="library-title-actions"><button type="button" className="small library-scan-button">Manual scan</button></div></div></div>
                   </div>
                   <div className="library-settings-body">
-                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Jellyfin association</h4><p>Choose the Jellyfin catalog that enriches this MediaLyze library.</p></div><div className="library-settings-section-grid is-single-column"><div className="field"><label htmlFor="catalog-medialyze-jellyfin-link">Associated Jellyfin library</label><select id="catalog-medialyze-jellyfin-link" className="settings-choice-input" defaultValue="movies"><option value="">No associated library</option><option value="movies">Movies</option><option value="archive">Archive (Archive library)</option></select></div><div id="path-mapping" className="library-jellyfin-path-mappings"><div className="library-jellyfin-path-mappings-heading"><div className="library-jellyfin-path-mappings-title"><h5>Path mapping (optional)</h5><TooltipTrigger ariaLabel="Explain path mapping" content="Use this when Jellyfin and MediaLyze see the same files under different mount points.">?</TooltipTrigger><span className="library-jellyfin-path-mapping-state is-partial">Partially enabled</span></div><label className="library-jellyfin-path-mapping-switch is-partial" title="Enable all path mappings"><input type="checkbox" role="switch" aria-label="Enable all path mappings" aria-checked="mixed" /><span className="library-jellyfin-path-mapping-switch-track" aria-hidden="true"><span className="library-jellyfin-path-mapping-switch-thumb" /></span></label></div><div className="library-jellyfin-path-mapping-row"><div className="field library-jellyfin-path-source"><span className="field-label">Jellyfin path</span><code>/jellyfin/movies</code></div><span className="library-jellyfin-path-arrow" aria-hidden="true">→</span><div className="field library-jellyfin-path-target"><label htmlFor="catalog-jellyfin-path-target">MediaLyze path</label><input id="catalog-jellyfin-path-target" className="settings-choice-input" defaultValue="/media/movies" /></div><div className="library-jellyfin-path-mapping-actions"><button type="button" className="secondary icon-only-button library-jellyfin-path-save-button is-dirty" aria-label="Save mapping" title="Save mapping"><Save aria-hidden="true" /></button></div></div></div></div></section>
-                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Media source</h4><p>Review or change the local folders scanned by MediaLyze.</p></div><div className="library-settings-section-grid is-single-column"><div className="field library-source-field"><div className="field-label-row"><span>MediaLyze paths</span><button type="button" className="secondary small">Change path</button></div><div className="library-source-paths"><code>/media/movies</code></div></div></div></section>
-                    <section className="library-settings-section"><div className="library-settings-section-heading"><h4>Scanning and analysis</h4><p>Configure when this library is scanned and how its files are evaluated.</p></div><div className="library-settings-form"><div className="field"><label htmlFor="catalog-library-scan-mode">Scan mode</label><select id="catalog-library-scan-mode" className="settings-choice-input" defaultValue="manual"><option value="manual">Manual</option></select></div><div className="field"><label htmlFor="catalog-library-duplicates">Duplicate detection</label><select id="catalog-library-duplicates" className="settings-choice-input" defaultValue="off"><option value="off">Off</option></select></div></div></section>
+                    <div className="library-connector-inline-list"><div className="connector-library-status-row"><div><strong>Jellyfin</strong><span>jellyfin · Movies</span></div><span className="badge">derived</span><a href="#connector" className="secondary small settings-panel-header-action connector-action-button" onClick={preventCatalogNavigation}>Open connector<SquareArrowOutUpRight aria-hidden="true" size={16} /></a></div></div>
+                    <section className="library-settings-section library-source-section"><div className="library-settings-section-heading library-source-section-heading"><div className="library-settings-section-title"><h4>Media source</h4><TooltipTrigger ariaLabel="Explain the media source settings" content="Manage the local folders MediaLyze scans. Changing paths keeps existing library configuration and history.">?</TooltipTrigger></div><button type="button" className="secondary small settings-panel-header-action library-change-path-button"><SquarePenIcon aria-hidden="true" className="nav-icon" size={16} />Change path</button></div><div className="library-settings-section-grid is-single-column"><div className="field library-source-field"><div className="library-source-paths"><div className="library-root-row"><div className="library-root-alias-control"><label className="library-root-alias-field"><span>Root alias</span><input className="library-root-alias-input" defaultValue="Movies" /></label><label className="library-root-path-field"><span>MediaLyze paths</span><input className="library-root-path-input" value="/media/movies" readOnly /></label></div></div></div></div></div></section>
+                    <section className="library-settings-section"><div className="library-settings-section-heading"><div className="library-settings-section-title"><h4>Scanning and analysis</h4><TooltipTrigger ariaLabel="Explain the scanning and analysis settings" content="Configure scan scheduling, duplicate detection, historical dates, and the quality profile used for this library.">?</TooltipTrigger></div></div><div className="library-settings-form"><div className="field"><label htmlFor="catalog-library-scan-mode">Scan mode</label><select id="catalog-library-scan-mode" className="settings-choice-input" defaultValue="manual"><option value="manual">Manual</option></select></div><div className="field"><label htmlFor="catalog-library-duplicates">Duplicate detection</label><select id="catalog-library-duplicates" className="settings-choice-input" defaultValue="off"><option value="off">Off</option></select></div></div></section>
                   </div>
                 </article>
               </VariantCard>
               <VariantCard title="Create library from detected Jellyfin catalog" source={`${settings} > Libraries > Add library`} classes={["jellyfin-create-library-options", "jellyfin-create-library-option"]} wide>
                 <section className="jellyfin-create-library-options"><div><h3>Add a detected Jellyfin library</h3><p className="field-hint">Select a catalog, then choose its local media path.</p></div><div className="jellyfin-create-library-option-list"><button type="button" className="jellyfin-create-library-option is-selected" aria-pressed="true"><strong>Archive</strong><span>420 Jellyfin items</span></button><button type="button" className="jellyfin-create-library-option" aria-pressed="false"><strong>Concerts</strong><span>88 Jellyfin items</span></button></div><div className="notice success">The Jellyfin library will be linked automatically after creation.</div></section>
               </VariantCard>
-              <VariantCard title="Jellyfin-linked MediaLyze library" source="LibraryDetailPage" classes={["library-jellyfin-icon-trigger", "analyzed-file-name-source-toggle"]} wide>
+              <VariantCard title="Jellyfin-linked MediaLyze library" source="LibraryDetailPage" classes={["library-statistic-title-row", "library-jellyfin-icon-trigger", "analyzed-file-name-source-toggle", "analyzed-files-count"]} wide>
                 <div className="stack">
                   <section className="panel stack statistic-layout-header-panel library-statistic-layout-header-panel">
                     <div className="panel-title-row library-statistic-title-row"><h2>Movies</h2><TooltipTrigger ariaLabel="Connected to Jellyfin library Movies" className="library-jellyfin-icon-trigger" content={<span className="library-jellyfin-icon-tooltip"><strong>Connected to Jellyfin library Movies</strong><span>Last synchronization: today</span></span>}><JellyfinIcon aria-hidden="true" /></TooltipTrigger><TooltipTrigger ariaLabel="Show library path" content="/media/movies">?</TooltipTrigger></div>
@@ -1626,6 +1965,7 @@ export function UiElementsPage() {
                           <button type="button" data-toggle-key="jellyfin" className="distribution-chart-mode-button analyzed-file-name-source-button" aria-label="Show Jellyfin names" aria-pressed="false"><span className="distribution-chart-mode-button-content"><JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" /></span></button>
                         </div>
                         <button type="button" className="secondary icon-only-button statistic-layout-action-button" aria-label="Edit table view"><Settings aria-hidden="true" /></button>
+                        <span className="analyzed-files-count" aria-label="4 indexed entries">4</span>
                       </div>
                     </div>
                     <div className="media-data-table" role="table">
@@ -1685,7 +2025,7 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Structured search" source={`${libraryDetail} > Analyzed files`} classes={["async-panel-header-status", "metadata-search-fields", "metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
+              <VariantCard title="Structured search · compact metadata rows" source={`${libraryDetail} > Analyzed files`} classes={["async-panel-header-status", "metadata-search-fields", "metadata-search-row", "metadata-search-control", "metadata-search-icon-button", "metadata-search-remove", "data-table-search-layout"]}>
                 <div className="stack">
                   <div className="library-layout-panel-analyzed-files">
                     <div className="panel-header">
@@ -1709,7 +2049,7 @@ export function UiElementsPage() {
               <VariantCard title="Ignore pattern rows" source={`${settings} > Ignore patterns`} classes={["ignore-pattern-section", "ignore-pattern-row", "settings-choice-input", "ignore-pattern-action-button"]} wide>
                 <IgnorePatternFixture />
               </VariantCard>
-              <VariantCard title="Quality picker and profile editor" source={`${settings} > Quality profiles`} classes={["quality-picker-field", "quality-profile-picker-control", "quality-profile-metric-item", "quality-profile-weight-input"]} wide>
+              <VariantCard title="Quality profiles list and metric accordions" source={`${settings} > Quality profiles`} classes={["compatibility-profile-list", "compatibility-profile-list-item", "compatibility-profile-list-trigger", "quality-profile-toggle-row", "quality-profile-list-row", "transcode-automation-tab-list", "transcode-automation-tab-button", "quality-profile-details", "quality-profile-action-button", "quality-profile-metric-list", "quality-profile-metric-item", "quality-profile-metric-toggle", "quality-profile-weight-input"]} wide>
                 <QualityProfileFixture />
               </VariantCard>
             </VariantGroup>
@@ -1727,6 +2067,7 @@ export function UiElementsPage() {
                 </div>
               </VariantCard>
               <VariantCard title="Statistic layout actions" source={`${dashboard} / ${libraryDetail}`} classes={["statistic-layout-controls", "statistic-layout-action-button", "statistic-layout-menu"]}>
+                <div className="page-heading-row"><House aria-hidden="true" className="page-heading-icon" /><h2>Dashboard</h2></div>
                 <StatisticPanelLayoutControls
                   availableDefinitions={availablePanelDefinitions}
                   isEditing
@@ -1737,15 +2078,34 @@ export function UiElementsPage() {
                   onAddPanel={() => undefined}
                 />
               </VariantCard>
-              <VariantCard title="Page-specific icon buttons" source={`${scanLogs} / ${fileDetail} / ${libraryDetail}`} classes={["scan-log-copy-button", "file-detail-cover-button", "duplicate-group-open-button", "library-quickscan-button", "file-detail-navigation-actions"]}>
+              <VariantCard
+                title="Page-specific icon buttons"
+                source={`${scanLogs} / ${fileDetail} / ${libraryDetail}`}
+                classes={[
+                  "icon-button",
+                  "icon-button-borderless",
+                  "icon-button-bordered",
+                  "icon-button-static",
+                  "icon-button-animated",
+                  "scan-log-copy-button",
+                  "file-detail-cover-button",
+                  "duplicate-group-open-button",
+                  "library-quickscan-button",
+                  "file-detail-navigation-actions",
+                ]}
+              >
                 <div className="ui-elements-control-grid">
-                  <button type="button" className="scan-log-copy-button" aria-label="Copy"><Copy className="nav-icon" /></button>
-                  <button type="button" className="file-detail-cover-button secondary small"><Download className="nav-icon" /> Download cover</button>
-                  <button type="button" className="secondary icon-only-button duplicate-group-open-button" aria-label="Open"><ArrowUpRight className="duplicate-group-open-icon" /></button>
-                  <button type="button" className="secondary icon-only-button duplicate-group-action duplicate-group-compare-action" aria-label="Compare">
-                    <GitCompareArrowsIcon className="duplicate-group-action-icon" size={17} />
+                  <button type="button" className="icon-button icon-button-bordered icon-button-static scan-log-copy-button" aria-label="Copy">
+                    <Copy className="nav-icon" aria-hidden="true" />
                   </button>
-                  <button type="button" className="statistic-layout-action-button library-quickscan-button" aria-label="Quick scan" title="Quick scan">
+                  <button type="button" className="file-detail-cover-button secondary small"><Download className="nav-icon" /> Download cover</button>
+                  <button type="button" className="icon-button icon-button-borderless icon-button-static duplicate-group-open-button" aria-label="Open">
+                    <ArrowUpRight className="duplicate-group-open-icon" aria-hidden="true" />
+                  </button>
+                  <button type="button" className="icon-button icon-button-borderless icon-button-static duplicate-group-action duplicate-group-compare-action" aria-label="Compare">
+                    <GitCompareArrowsIcon className="duplicate-group-action-icon" size={17} aria-hidden="true" />
+                  </button>
+                  <button type="button" className="icon-button icon-button-borderless icon-button-animated statistic-layout-action-button library-quickscan-button" aria-label="Quick scan" title="Quick scan">
                     <AnimatedSearchIcon className="statistic-layout-action-icon" size={18} aria-hidden="true" />
                   </button>
                   <button type="button" className="secondary small settings-panel-header-action file-detail-navigation-back-button" aria-label="Back" title="Back">
@@ -1809,6 +2169,75 @@ export function UiElementsPage() {
                 </div>
                 <AnalyzedFilesTable />
               </VariantCard>
+              <VariantCard
+                title="Resolution category title actions"
+                source={`${settings} > Resolution categories`}
+                classes={["resolution-categories-async-panel", "panel-title-row", "async-panel-toggle-actions", "resolution-category-restore-button", "resolution-category-add"]}
+                wide
+              >
+                <div className="resolution-categories-async-panel">
+                  <div className="panel-title-row">
+                    <h2>Resolution categories</h2>
+                    <TooltipTrigger
+                      ariaLabel="Explain reduced default resolution thresholds"
+                      content={[
+                        "Use shared buckets for statistics, metadata search, file detail, and quality-score resolution rules.",
+                        "",
+                        "Default buckets intentionally use 5% lower minimum width and height thresholds so cropped and cinema-scope encodes still land in the expected format bucket.",
+                        "Reference dimensions:",
+                        "8k: 7680x4320",
+                        "4k / UHD: 3840x2160",
+                        "1080p / Full HD: 1920x1080",
+                        "720p / HD: 1280x720",
+                      ].join("\n")}
+                      preserveLineBreaks
+                    >
+                      ?
+                    </TooltipTrigger>
+                    <div className="async-panel-toggle-actions">
+                      <TooltipTrigger
+                        ariaLabel="Restore defaults"
+                        content="Restore defaults"
+                        className="secondary icon-only-button resolution-category-restore-button"
+                        pinOnClick={false}
+                      >
+                        <History aria-hidden="true" className="nav-icon" size={16} />
+                      </TooltipTrigger>
+                      <button type="button" className="secondary small settings-panel-header-action resolution-category-add">
+                        <Plus size={15} aria-hidden="true" /> Add category
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </VariantCard>
+              <VariantCard
+                title="Resolution category table actions"
+                source={`${settings} > Resolution categories`}
+                classes={["resolution-category-table-shell", "resolution-category-table", "resolution-category-action-button"]}
+                wide
+              >
+                <div className="settings-sidebar-stack">
+                  <div className="resolution-category-table-shell">
+                    <table className="resolution-category-table">
+                      <thead>
+                        <tr><th>Label</th><th>Min width</th><th>Min height</th><th><span className="sr-only">Actions</span></th></tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><input className="settings-choice-input" value="4k" readOnly aria-label="Label" /></td>
+                          <td><input className="settings-choice-input" value="3648" readOnly aria-label="Min width" /></td>
+                          <td><input className="settings-choice-input" value="1520" readOnly aria-label="Min height" /></td>
+                          <td>
+                            <button type="button" className="secondary icon-only-button resolution-category-action-button" aria-label="Remove resolution category 4k">
+                              <DeleteIcon size={18} aria-hidden="true" className="nav-icon" />
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </VariantCard>
               <VariantCard title="Settings table" source={`${settings} > Resolution categories`} classes={["settings-table-shell", "settings-data-table"]}>
                 <div className="settings-table-shell">
                   <table className="settings-data-table">
@@ -1860,7 +2289,37 @@ export function UiElementsPage() {
               <VariantCard title="Distribution chart panel" source={`${libraryDetail} > Numeric panel`} classes={["async-panel", "distribution-chart-mode-toggle", "distribution-chart-canvas"]} wide>
                 <DistributionChartPanel title="Quality score" distribution={numericDistribution} metricId="quality_score" />
               </VariantCard>
-              <VariantCard title="Comparison chart panel with Jellyfin playback axes" source={`${dashboard} / ${libraryDetail} > Metric comparison`} classes={["async-panel", "comparison-chart-toolbar", "comparison-chart-select", "comparison-chart-content"]} wide>
+              <VariantCard title="Connected library history controls · separate groups" source={`${libraryDetail} > Media library history`} classes={["library-history-panel", "library-history-actions", "library-history-range-toggle", "library-history-range-button", "distribution-chart-mode-toggle", "distribution-chart-mode-button", "distribution-chart-mode-pill", "library-history-toolbar", "library-history-picker-button"]} wide>
+                <section className="panel library-history-panel">
+                  <div className="panel-title-row panel-title-row-with-actions">
+                    <h2>Media library history</h2>
+                    <div className="library-history-actions">
+                      <div className="library-history-range-toggle" role="group" aria-label="Select history range">
+                        <SlidingTogglePill activeKey="30d" className="nav-active-pill library-history-range-pill" />
+                        <button type="button" data-toggle-key="7d" className="library-history-range-button" aria-pressed="false"><span className="library-history-range-button-content"><span>7d</span></span></button>
+                        <button type="button" data-toggle-key="30d" className="library-history-range-button active" aria-pressed="true"><span className="library-history-range-button-content"><span>30d</span></span></button>
+                        <button type="button" data-toggle-key="1y" className="library-history-range-button" aria-pressed="false"><span className="library-history-range-button-content"><span>1y</span></span></button>
+                        <button type="button" data-toggle-key="all" className="library-history-range-button" aria-pressed="false"><span className="library-history-range-button-content"><span>All</span></span></button>
+                        <div className="library-history-range-custom-shell" data-toggle-key="custom">
+                          <button type="button" className="library-history-range-button library-history-range-button-custom" aria-pressed="false"><span className="library-history-range-button-content"><CalendarDays aria-hidden="true" className="distribution-chart-mode-icon" /><span>Custom</span></span></button>
+                        </div>
+                      </div>
+                      <div className="distribution-chart-mode-toggle" role="group" aria-label="Chart display mode">
+                        <SlidingTogglePill activeKey="count" className="nav-active-pill distribution-chart-mode-pill" />
+                        <button type="button" data-toggle-key="count" className="distribution-chart-mode-button active" aria-label="Count" aria-pressed="true"><span className="distribution-chart-mode-button-content"><Hash aria-hidden="true" className="distribution-chart-mode-icon" /></span></button>
+                        <button type="button" data-toggle-key="percentage" className="distribution-chart-mode-button" aria-label="Percentage" aria-pressed="false"><span className="distribution-chart-mode-button-content"><Percent aria-hidden="true" className="distribution-chart-mode-icon" /></span></button>
+                      </div>
+                      <div className="library-history-toolbar search-filter-picker">
+                        <button type="button" className="search-filter-picker-button search-filter-picker-button-standalone library-history-picker-button" aria-label="Resolution mix" aria-haspopup="menu" aria-expanded="false">
+                          <Layers size={18} aria-hidden="true" />
+                          <span className="library-history-picker-button-label">Resolution mix</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </VariantCard>
+              <VariantCard title="Comparison chart panel with connected rectangular controls" source={`${dashboard} / ${libraryDetail} > Metric comparison`} classes={["async-panel", "comparison-chart-toolbar", "comparison-chart-select-shell", "comparison-chart-select", "comparison-chart-swap-button", "comparison-chart-renderer-button", "comparison-chart-content"]} wide>
                 <ComparisonChartFixture />
               </VariantCard>
             </VariantGroup>
@@ -1890,6 +2349,51 @@ export function UiElementsPage() {
                   </div>
                 </div>
               </VariantCard>
+              <VariantCard title="Transcoding job center" source="TranscodingPage" status="Small muted metrics overlay the 30px graph; phase text interrupts the thin 6px bar with a centered white backdrop; compact actions include terminal run deletion and a borderless filter reset; column headers use half the previous height" classes={["transcoding-center-panel", "transcoding-center-heading", "transcoding-center-tabs", "library-history-range-toggle", "library-history-range-pill", "library-history-range-button", "transcoding-center-tab-count", "transcoding-reset-button", "icon-button", "icon-button-borderless", "icon-button-static", "transcoding-job-table", "column-sort", "sort-indicator", "transcoding-progress-summary", "transcoding-progress-metrics", "transcoding-progress-metric", "transcoding-progress-chart", "transcoding-progress-meta", "transcoding-progress-static", "column-resize-handle", "transcoding-job-row", "transcoding-job-action", "transcoding-job-detail-row", "transcoding-job-detail-grid", "transcoding-job-detail-time", "transcoding-job-detail-list", "transcoding-job-transform-list", "transcoding-job-command", "transcoding-detail-links", "transcoding-hardware-load", "transcoding-hardware-load-trigger", "transcoding-hardware-load-slots", "transcoding-hardware-load-slot", "settings-choice-input"]} wide>
+                <div className="transcoding-center-panel">
+                  <div className="transcoding-center-header">
+                    <div className="transcoding-center-heading">
+                      <div className="transcoding-center-title-block">
+                        <div className="transcoding-center-title-row"><Activity aria-hidden="true" className="transcoding-center-title-icon" /><h2>Transcoding</h2></div>
+                      </div>
+                      <section className="transcoding-hardware-load is-compact" aria-label="Hardware load">
+                        <div className="transcoding-hardware-load-items">
+                          <TooltipTrigger ariaLabel="Show hardware load details for RTX 3080" tooltipClassName="transcode-matrix-tooltip-portal" content={<div className="transcode-matrix-tooltip-content"><div className="transcode-matrix-tooltip-heading"><strong>RTX 3080</strong><span className="transcode-matrix-tooltip-status is-hardware">Hardware path</span></div><div className="transcode-matrix-tooltip-summary"><div><span>Slots</span><strong>1/2</strong></div><div><span>Backend</span><strong>CUDA</strong></div></div></div>} className="transcoding-hardware-load-trigger status-available"><span className="transcoding-hardware-load-icon status-available" aria-hidden="true"><HardDrive /></span><span className="transcoding-hardware-load-short-label">CUDA</span><span className="transcoding-hardware-load-slots" aria-hidden="true"><span className="transcoding-hardware-load-slot is-busy" /><span className="transcoding-hardware-load-slot is-free" /></span></TooltipTrigger>
+                          <TooltipTrigger ariaLabel="Show hardware load details for CPU" tooltipClassName="transcode-matrix-tooltip-portal" content={<div className="transcode-matrix-tooltip-content"><div className="transcode-matrix-tooltip-heading"><strong>CPU</strong><span className="transcode-matrix-tooltip-status is-software">Software only</span></div><div className="transcode-matrix-tooltip-summary"><div><span>Slots</span><strong>Automatic</strong></div><div><span>Backend</span><strong>Software path</strong></div></div></div>} className="transcoding-hardware-load-trigger status-cpu"><span className="transcoding-hardware-load-icon status-cpu" aria-hidden="true"><Cpu /></span><span className="transcoding-hardware-load-short-label">CPU</span><span className="transcoding-hardware-load-slots" aria-hidden="true"><span className="transcoding-hardware-load-slot is-automatic" /></span></TooltipTrigger>
+                        </div>
+                      </section>
+                    </div>
+                    <div className="transcoding-center-tabs library-history-range-toggle" role="tablist" aria-label="Transcoding views">
+                      <SlidingTogglePill activeKey="active" className="nav-active-pill library-history-range-pill" />
+                      <button type="button" role="tab" data-toggle-key="active" className="library-history-range-button active" aria-pressed="true"><span className="library-history-range-button-content"><span>Active</span><span className="transcoding-center-tab-count">8</span></span></button>
+                      <button type="button" role="tab" data-toggle-key="history" className="library-history-range-button" aria-pressed="false"><span className="library-history-range-button-content"><span>History</span><span className="transcoding-center-tab-count">19</span></span></button>
+                    </div>
+                  </div>
+                  <div className="transcoding-center-toolbar">
+                    <label className="transcoding-search-field"><Search aria-hidden="true" /><input type="search" placeholder="Search files…" /></label>
+                    <label className="transcoding-filter-field"><span>Status</span><select className="settings-choice-input" defaultValue="all"><option value="all">All statuses</option></select></label>
+                    <label className="transcoding-filter-field"><span>Hardware</span><select className="settings-choice-input" defaultValue="all"><option value="all">All hardware</option></select></label>
+                    <TooltipTrigger ariaLabel="Reset filters" content="Reset filters" className="icon-button icon-button-borderless icon-button-static transcoding-reset-button" pinOnClick={false}><History aria-hidden="true" className="nav-icon" size={16} /></TooltipTrigger>
+                  </div>
+                  <div className="transcoding-table-scroll">
+                    <table className="transcoding-job-table">
+                      <colgroup><col style={{ width: "26%" }} /><col style={{ width: "17%" }} /><col style={{ width: "18%" }} /><col style={{ width: "33%" }} /><col style={{ width: "6%" }} /></colgroup>
+                       <thead><tr><th aria-sort="none" style={{ width: "26%" }}><button type="button" className="column-sort"><span>File</span><span className="sort-indicator" aria-hidden="true" /></button><button type="button" className="column-resize-handle" aria-label="Resize column File" /></th><th aria-sort="none" style={{ width: "17%" }}><button type="button" className="column-sort"><span>Target</span><span className="sort-indicator" aria-hidden="true" /></button><button type="button" className="column-resize-handle" aria-label="Resize column Target" /></th><th aria-sort="none" style={{ width: "18%" }}><button type="button" className="column-sort"><span>Hardware</span><span className="sort-indicator" aria-hidden="true" /></button><button type="button" className="column-resize-handle" aria-label="Resize column Hardware" /></th><th aria-sort="none" style={{ width: "33%" }}><button type="button" className="column-sort"><span>Progress</span><span className="sort-indicator" aria-hidden="true" /></button><button type="button" className="column-resize-handle" aria-label="Resize column Progress" /></th><th style={{ width: "6%" }}>Actions<button type="button" className="column-resize-handle" aria-label="Resize column Actions" /></th></tr></thead>
+                      <tbody>
+                        <tr className="transcoding-job-row status-running is-expanded" tabIndex={0} aria-expanded="true">
+                          <td className="transcoding-file-cell"><span className="transcoding-status-icon status-running"><Play aria-hidden="true" /></span><span className="transcoding-file-copy"><strong className="transcoding-file-name" title="/media/Naturefilm_4K.mkv">Naturefilm_4K.mkv</strong><span className="transcoding-file-meta">Movies · Storage profile</span></span></td>
+                          <td className="transcoding-target-cell"><strong>H.265 / HEVC</strong><span>3840×2160 · MKV · HDR10</span></td>
+                          <td className="transcoding-hardware-cell"><span className="transcoding-hardware-main"><span className="transcoding-hardware-dot status-available" /><strong>NVIDIA RTX 3080</strong></span><span>NVENC · hardware encoder</span></td>
+                          <td className="transcoding-progress-cell"><TranscodeProgressSummary job={{ status: "running", progress_percent: 64, eta_seconds: 720, speed: "3.2x", processing_phase: "transcoding", phase_detail: "FFmpeg is processing the source file" }} sampledSpeeds={[2.1, 2.7, 2.5, 3.0, 3.2]} t={t} /></td>
+                          <td className="transcoding-actions-cell"><button type="button" className="secondary icon-only-button transcoding-job-action" aria-label="Stop"><Square aria-hidden="true" /></button><a href="#" className="secondary icon-only-button transcoding-job-action" aria-label="Open source file" title="Open source file"><SquareArrowOutUpRight aria-hidden="true" /></a></td>
+                        </tr>
+                        <tr className="transcoding-job-detail-row status-running"><td colSpan={5}><div className="transcoding-job-detail-grid"><div className="transcoding-job-detail-path"><div className="transcoding-job-paths"><span title="/media/Naturefilm_4K.mkv">Naturefilm_4K.mkv</span><span aria-hidden="true">↓</span><span title="/Transcode_Output/Naturefilm_4K.hevc.mkv">Naturefilm_4K.hevc.mkv</span></div><dl className="transcoding-job-transform-list"><div><dt>Codec</dt><dd><span>H.264 / AVC</span><span className="transcoding-transform-arrow" aria-hidden="true">→</span><span>H.265 / HEVC</span></dd></div><div><dt>Dynamic range</dt><dd><span>SDR</span><span className="transcoding-transform-arrow" aria-hidden="true">→</span><span>HDR10</span></dd></div></dl></div><div className="transcoding-job-detail-time"><dl className="transcoding-job-detail-list"><div><dt>Start time</dt><dd>Sep 7, 2026, 12:00 PM</dd></div><div><dt>Duration so far</dt><dd>28 min</dd></div><div><dt>ETA</dt><dd>12 min</dd></div></dl></div><div className="transcoding-job-detail-side"><span className="transcoding-hardware-availability status-available"><span className="transcoding-hardware-dot" />Available</span><span className="transcoding-detail-muted">Required: NVENC (HEVC)</span></div></div><div className="transcoding-job-detail-footer"><details className="transcoding-job-command"><summary>FFmpeg log</summary><code>ffmpeg -i Naturefilm_4K.mkv -c:v hevc_nvenc Naturefilm_4K.hevc.mkv</code></details><div className="transcoding-detail-links"><a href="#"><SquareArrowOutUpRight aria-hidden="true" />Open result</a></div></div></td></tr>
+                      <tr className="transcoding-job-row status-completed"><td className="transcoding-file-cell"><span className="transcoding-status-icon status-completed"><CircleCheck aria-hidden="true" /></span><span className="transcoding-file-copy"><strong>Finished sample.mkv</strong><span className="transcoding-file-meta">Movies · Custom</span></span></td><td className="transcoding-target-cell"><strong>H.265 / HEVC</strong><span>1920×1080 · MKV</span></td><td className="transcoding-hardware-cell">CPU</td><td className="transcoding-progress-cell"><div className="transcoding-progress-static status-completed"><strong>100%</strong><span>Completed</span></div></td><td className="transcoding-actions-cell"><a href="#" className="secondary icon-only-button transcoding-job-action" aria-label="Open completed sample"><SquareArrowOutUpRight aria-hidden="true" /></a><button type="button" className="secondary icon-only-button transcoding-job-action" aria-label="Delete run for finished sample" title="Delete run history; media files are kept"><Trash2 aria-hidden="true" /></button></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </VariantCard>
               <VariantCard title="Recent scan log card" source={`${settings} > Scan logs`} classes={["scan-log-card", "scan-log-summary", "scan-log-detail-section"]} wide>
                 <ScanLogFixture />
               </VariantCard>
@@ -1906,18 +2410,25 @@ export function UiElementsPage() {
 
           <CatalogSection definition={catalogSections[9]}>
             <VariantGroup title="Library and file detail variants">
-              <VariantCard title="Storage map explorer" source="StorageMapPage" classes={["storage-map-explorer", "storage-map-toolbar", "storage-map-treemap", "storage-map-tile", "storage-map-tile-tooltip"]} wide>
+              <VariantCard title="Storage map explorer" source="StorageMapPage" status="Compact icon heading and filters; the treemap keeps an equal bottom inset with the side spacing." classes={["storage-map-header", "storage-map-title-row", "storage-map-toolbar", "storage-map-stage", "storage-map-treemap", "storage-map-tile", "storage-map-tile-tooltip", "settings-choice-input"]} wide>
                 <div className="storage-map-panel">
-                  <div className="storage-map-header">
+                  <header className="storage-map-header">
                     <div className="storage-map-title-block">
-                      <h2>Storage Map</h2>
-                      <p className="subtitle">Every folder and file at a glance. Tile area corresponds to actual storage use.</p>
+                      <div className="storage-map-title-row">
+                        <Map aria-hidden="true" className="storage-map-title-icon" />
+                        <h2>Storage Map</h2>
+                        <div className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle" role="group" aria-label="Displayed file name">
+                          <SlidingTogglePill activeKey="jellyfin" className="nav-active-pill distribution-chart-mode-pill" />
+                          <button type="button" data-toggle-key="file" className="distribution-chart-mode-button analyzed-file-name-source-button" aria-label="Show file names">
+                            <span className="distribution-chart-mode-button-content"><FileText aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                          </button>
+                          <button type="button" data-toggle-key="jellyfin" className="distribution-chart-mode-button analyzed-file-name-source-button active" aria-label="Show Jellyfin names">
+                            <span className="distribution-chart-mode-button-content"><JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="card-grid grid storage-map-header-cards">
-                      <StatCard label="Storage" value="12.8 TB" tone="blue" />
-                      <StatCard label="Files" value="1,842" tone="teal" />
-                    </div>
-                  </div>
+                  </header>
                   <div className="storage-map-explorer" style={{ minHeight: 340 }}>
                     <div className="storage-map-content">
                       <div className="storage-map-breadcrumb-row">
@@ -1929,65 +2440,46 @@ export function UiElementsPage() {
                       <div className="storage-map-toolbar">
                         <label className="storage-map-field storage-map-library-field">
                           <span>Library</span>
-                          <span className="storage-map-select-wrap">
-                            <select defaultValue="movies">
-                              <option value="movies">Movies 4K</option>
-                            </select>
-                            <ChevronDown aria-hidden="true" />
-                          </span>
+                          <select className="settings-choice-input" defaultValue="movies">
+                            <option value="movies">Movies 4K</option>
+                          </select>
                         </label>
                         <label className="storage-map-field">
                           <span>Color</span>
-                          <span className="storage-map-select-wrap">
-                            <select defaultValue="quality">
-                              <optgroup label="Video">
-                                <option value="codec">Video codec</option>
-                                <option value="resolution">Resolution</option>
-                                <option value="hdr">Dynamic range</option>
-                                <option value="frame_rate">Frame rate</option>
-                                <option value="bit_depth">Video bit depth</option>
-                              </optgroup>
-                              <optgroup label="Audio">
-                                <option value="audio_codec">Audio codec</option>
-                                <option value="audio_channels">Audio channels</option>
-                                <option value="audio_bitrate">Audio bitrate</option>
-                                <option value="audio_language">Audio language</option>
-                              </optgroup>
-                              <optgroup label="Subtitles">
-                                <option value="subtitle_status">Subtitle availability</option>
-                                <option value="subtitle_language">Subtitle language</option>
-                              </optgroup>
-                              <optgroup label="File">
-                                <option value="container">Container</option>
-                                <option value="size">File size</option>
-                                <option value="duration">Duration</option>
-                                <option value="bitrate">Overall bitrate</option>
-                                <option value="quality">Quality score</option>
-                                <option value="analysis_status">Analysis status</option>
-                              </optgroup>
-                            </select>
-                            <ChevronDown aria-hidden="true" />
-                          </span>
+                          <select className="settings-choice-input" defaultValue="quality">
+                            <optgroup label="Video">
+                              <option value="codec">Video codec</option>
+                              <option value="resolution">Resolution</option>
+                              <option value="hdr">Dynamic range</option>
+                              <option value="frame_rate">Frame rate</option>
+                              <option value="bit_depth">Video bit depth</option>
+                            </optgroup>
+                            <optgroup label="Audio">
+                              <option value="audio_codec">Audio codec</option>
+                              <option value="audio_channels">Audio channels</option>
+                              <option value="audio_bitrate">Audio bitrate</option>
+                              <option value="audio_language">Audio language</option>
+                            </optgroup>
+                            <optgroup label="Subtitles">
+                              <option value="subtitle_status">Subtitle availability</option>
+                              <option value="subtitle_language">Subtitle language</option>
+                            </optgroup>
+                            <optgroup label="File">
+                              <option value="container">Container</option>
+                              <option value="size">File size</option>
+                              <option value="duration">Duration</option>
+                              <option value="bitrate">Overall bitrate</option>
+                              <option value="quality">Quality score</option>
+                              <option value="analysis_status">Analysis status</option>
+                            </optgroup>
+                          </select>
                         </label>
                         <label className="storage-map-field">
                           <span>Order</span>
-                          <span className="storage-map-select-wrap">
-                            <select defaultValue="size">
-                              <option value="size">Size</option>
-                            </select>
-                            <ChevronDown aria-hidden="true" />
-                          </span>
+                          <select className="settings-choice-input" defaultValue="size">
+                            <option value="size">Size</option>
+                          </select>
                         </label>
-                        <div className="distribution-chart-mode-toggle analyzed-file-name-source-toggle storage-map-name-source-toggle" role="group" aria-label="Displayed file name">
-                          <SlidingTogglePill activeKey="jellyfin" className="nav-active-pill distribution-chart-mode-pill" />
-                          <button type="button" data-toggle-key="file" className="distribution-chart-mode-button analyzed-file-name-source-button" aria-label="Show file names">
-                            <span className="distribution-chart-mode-button-content"><FileText aria-hidden="true" className="distribution-chart-mode-icon" /></span>
-                          </button>
-                          <button type="button" data-toggle-key="jellyfin" className="distribution-chart-mode-button analyzed-file-name-source-button active" aria-label="Show Jellyfin names">
-                            <span className="distribution-chart-mode-button-content"><JellyfinIcon aria-hidden="true" className="distribution-chart-mode-icon" /></span>
-                          </button>
-                        </div>
-                        <span className="storage-map-area-hint"><Info aria-hidden="true" />Area = storage used</span>
                       </div>
                       <div className="storage-map-stage has-up-overlay" style={{ minHeight: 250 }}>
                         <button
@@ -2075,33 +2567,63 @@ export function UiElementsPage() {
               <VariantCard title="Path segment trail" source={`${fileDetail} > Overview / Analyzed files`} classes={["path-segment-trail", "path-segment", "path-segment-leaf"]}>
                 <PathSegmentTrail value="/media/Movies/Arrival/Arrival.2016.UHD.mkv" />
               </VariantCard>
-              <VariantCard title="Preview and download warning" source={`${fileDetail} > Preview`} classes={["file-detail-preview-panel", "file-detail-preview-player", "file-detail-preview-report"]}>
+              <VariantCard title="Preview help tooltip" source={`${fileDetail} > Preview`} classes={["file-detail-preview-panel", "file-detail-preview-player", "file-detail-preview-warning-tooltip", "file-detail-preview-help-tooltip"]}>
                 <PreviewFixture />
               </VariantCard>
-              <VariantCard title="Stream details list" source={`${fileDetail} > Streams / Table tooltips`} classes={["stream-details-list", "stream-detail-entry"]}>
+              <VariantCard title="Stream details list" source={`${fileDetail} > Streams / Table tooltips`} classes={["stream-details-list", "stream-detail-entry", "stream-detail-entry-chevron", "stream-detail-entry-summary-value"]}>
                 <div className="stack">
                   <AudioStreamPrimaryToggle mode={audioPrimaryMode} onChange={setAudioPrimaryMode} />
                   <StreamDetailsList kind="video" detail={streamDetails} t={t} surface="panel" showSummary inDepthDolbyVisionProfiles />
                 </div>
               </VariantCard>
-              <VariantCard title="Quality breakdown rows" source={`${fileDetail} > Quality score`} classes={["quality-detail-list", "quality-detail-item", "score-meter"]}>
-                <div className="quality-detail-list">
-                  <div className="quality-detail-item">
-                    <strong>Resolution</strong>
-                    <ScoreMeter value={92} />
-                    <span className="subtitle">Actual 3840x2160, ideal 4K.</span>
+              <VariantCard title="Quality breakdown rows" source={`${fileDetail} > Quality score`} classes={["quality-detail-list", "quality-detail-entry", "stream-detail-entry-chevron", "stream-detail-entry-summary-value"]}>
+                <div className="quality-tooltip-content quality-detail-list">
+                  <div className="quality-tooltip-summary"><strong>9/10</strong><span>Raw: 91.20 / 100</span></div>
+                  <details className="stream-detail-entry quality-detail-entry" open>
+                    <summary className="stream-detail-entry-head quality-detail-entry-head">
+                      <span className="stream-detail-entry-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                      <div className="stream-tooltip-inline"><strong>Resolution</strong><div className="stream-tooltip-meta"><span className="stream-tooltip-pill">Weight: 8</span></div></div>
+                      <span className="stream-detail-entry-summary-value">92 / 100</span>
+                    </summary>
+                    <div className="stream-detail-entry-body"><div className="stream-detail-field"><span className="stream-detail-field-label">Actual</span><strong className="stream-detail-field-value">3840x2160</strong></div><div className="stream-detail-field"><span className="stream-detail-field-label">Ideal</span><strong className="stream-detail-field-value">4K</strong></div></div>
+                  </details>
+                  <details className="stream-detail-entry quality-detail-entry">
+                    <summary className="stream-detail-entry-head quality-detail-entry-head">
+                      <span className="stream-detail-entry-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                      <div className="stream-tooltip-inline"><strong>Audio codec</strong></div>
+                      <span className="stream-detail-entry-summary-value">76 / 100</span>
+                    </summary>
+                  </details>
+                </div>
+              </VariantCard>
+              <VariantCard title="File detail panel header actions" source={`${fileDetail} > Quality breakdown / Chapters`} classes={["async-panel-toggle-actions", "settings-panel-header-action", "file-detail-quality-export-button", "file-detail-chapter-summary", "file-detail-chapter-export-button", "stream-tooltip-row", "stream-tooltip-head", "stream-tooltip-inline", "stream-tooltip-meta", "stream-tooltip-pill"]}>
+                <div className="stack">
+                  <div className="panel-title-row">
+                    <h2>Quality breakdown</h2>
+                    <div className="async-panel-toggle-actions">
+                      <button type="button" className="secondary small settings-panel-header-action file-detail-quality-export-button"><Download className="nav-icon" aria-hidden="true" />Export quality report (CSV)</button>
+                    </div>
                   </div>
-                  <div className="quality-detail-item">
-                    <strong>Audio codec</strong>
-                    <ScoreMeter value={76} />
+                  <div className="stream-tooltip-content stream-tooltip-content-panel">
+                    <div className="stream-tooltip-summary file-detail-chapter-summary">
+                      <div className="file-detail-chapter-summary-copy"><strong>Chapters</strong><span>12</span></div>
+                      <button type="button" className="secondary small settings-panel-header-action file-detail-chapter-export-button">Export chapters</button>
+                    </div>
+                    <div className="file-detail-chapter-tools"><input type="search" aria-label="Search chapters" placeholder="Search chapter titles" /></div>
+                    <div className="stream-tooltip-row">
+                      <div className="stream-tooltip-head">
+                        <div className="stream-tooltip-inline"><strong>Chapter 1</strong><div className="stream-tooltip-meta"><span className="stream-tooltip-pill">00:00–01:30</span><span className="stream-tooltip-pill">1m 30s</span></div></div>
+                        <span>#1</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </VariantCard>
-              <VariantCard title="Multi-source connector playback in file details" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "jellyfin-streaming-panel", "file-detail-streaming-availability-tooltip", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-data-summary", "playback-history-timeline-axis", "playback-history-availability-boundary", "playback-history-availability-note", "playback-history-search", "playback-history-timestamp", "playback-history-undated", "playback-history-undated-list", "playback-history-display-toggle", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
+              <VariantCard title="Multi-source connector playback in file details" source={`${fileDetail} > Overview / Streaming / Cover`} classes={["file-detail-overview", "format-details-content", "file-detail-streaming-metadata", "file-detail-streaming-metadata-body", "stream-detail-entry", "stream-detail-entry-head", "stream-detail-entry-chevron", "jellyfin-streaming-panel", "file-detail-streaming-availability-tooltip", "library-history-range-toggle", "library-history-range-custom-shell", "playback-history-display-control", "playback-history-display-heading", "playback-history-data-summary", "playback-history-timeline-axis", "playback-history-availability-boundary", "playback-history-availability-note", "playback-history-search", "playback-history-timestamp", "playback-history-undated", "playback-history-undated-list", "playback-history-display-toggle", "playback-history-display-button", "playback-history-export-button", "file-detail-cover-comparison"]} wide>
                 <div className="file-detail-overview">
                   <div className="file-detail-title-row"><h3 className="file-detail-title">Arrival.2016.mkv</h3></div>
                   <div className="meta-tags file-detail-overview-badges"><span className="badge">HEVC</span><span className="badge">UHD</span><div className="jellyfin-overview-badge-group is-separated"><span className="badge"><Server aria-hidden="true" />Jellyfin</span><span className="badge">Movie</span></div></div>
-                  <div className="file-detail-jellyfin-overview"><div className="jellyfin-overview-details"><div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Production year</span><strong className="format-details-value">2016</strong></div></div></div><p className="jellyfin-overview">Jellyfin catalog metadata is shown alongside the technical analysis.</p></div></div>
+                  <div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Container</span><strong className="format-details-value">Matroska</strong></div></div><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Size</span><strong className="format-details-value">10.7 GB</strong></div></div></div>
                   <div className="panel-title-row">
                     <h2>Streaming</h2>
                     <TooltipTrigger
@@ -2111,6 +2633,10 @@ export function UiElementsPage() {
                     />
                   </div>
                   <div className="jellyfin-file-panel jellyfin-streaming-panel">
+                    <details className="stream-detail-entry file-detail-streaming-metadata">
+                      <summary className="stream-detail-entry-head file-detail-streaming-metadata-summary"><span className="stream-detail-entry-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span><strong>Jellyfin metadata</strong></summary>
+                      <div className="file-detail-streaming-metadata-body"><div className="jellyfin-overview-details"><div className="stream-tooltip-content stream-tooltip-content-panel format-details-content"><div className="stream-tooltip-row"><div className="stream-tooltip-head format-details-row"><span className="format-details-label">Production year</span><strong className="format-details-value">2016</strong></div></div></div><p className="jellyfin-overview">Jellyfin catalog metadata is available here.</p></div></div>
+                    </details>
                     <ConnectorStreamingDetails
                       durationSeconds={7198}
                       sources={[
@@ -2141,7 +2667,8 @@ export function UiElementsPage() {
                   <div className="compatibility-favorite-sections">
                   <details className="compatibility-favorite-section" open>
                     <summary>
-                      <span>Hardware</span>
+                      <span className="compatibility-favorite-section-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                      <span className="compatibility-favorite-section-label">Hardware</span>
                       <span className="compatibility-favorite-count">1</span>
                     </summary>
                     <div className="compatibility-favorite-section-body">
@@ -2151,7 +2678,8 @@ export function UiElementsPage() {
                       </div>
                       <details className="compatibility-favorite-profile" open>
                         <summary className="compatibility-favorite-profile-summary">
-                          <span>Apple TV 4K 3rd Gen</span>
+                          <span className="compatibility-favorite-profile-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                          <span className="compatibility-favorite-profile-name">Apple TV 4K 3rd Gen</span>
                           <span className="compatibility-favorite-profile-actions">
                             <span className="compatibility-status-badge status-direct_play">Direct play</span>
                             <span className="compatibility-profile-quick-actions">
@@ -2177,13 +2705,15 @@ export function UiElementsPage() {
                   </details>
                   <details className="compatibility-favorite-section" open>
                     <summary>
-                      <span>Software / Player</span>
+                      <span className="compatibility-favorite-section-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                      <span className="compatibility-favorite-section-label">Software / Player</span>
                       <span className="compatibility-favorite-count">1</span>
                     </summary>
                   </details>
                   <details className="compatibility-favorite-section" open>
                     <summary>
-                      <span>Combination</span>
+                      <span className="compatibility-favorite-section-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                      <span className="compatibility-favorite-section-label">Combination</span>
                       <span className="compatibility-favorite-count">1</span>
                     </summary>
                   </details>
@@ -2201,12 +2731,59 @@ export function UiElementsPage() {
                   <DuplicateGroupFixture suppressed />
                 </div>
               </VariantCard>
+              <VariantCard title="Duplicate detection availability and view filters" source={`${libraryDetail} > Duplications`} classes={["library-layout-panel-duplicates"]} wide>
+                <AsyncPanel
+                  title="Duplications"
+                  titleTooltip="Duplicate detection is disabled for this library. Enable it in Settings → Libraries → Scanning and analysis → Duplicate detection."
+                  titleTooltipAriaLabel="Duplications"
+                  collapseActions={(
+                    <div className="duplicate-panel-title-actions">
+                      <span className="badge">0</span>
+                      <div className="distribution-chart-mode-toggle duplicate-panel-view-toggle" role="group" aria-label="Select duplicate view">
+                        <SlidingTogglePill activeKey="all" className="nav-active-pill distribution-chart-mode-pill" />
+                        <button type="button" data-toggle-key="all" className="distribution-chart-mode-button duplicate-panel-view-button active" aria-label="Show all duplicate groups" title="Show all duplicate groups">
+                          <span className="distribution-chart-mode-button-content"><Layers aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                        </button>
+                        <TooltipTrigger
+                          ariaLabel="Show only hash duplicate groups"
+                          className="distribution-chart-mode-button duplicate-panel-view-button"
+                          content="Hash duplicate detection is not enabled for this library. Choose File hash or Both in Settings → Libraries → Scanning and analysis → Duplicate detection."
+                          dataToggleKey="filehash"
+                          pinOnClick={false}
+                        >
+                          <span className="distribution-chart-mode-button-content"><Hash aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                        </TooltipTrigger>
+                        <TooltipTrigger
+                          ariaLabel="Show only filename duplicate groups"
+                          className="distribution-chart-mode-button duplicate-panel-view-button"
+                          content="Filename duplicate detection is not enabled for this library. Choose Filename or Both in Settings → Libraries → Scanning and analysis → Duplicate detection."
+                          dataToggleKey="filename"
+                          pinOnClick={false}
+                        >
+                          <span className="distribution-chart-mode-button-content"><FileText aria-hidden="true" className="distribution-chart-mode-icon" /></span>
+                        </TooltipTrigger>
+                      </div>
+                    </div>
+                  )}
+                  collapseState={{ collapsed: true, disabled: true, onToggle: () => undefined }}
+                >
+                  <DuplicatePanelEmptyState message="Enable duplicate detection to view duplicate groups." />
+                </AsyncPanel>
+              </VariantCard>
+              <VariantCard title="Duplicate panel with no results" source={`${libraryDetail} > Duplications`} classes={["library-layout-panel-duplicates", "duplicate-panel-empty-state"]} wide>
+                <AsyncPanel
+                  title="Duplications"
+                  collapseState={{ collapsed: false, disabled: false, onToggle: () => undefined }}
+                >
+                  <DuplicatePanelEmptyState message="No duplicate groups found yet." />
+                </AsyncPanel>
+              </VariantCard>
               <VariantCard title="File comparison rows" source="FileComparePage" classes={["file-compare-search-card", "file-compare-row", "has-difference", "is-identical"]} wide>
                 <div className="file-compare-page">
                   <div className="panel-title-row panel-title-row-with-actions">
-                    <div className="file-compare-title-block">
+                    <div className="page-heading-row">
+                      <GitCompare aria-hidden="true" className="page-heading-icon" />
                       <h2>Compare files</h2>
-                      <p className="subtitle">Place two analyzed media files side by side and highlight metadata differences.</p>
                     </div>
                     <div className="file-compare-title-actions">
                       <div className="search-filter-picker file-compare-column-count-picker">
@@ -2327,33 +2904,529 @@ export function UiElementsPage() {
                   </section>
                 </div>
               </VariantCard>
+              <VariantCard title="Compact transcoding plan" source="TranscodingPanel" status="No bundled transcoding presets; the selector offers saved user presets and Custom. Stream tabs use the fixed 40px Settings row height and container-aware language output formats; active default-stream actions fill the Sparkles symbol; search covers source metadata; audio and subtitle rows lead with language; metadata settings use a tooltip list; an expanded disabled folder formatter remains editable and previews its output" classes={["panel-header", "panel-title-row", "async-panel-header-status", "transcoding-panel", "transcode-preset-header-slot", "transcode-preset-select", "transcode-original-card", "transcode-control", "settings-choice-input", "transcode-progress", "transcode-progress-compact", "transcode-progress-compact-content", "transcode-progress-center-link", "transcode-progress-actions", "transcoding-progress-summary", "transcoding-progress-metrics", "transcoding-progress-metric", "transcoding-progress-chart", "transcoding-progress-meta", "compatibility-profile-list", "transcode-stream-catalog", "transcode-stream-tabs", "transcode-stream-tab", "transcode-stream-tab-count", "transcode-stream-tabpanel", "transcode-stream-list", "transcode-stream-search", "compatibility-profile-search", "compatibility-profile-search-icon", "compatibility-profile-search-clear", "transcode-stream-list-item", "is-dropped", "transcode-stream-list-row", "transcode-stream-row-actions", "transcode-stream-row-trigger", "transcode-stream-row-copy", "transcode-stream-format", "is-language-first", "transcode-stream-default-button", "compatibility-profile-quick-action", "transcode-stream-action-icon", "transcode-action-field", "transcode-action-select", "transcode-stream-details", "transcode-stream-copy-details", "transcode-stream-copy-note", "transcode-stream-encode-fields", "transcode-video-encode-fields", "transcode-control-field", "transcode-field-label", "transcode-dynamic-range-field", "transcode-codec-field", "transcode-preset-field", "transcode-range-row", "transcode-quality-range", "transcode-range-value", "transcode-filename-section", "transcode-folder-section", "transcode-metadata-settings", "transcode-filename-header", "transcode-filename-header-tooltip", "transcode-filename-chevron-toggle", "transcode-filename-toggle", "transcode-filename-chevron", "transcode-formatting-toggle", "transcode-formatting-preset-select", "transcode-filename-body", "transcode-filename-template-input", "transcode-filename-template-editor", "transcode-filename-inline-token", "transcode-filename-inline-text", "transcode-filename-metadata-tools", "transcode-filename-metadata-toggle", "transcode-filename-token-list", "transcode-filename-token-group", "transcode-filename-token-group-items", "transcode-filename-token-pill", "transcode-filename-token-tooltip-portal", "transcode-filename-token-tooltip", "transcode-filename-token-tooltip-heading", "transcode-filename-token-tooltip-example", "transcode-filename-options-row", "transcode-filename-divider-field", "transcode-filename-cleanup", "transcode-filename-cleanup-heading", "transcode-filename-cleanup-control", "transcode-language-code-field", "transcode-filename-field", "transcode-filename-preview", "is-disabled", "transcode-metadata-option-list", "transcode-global-option", "transcode-global-option-label", "toggle-switch", "toggle-switch-track", "toggle-switch-thumb", "transcode-action-button"]} wide>
+                <div className="transcoding-panel">
+                  <div className="panel-header">
+                    <div className="panel-title-row"><h2>Transcode (Beta)</h2><TooltipTrigger ariaLabel="About beta transcoding" content="Transcoding is still in development. Review the plan and output settings carefully before starting." /></div>
+                    <div className="async-panel-header-status"><div className="transcode-preset-header-slot"><select className="settings-choice-input transcode-control transcode-preset-select" aria-label="Select preset" defaultValue=""><option value="" disabled>Select preset</option><option value="saved:1">My video preset · v1</option><option value="expert">Custom</option></select></div></div>
+                  </div>
+                  <section className="transcode-original-card" aria-label="Source summary"><dl>
+                    <div><dt>Size</dt><dd>793 MB</dd></div><div><dt>Duration</dt><dd>1h 4m</dd></div><div><dt>Resolution</dt><dd>1920x1080</dd></div><div><dt>Codec</dt><dd>H.265 / HEVC</dd></div><div><dt>Dynamic range</dt><dd>SDR</dd></div>
+                  </dl></section>
+                  <div className="transcode-configuration-grid">
+                    <label><span>Target container</span><select className="settings-choice-input transcode-control" defaultValue="mp4"><option value="mp4">MP4</option></select></label>
+                    <label><span>Output mode</span><select className="settings-choice-input transcode-control" title="Separate output works with a read-only media mount; same-directory and replacement require a writable media directory." defaultValue="transcode_output"><option value="transcode_output">Central Output Folder</option><option value="same_directory">Next to source file</option><option value="replace_original">Replace original</option></select></label>
+                    {releaseVisibility.federation ? <label><span>Execution target</span><select className="settings-choice-input transcode-control" title="Execution target: local. Automatic mode includes queueing, transfer, transcoding and result publishing." defaultValue="local"><option value="local">This installation</option><option value="automatic">Automatic federation worker</option></select></label> : null}
+                  </div>
+                  <section className="transcode-progress transcode-progress-compact" aria-live="polite">
+                    <div className="transcode-progress-compact-content">
+                      <div className="transcoding-progress-summary is-running is-compact"><div className="transcoding-progress-metrics"><div className="transcoding-progress-metric"><strong>64%</strong><span>Progress</span></div><div className="transcoding-progress-metric"><strong>12 min</strong><span>Time left</span></div><div className="transcoding-progress-metric is-accent"><strong>3.2×</strong><span>Speed</span></div></div><div className="transcoding-progress-chart"><Gauge aria-hidden="true" /></div><div className="transcoding-progress-meta"><span className="transcoding-progress-phase">Transcoding</span><span className="transcoding-progress-transfer">1.2 GB / 2.0 GB</span></div><span className="transcoding-progress-track"><span style={{ width: "64%" }} /></span></div>
+                      <a className="secondary small transcode-progress-center-link" href="#"><SquareArrowOutUpRight aria-hidden="true" />Open transcoding center</a>
+                    </div>
+                    <div className="transcode-progress-actions"><button type="button" className="secondary danger"><Square aria-hidden="true" />Cancel</button></div>
+                  </section>
+                  <div className="compatibility-profile-list transcode-stream-catalog">
+                  <div className="transcode-automation-tab-controls transcode-stream-tabs">
+                    <div className="transcode-automation-tab-list" role="tablist" aria-label="Stream types" aria-orientation="horizontal">
+                      <button type="button" id="catalog-transcode-stream-tab-video" className="transcode-automation-tab-button transcode-stream-tab active" role="tab" aria-selected="true" aria-controls="catalog-transcode-stream-panel-video"><Film aria-hidden="true" size={16} /><span className="transcode-automation-tab-label">Video</span><span className="transcode-stream-tab-count">6</span></button>
+                      <button type="button" id="catalog-transcode-stream-tab-audio" className="transcode-automation-tab-button transcode-stream-tab" role="tab" aria-selected="false" aria-controls="catalog-transcode-stream-panel-audio" tabIndex={-1}><AudioLines aria-hidden="true" size={16} /><span className="transcode-automation-tab-label">Audio</span><span className="transcode-stream-tab-count">2</span></button>
+                      <button type="button" id="catalog-transcode-stream-tab-subtitles" className="transcode-automation-tab-button transcode-stream-tab" role="tab" aria-selected="false" aria-controls="catalog-transcode-stream-panel-subtitles" tabIndex={-1}><Captions aria-hidden="true" size={16} /><span className="transcode-automation-tab-label">Subtitles</span><span className="transcode-stream-tab-count">1</span></button>
+                    </div>
+                  </div>
+                  <div id="catalog-transcode-stream-panel-video" className="transcode-stream-tabpanel" role="tabpanel" aria-labelledby="catalog-transcode-stream-tab-video">
+                    <div className="transcode-stream-list">
+                      <div className="compatibility-profile-search transcode-stream-search"><Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" /><input type="search" defaultValue="hevc" aria-label="Search video streams" placeholder="Search video streams by language, codec, bitrate, profile…" /><button type="button" className="compatibility-profile-search-clear" aria-label="Clear stream search"><X size={15} aria-hidden="true" /></button></div>
+                      <article className="transcode-stream-list-item is-expanded">
+                        <div className="transcode-stream-list-row">
+                          <button type="button" className="transcode-stream-row-trigger" aria-expanded="true" aria-controls="catalog-transcode-stream-details-video-0"><span className="transcode-stream-row-copy"><strong>#0</strong><span>HEVC</span><span className="transcode-language-badge">Undetermined</span></span><ChevronDown aria-hidden="true" /></button>
+                          <div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button is-favorite" aria-label="Default stream" aria-pressed="true" title="Default stream"><AnimatedSparklesIcon size={18} active aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-expanded" data-action="encode"><RefreshCw aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 0" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="encode"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div>
+                        </div>
+                        <div id="catalog-transcode-stream-details-video-0" className="transcode-stream-details">
+                          <div className="transcode-stream-encode-fields transcode-video-encode-fields">
+                            <label className="transcode-control-field transcode-dynamic-range-field"><span className="transcode-field-label"><span>Dynamic range</span></span><select className="settings-choice-input transcode-control" defaultValue="preserve"><option value="preserve">Preserve</option><option value="sdr">SDR</option><option value="hdr10">HDR10</option><option value="hlg">HLG</option></select></label>
+                            <label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label"><span>Target codec</span><TooltipTrigger ariaLabel="Explain automatic encoder selection" content="The target worker chooses a compatible encoder for this codec and its available hardware device automatically." /></span><select className="settings-choice-input transcode-control" defaultValue="hevc"><option value="h264">H.264 / AVC</option><option value="hevc">H.265 / HEVC</option><option value="av1">AV1</option></select></label>
+                            <label className="transcode-control-field"><span className="transcode-field-label"><span>Quality (ICQ)</span><TooltipTrigger ariaLabel="Explain quality control" content="Lower values mean higher quality for Intel QSV's constant-quality mode." /></span><span className="transcode-range-row"><input className="settings-choice-input transcode-control transcode-quality-range is-reversed" type="range" min="1" max="51" defaultValue="23" /><input className="settings-choice-input transcode-control transcode-range-value" type="number" min="1" max="51" defaultValue="23" aria-label="video 0 quality value" /></span></label>
+                            <label className="transcode-control-field transcode-preset-field"><span className="transcode-field-label"><span>Speed preset</span><TooltipTrigger ariaLabel="Explain encoding speed preset" content="Faster presets reduce encoding time but usually reduce compression efficiency and increase file size." /></span><select className="settings-choice-input transcode-control" defaultValue="medium"><option value="veryfast">veryfast · Very fast</option><option value="fast">fast · Fast</option><option value="medium">medium · Balanced</option><option value="slow">slow · Slow</option><option value="veryslow">veryslow · Very slow</option></select></label>
+                            <label className="transcode-control-field"><span className="transcode-field-label"><span>Output resolution</span><TooltipTrigger ariaLabel="Explain output resolution" content="Only equal or lower heights are offered." /></span><select className="settings-choice-input transcode-control" defaultValue="1920x1080"><option value="1920x1080">1080p (1920×1080)</option></select></label>
+                          </div>
+                        </div>
+                      </article>
+                      <article className="transcode-stream-list-item"><div className="transcode-stream-list-row"><button type="button" className="transcode-stream-row-trigger" aria-expanded="false"><span className="transcode-stream-row-copy"><strong>#1</strong><span>H.264 / AVC</span></span><ChevronDown aria-hidden="true" /></button><div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button" aria-label="Set as default stream" aria-pressed="false" title="Set as default stream"><AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-collapsed" data-action="copy"><Copy aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 1" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="copy"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div></div></article>
+                      <article className="transcode-stream-list-item"><div className="transcode-stream-list-row"><button type="button" className="transcode-stream-row-trigger" aria-expanded="false"><span className="transcode-stream-row-copy"><strong>#2</strong><span>AV1</span></span><ChevronDown aria-hidden="true" /></button><div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button" aria-label="Set as default stream" aria-pressed="false" title="Set as default stream"><AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-collapsed" data-action="encode"><RefreshCw aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 2" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="encode"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div></div></article>
+                      <article className="transcode-stream-list-item is-dropped"><div className="transcode-stream-list-row"><button type="button" className="transcode-stream-row-trigger" aria-expanded="false"><span className="transcode-stream-row-copy"><strong>#3</strong><span>HEVC</span></span><ChevronDown aria-hidden="true" /></button><div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button" aria-label="Set as default stream" aria-pressed="false" title="Set as default stream"><AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-collapsed" data-action="drop"><Trash2 aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 3" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="drop"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div></div></article>
+                      <article className="transcode-stream-list-item"><div className="transcode-stream-list-row"><button type="button" className="transcode-stream-row-trigger" aria-expanded="false"><span className="transcode-stream-row-copy"><strong>#4</strong><span>MPEG-2</span></span><ChevronDown aria-hidden="true" /></button><div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button" aria-label="Set as default stream" aria-pressed="false" title="Set as default stream"><AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-collapsed" data-action="copy"><Copy aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 4" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="copy"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div></div></article>
+                      <article className="transcode-stream-list-item"><div className="transcode-stream-list-row"><button type="button" className="transcode-stream-row-trigger" aria-expanded="false"><span className="transcode-stream-row-copy"><strong>#5</strong><span>MJPEG</span></span><ChevronDown aria-hidden="true" /></button><div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button" aria-label="Set as default stream" aria-pressed="false" title="Set as default stream"><AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-collapsed" data-action="copy"><Copy aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 5" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="copy"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div></div></article>
+                    </div>
+                  </div>
+                  </div>
+                  <section className="media-card library-settings-card transcode-filename-section is-expanded">
+                    <header className="transcode-filename-header"><button type="button" className="secondary icon-only-button transcode-filename-chevron-toggle" aria-label="Collapse Filename formatting" aria-expanded="true" aria-controls="catalog-transcode-filename"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span></button><label className="toggle-switch transcode-formatting-toggle"><input type="checkbox" role="switch" defaultChecked aria-label="Enable filename formatting" /><span className="toggle-switch-track"><span className="toggle-switch-thumb" /></span></label><button type="button" className="transcode-filename-toggle" aria-expanded="true" aria-controls="catalog-transcode-filename"><span className="transcode-filename-heading"><h3>Filename</h3></span></button><TooltipTrigger className="transcode-filename-header-tooltip" ariaLabel="Explain filename formatting" content="Use tokens in braces and optional groups in square brackets." /><div className="transcode-formatting-preset-controls"><button type="button" className="secondary icon-only-button transcode-formatting-preset-add" aria-label="Save current Filename formatting settings as preset"><Plus size={17} aria-hidden="true" /></button><select className="settings-choice-input transcode-control transcode-formatting-preset-select" aria-label="Filename formatting preset" defaultValue=""><option value="">Select preset</option><option value="1">My filename preset ★</option></select></div></header>
+                    <div className="transcode-filename-body" id="catalog-transcode-filename">
+                      <div className="settings-choice-input transcode-control transcode-filename-template-input transcode-filename-template-editor" contentEditable role="textbox" aria-label="Filename formatting" aria-multiline="false" suppressContentEditableWarning>
+                        <span className="transcode-filename-inline-token is-source-name" contentEditable={false} data-filename-token="sourceName">{'{sourceName}'}</span><span className="transcode-filename-inline-text"> [</span><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="resolution">{'{resolution}'}</span><span className="transcode-filename-inline-text">, </span><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="dynRange">{'{dynRange}'}</span><span className="transcode-filename-inline-text">, </span><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="codec">{'{codec}'}</span><span className="transcode-filename-inline-text">] [</span><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="audioLanguages">{'{audioLanguages}'}</span><span className="transcode-filename-inline-text">] [</span><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="subtitleLanguages">{'{subtitleLanguages}'}</span><span className="transcode-filename-inline-text">] [</span><span className="transcode-filename-inline-token is-connector" contentEditable={false} data-filename-token="movieTitle">{'{movieTitle}'}</span><span className="transcode-filename-inline-text">]</span>
+                      </div>
+                      <div className="transcode-filename-metadata-tools">
+                        <button type="button" className="secondary small settings-panel-header-action transcode-filename-metadata-toggle" aria-expanded="true" aria-controls="catalog-transcode-filename-metadata"><ChevronDown aria-hidden="true" size={14} />Add metadata</button>
+                        <div className="transcode-filename-token-list" id="catalog-transcode-filename-metadata" role="group" aria-label="Metadata tokens">
+                          <div className="transcode-filename-token-group"><strong>MediaLyze</strong><div className="transcode-filename-token-group-items">
+                          <TooltipTrigger ariaLabel="Source filename" className="secondary small transcode-filename-token-pill" content="The original filename without its extension.">{"{sourceName}"}</TooltipTrigger>
+                          <TooltipTrigger ariaLabel="Resolution" className="secondary small transcode-filename-token-pill" tooltipClassName="transcode-filename-token-tooltip-portal" align="start" placement="auto" maxWidth={360} pinOnClick={false} content={(
+                            <div className="transcode-filename-token-tooltip"><div className="transcode-filename-token-tooltip-heading"><code>{"{resolution}"}</code><strong>Resolution</strong></div><p>In the generated filename, {"{resolution}"} is replaced by the current Resolution value.</p><div className="transcode-filename-token-tooltip-example"><span>Example in filename</span><code>{"{resolution} → 1920x1080"}</code></div></div>
+                          )}>{"{resolution}"}</TooltipTrigger>
+                          <TooltipTrigger ariaLabel="Resolution category" className="secondary small transcode-filename-token-pill" tooltipClassName="transcode-filename-token-tooltip-portal" align="start" placement="auto" maxWidth={360} pinOnClick={false} content={(
+                            <div className="transcode-filename-token-tooltip"><div className="transcode-filename-token-tooltip-heading"><code>{"{resolutionCategory}"}</code><strong>Resolution category</strong></div><p>In the generated filename, {"{resolutionCategory}"} is replaced by the configured resolution category label.</p><div className="transcode-filename-token-tooltip-example"><span>Example in filename</span><code>{"{resolutionCategory} → 4k"}</code></div></div>
+                          )}>{"{resolutionCategory}"}</TooltipTrigger>
+                          <TooltipTrigger ariaLabel="Audio languages" className="secondary small transcode-filename-token-pill" tooltipClassName="transcode-filename-token-tooltip-portal" align="start" placement="auto" maxWidth={360} pinOnClick={false} content={(
+                            <div className="transcode-filename-token-tooltip"><div className="transcode-filename-token-tooltip-heading"><code>{"{audioLanguages}"}</code><strong>Audio languages</strong></div><p>In the generated filename, {"{audioLanguages}"} is replaced by the current Audio languages value.</p><div className="transcode-filename-token-tooltip-example"><span>Example in filename</span><code>{"{audioLanguages} → en, de"}</code></div></div>
+                          )}>{"{audioLanguages}"}</TooltipTrigger>
+                          <TooltipTrigger ariaLabel="Series name" className="secondary small transcode-filename-token-pill" tooltipClassName="transcode-filename-token-tooltip-portal" align="start" placement="auto" maxWidth={360} pinOnClick={false} content={(
+                            <div className="transcode-filename-token-tooltip"><div className="transcode-filename-token-tooltip-heading"><code>{"{seriesName}"}</code><strong>Series name</strong></div><p>In the generated filename, {"{seriesName}"} is replaced by the current Series name value.</p><div className="transcode-filename-token-tooltip-example"><span>Example in filename</span><code>{"{seriesName} → Example Show"}</code></div></div>
+                          )}>{"{seriesName}"}</TooltipTrigger>
+                          <TooltipTrigger ariaLabel="Episode title" ariaDisabled className="secondary small transcode-filename-token-pill" content="No value is available for this movie.">{"{episodeTitle}"}</TooltipTrigger>
+                          </div></div>
+                          <div className="transcode-filename-token-group"><strong>Jellyfin</strong><div className="transcode-filename-token-group-items"><TooltipTrigger ariaLabel="Movie title" className="secondary small transcode-filename-token-pill" content="Movie title from Jellyfin.">{"{movieTitle}"}</TooltipTrigger><TooltipTrigger ariaLabel="Release year" className="secondary small transcode-filename-token-pill" content="Release year from Jellyfin.">{"{releaseYear}"}</TooltipTrigger></div></div>
+                        </div>
+                      </div>
+                       <div className="transcode-filename-options-row">
+                         <label className="transcode-filename-field transcode-filename-divider-field"><span className="transcode-field-label"><span>Metadata divider</span><TooltipTrigger ariaLabel="Explain metadata divider" content="Separates multiple values from one metadata token, such as audio or subtitle languages." /></span><input className="settings-choice-input transcode-control" defaultValue=", " /></label>
+                         <div className="transcode-filename-cleanup"><div className="transcode-filename-cleanup-heading"><span className="transcode-field-label"><span>Source filename cleanup</span><TooltipTrigger ariaLabel="Explain source filename cleanup" content="Presets use regular expressions; custom removes every match." /></span></div><label className="transcode-filename-field transcode-filename-cleanup-control"><span className="sr-only">Removal preset</span><select className="settings-choice-input transcode-control" defaultValue="square_brackets"><option value="none">Keep original filename</option><option value="square_brackets">Square brackets [ … ]</option><option value="custom">Custom regular expression</option></select></label></div>
+                         <LanguageCodeFormatField className="transcode-filename-field transcode-language-code-field" kind="filename" ariaLabel="Language code format (filename formatting)" value="iso_639_1" onChange={() => {}} />
+                       </div>
+                       <div className="transcode-filename-preview is-prominent"><span>Finished filename preview</span><code>Arrival [1920x1080, SDR, H264] [en] [de, fr].mp4</code></div>
+                    </div>
+                  </section>
+                  <section className="media-card library-settings-card transcode-filename-section transcode-folder-section is-expanded is-disabled">
+                    <header className="transcode-filename-header"><button type="button" className="secondary icon-only-button transcode-filename-chevron-toggle" aria-label="Collapse Folder name formatting" aria-expanded="true" aria-controls="catalog-transcode-folder"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span></button><label className="toggle-switch transcode-formatting-toggle"><input type="checkbox" role="switch" aria-label="Enable folder name formatting" /><span className="toggle-switch-track"><span className="toggle-switch-thumb" /></span></label><button type="button" className="transcode-filename-toggle" aria-expanded="true" aria-controls="catalog-transcode-folder"><span className="transcode-filename-heading"><h3>Foldername</h3></span></button><TooltipTrigger className="transcode-filename-header-tooltip" ariaLabel="Explain folder name formatting" content="Only the direct parent folder is formatted." /><div className="transcode-formatting-preset-controls"><button type="button" className="secondary icon-only-button transcode-formatting-preset-add" aria-label="Save current Folder name formatting settings as preset"><Plus size={17} aria-hidden="true" /></button><select className="settings-choice-input transcode-control transcode-formatting-preset-select" aria-label="Folder name formatting preset" defaultValue=""><option value="">Select preset</option><option value="1">My folder preset ★</option></select></div></header>
+                    <div className="transcode-filename-body" id="catalog-transcode-folder">
+                      <div className="settings-choice-input transcode-control transcode-filename-template-input transcode-filename-template-editor" contentEditable role="textbox" aria-label="Folder name template" aria-multiline="false" suppressContentEditableWarning><span className="transcode-filename-inline-token" contentEditable={false} data-filename-token="folderName">{'{folderName}'}</span><span className="transcode-filename-inline-text"> [</span><span className="transcode-filename-inline-token" contentEditable={false} data-filename-token="resolutionCategory">{'{resolutionCategory}'}</span><span className="transcode-filename-inline-text">]</span></div>
+                      <div className="transcode-filename-metadata-tools"><button type="button" className="secondary small settings-panel-header-action transcode-filename-metadata-toggle" aria-expanded="false"><ChevronRight aria-hidden="true" size={14} />Add metadata</button></div>
+                      <div className="transcode-filename-options-row"><label className="transcode-filename-field transcode-filename-divider-field"><span className="transcode-field-label"><span>Metadata divider</span></span><input className="settings-choice-input transcode-control" defaultValue=", " /></label><div className="transcode-filename-cleanup"><div className="transcode-filename-cleanup-heading"><span className="transcode-field-label"><span>Source folder cleanup</span></span></div><label className="transcode-filename-field transcode-filename-cleanup-control"><select className="settings-choice-input transcode-control" defaultValue="none"><option value="none">Keep original folder name</option><option value="custom">Custom regular expression</option></select></label></div><LanguageCodeFormatField className="transcode-filename-field transcode-language-code-field" kind="folder" ariaLabel="Language code format (folder formatting)" value="iso_639_1" onChange={() => {}} /></div>
+                      <div className="transcode-filename-preview is-prominent"><span>Formatted folder name preview</span><code>Season 2 [1080p]</code></div>
+                    </div>
+                  </section>
+                  <section className="media-card library-settings-card transcode-filename-section transcode-metadata-settings is-collapsed">
+                    <header className="transcode-filename-header"><button type="button" className="transcode-filename-toggle" aria-expanded="false" aria-controls="catalog-transcode-metadata-settings"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span><span className="transcode-filename-heading"><h3>Metadata settings</h3></span></button></header>
+                  </section>
+                  <div className="transcode-actions"><button type="button" className="secondary transcode-action-button">✓ Validate plan</button><button type="button" className="transcode-action-button">Start transcoding</button></div>
+                  <details className="transcode-validation is-valid"><summary><Check aria-hidden="true" />Plan validation</summary><div className="transcode-validation-content"><strong>Arrival [1920x1080, SDR, H264] [en].mp4</strong><code>ffmpeg -i Arrival.mkv -map 0:0 -c:v:0 libx264 …</code></div></details>
+                </div>
+              </VariantCard>
+              <VariantCard title="Empty file formatting preset selectors" source={`${fileDetail} > Transcoding > Filename and Folder name formatting`} status="With no saved formatting presets, each selector offers a direct create prompt" classes={["media-card", "library-settings-card", "transcode-filename-section", "transcode-filename-header", "transcode-filename-chevron-toggle", "transcode-filename-toggle", "transcode-filename-heading", "toggle-switch", "transcode-formatting-toggle", "transcode-filename-header-tooltip", "transcode-formatting-preset-controls", "transcode-formatting-preset-add", "settings-choice-input", "transcode-control", "transcode-formatting-preset-select"]} wide>
+                <section className="media-card library-settings-card transcode-filename-section is-expanded">
+                  <header className="transcode-filename-header"><button type="button" className="secondary icon-only-button transcode-filename-chevron-toggle" aria-label="Collapse Filename formatting" aria-expanded="true" aria-controls="catalog-empty-filename"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span></button><label className="toggle-switch transcode-formatting-toggle"><input type="checkbox" role="switch" defaultChecked aria-label="Enable filename formatting" /><span className="toggle-switch-track"><span className="toggle-switch-thumb" /></span></label><button type="button" className="transcode-filename-toggle" aria-expanded="true" aria-controls="catalog-empty-filename"><span className="transcode-filename-heading"><h3>Filename</h3></span></button><TooltipTrigger className="transcode-filename-header-tooltip" ariaLabel="Explain filename formatting" content="Use tokens in braces and optional groups in square brackets." /><div className="transcode-formatting-preset-controls"><button type="button" className="secondary icon-only-button transcode-formatting-preset-add" aria-label="Save current Filename formatting settings as preset"><Plus size={17} aria-hidden="true" /></button><select className="settings-choice-input transcode-control transcode-formatting-preset-select" aria-label="Filename formatting preset" defaultValue=""><option value="">Create preset</option></select></div></header>
+                </section>
+                <section className="media-card library-settings-card transcode-filename-section transcode-folder-section is-expanded">
+                  <header className="transcode-filename-header"><button type="button" className="secondary icon-only-button transcode-filename-chevron-toggle" aria-label="Collapse Folder name formatting" aria-expanded="true" aria-controls="catalog-empty-folder"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span></button><label className="toggle-switch transcode-formatting-toggle"><input type="checkbox" role="switch" defaultChecked aria-label="Enable folder name formatting" /><span className="toggle-switch-track"><span className="toggle-switch-thumb" /></span></label><button type="button" className="transcode-filename-toggle" aria-expanded="true" aria-controls="catalog-empty-folder"><span className="transcode-filename-heading"><h3>Foldername</h3></span></button><TooltipTrigger className="transcode-filename-header-tooltip" ariaLabel="Explain folder name formatting" content="Only the direct parent folder is formatted." /><div className="transcode-formatting-preset-controls"><button type="button" className="secondary icon-only-button transcode-formatting-preset-add" aria-label="Save current Folder name formatting settings as preset"><Plus size={17} aria-hidden="true" /></button><select className="settings-choice-input transcode-control transcode-formatting-preset-select" aria-label="Folder name formatting preset" defaultValue=""><option value="">Create preset</option></select></div></header>
+                </section>
+              </VariantCard>
+              <VariantCard title="Shared stream language format in Metadata settings" source="TranscodingPanel, LanguageCodeFormatField" status="Compact centered rows with 17px help icons; one format for video, audio and subtitles" classes={["transcode-metadata-settings", "transcode-metadata-option-list", "transcode-metadata-language-option"]} wide>
+                <section className="media-card library-settings-card transcode-filename-section transcode-metadata-settings is-expanded">
+                  <header className="transcode-filename-header"><button type="button" className="transcode-filename-toggle" aria-expanded="true"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span><span className="transcode-filename-heading"><h3>Metadata settings</h3></span></button></header>
+                  <div className="transcode-filename-body"><div className="transcode-global-options transcode-metadata-option-list" role="group" aria-label="Metadata settings">
+                    {["Keep chapters", "Keep metadata", "Keep cover", "Keep attachments"].map((label) => <label className="transcode-global-option" key={label}><input type="checkbox" defaultChecked /><span className="transcode-global-option-label">{label}</span><TooltipTrigger ariaLabel={`Explain ${label}`} content={label} pinOnClick={false} /></label>)}
+                    <LanguageCodeFormatField className="transcode-global-option transcode-metadata-language-option" container="mkv" ariaLabel="Language code format (Metadata settings)" value="container_default" onChange={() => {}} />
+                  </div></div>
+                </section>
+              </VariantCard>
+              <VariantCard title="Existing mixed stream language formats" source="LanguageCodeFormatField" status="Preserves previously saved per-stream formats until a shared choice is made" classes={["transcode-metadata-option-list", "transcode-metadata-language-option"]}>
+                <div className="transcode-global-options transcode-metadata-option-list"><LanguageCodeFormatField className="transcode-global-option transcode-metadata-language-option" container="source" value="mixed" onChange={() => {}} /></div>
+              </VariantCard>
+              <VariantCard title="Collapsed stream action: Remove" source="TranscodingPanel" status="Balanced stream-action inset" classes={["transcode-stream-list", "transcode-stream-list-item", "transcode-stream-list-row", "transcode-stream-row-actions", "transcode-stream-row-trigger", "transcode-stream-row-copy", "transcode-stream-default-button", "compatibility-profile-quick-action", "transcode-stream-action-icon", "transcode-action-field", "transcode-action-select"]} wide>
+                <section className="transcoding-panel">
+                  <div className="transcode-stream-list">
+                    <article className="transcode-stream-list-item is-dropped">
+                      <div className="transcode-stream-list-row">
+                        <button type="button" className="transcode-stream-row-trigger" aria-expanded="false"><span className="transcode-stream-row-copy is-language-first"><strong>#1</strong><span className="transcode-language-badge">German (de)</span><span className="transcode-stream-format">AAC</span></span><ChevronDown aria-hidden="true" /></button>
+                        <div className="transcode-stream-row-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-stream-default-button" aria-label="Set as default stream" aria-pressed="false" title="Set as default stream"><AnimatedSparklesIcon size={18} aria-hidden="true" className="nav-icon" /></button><div className="transcode-action-field is-collapsed" data-action="drop"><Trash2 aria-hidden="true" className="transcode-stream-action-icon" /><select className="settings-choice-input transcode-control transcode-action-select" aria-label="Action for stream 1" title="Copy keeps the source stream unchanged. Encode converts it with the selected controls. Remove excludes it from the output." defaultValue="drop"><option value="copy">Copy</option><option value="encode">Encode</option><option value="drop">Remove</option></select></div></div>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+              </VariantCard>
+              {releaseVisibility.federation ? (
+              <VariantCard title="Direct transcode federation pairing" source="TranscodeFederationPanel" status="The pairing-code field is 32px high while reachable address rows keep their standard height." classes={["transcode-federation-panel", "transcode-federation-heading", "transcode-federation-heading-main", "transcode-federation-section-chevron", "transcode-federation-installation", "transcode-federation-installation-name", "transcode-federation-name-action", "transcode-federation-heading-actions", "transcode-federation-code-summary", "transcode-federation-code-summary-label", "transcode-federation-header-code", "transcode-federation-content", "tooltip-trigger", "icon-only-button", "transcode-federation-code-action", "transcode-federation-code", "transcode-federation-code-progress", "transcode-federation-subheading", "transcode-federation-addresses", "transcode-federation-address-list", "transcode-federation-address-item", "transcode-federation-address-copy", "toggle-switch", "toggle-switch-track", "toggle-switch-thumb", "transcode-federation-toggle"]} wide>
+                <section className="transcode-federation-panel">
+                  <div className="transcode-federation-heading">
+                    <div className="transcode-federation-heading-main">
+                      <button type="button" className="transcode-federation-section-chevron" aria-label="Collapse Federation" title="Collapse Federation" aria-expanded="true" aria-controls="catalog-federation-body"><ChevronDown aria-hidden="true" className="nav-icon" /></button>
+                      <label className="toggle-switch transcode-federation-toggle"><input type="checkbox" role="switch" defaultChecked aria-label="Enable direct federation for this installation" /><span className="toggle-switch-track" aria-hidden="true"><span className="toggle-switch-thumb" /></span></label>
+                      <h3>Federation</h3>
+                      <div className="transcode-federation-installation"><span className="transcode-federation-installation-name">Living room server</span><button type="button" className="secondary icon-only-button transcode-federation-name-action" aria-label="Edit: Installation name" title="Edit: Installation name"><SquarePenIcon aria-hidden="true" className="nav-icon" size={16} /></button></div>
+                    </div>
+                    <div className="transcode-federation-heading-actions">
+                      <div className="transcode-federation-code-summary"><span className="transcode-federation-code-summary-label">Pairing code</span><div className="transcode-federation-address-item transcode-federation-code transcode-federation-header-code"><code title="048271" aria-label="Pairing code">048271</code><TooltipTrigger ariaLabel="Copy code" content="Copy code" className="secondary icon-only-button transcode-federation-address-copy" pinOnClick={false}><CopyIcon aria-hidden="true" className="nav-icon" size={15} /></TooltipTrigger><span className="transcode-federation-code-progress" aria-hidden="true"><span style={{ "--pairing-code-progress-start": 0.35, "--pairing-code-progress-duration": "19500ms" } as React.CSSProperties} /></span></div><TooltipTrigger ariaLabel="Reset code" content="Reset code" className="secondary icon-only-button transcode-federation-code-action" pinOnClick={false}><History aria-hidden="true" className="nav-icon" size={16} /></TooltipTrigger></div>
+                    </div>
+                  </div>
+                  <div id="catalog-federation-body" className="transcode-federation-content">
+                    <div className="transcode-federation-addresses"><div className="transcode-federation-subheading"><strong>Reachable network addresses</strong></div><div className="transcode-federation-address-list"><div className="transcode-federation-address-item"><code>http://medialyze-nas.local:8091</code><TooltipTrigger ariaLabel="Copy address" content="Copy address" className="secondary icon-only-button transcode-federation-address-copy" pinOnClick={false}><CopyIcon aria-hidden="true" className="nav-icon" size={15} /></TooltipTrigger></div><div className="transcode-federation-address-item"><code>http://192.168.1.20:8091</code><TooltipTrigger ariaLabel="Copy address" content="Copy address" className="secondary icon-only-button transcode-federation-address-copy" pinOnClick={false}><CopyIcon aria-hidden="true" className="nav-icon" size={15} /></TooltipTrigger></div></div></div>
+                    <section className="transcode-automation-section transcode-federation-members"><div className="compatibility-profile-panel transcode-automation-content"><div className="settings-profile-toggle-row transcode-automation-toggle-row transcode-automation-standalone-header"><div className="transcode-automation-standalone-heading"><strong>Federation members</strong><TooltipTrigger ariaLabel="Explain federation members" content="Review trusted federation installations and their reachability.">?</TooltipTrigger></div><TooltipTrigger ariaLabel="Refresh discovery" content="Refresh discovery" className="secondary icon-only-button compatibility-profile-quick-action transcode-federation-discovered-refresh" pinOnClick={false}><RefreshCw aria-hidden="true" size={16} /></TooltipTrigger></div><div className="compatibility-profile-list"><article className="compatibility-profile-list-item is-expanded"><div className="compatibility-profile-list-row transcode-federation-member-row"><button type="button" className="compatibility-profile-list-trigger transcode-federation-member-trigger" aria-expanded="true"><span className="transcode-automation-list-copy transcode-federation-member-list-copy"><strong>Living room worker</strong><small>16 CPU · 420 GB free · 0 active jobs · v0.18.0</small></span><ChevronDown aria-hidden="true" /></button><div className="compatibility-profile-quick-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Sync Living room worker"><RefreshCw size={18} aria-hidden="true" /></button></div></div></article></div></div></section>
+                  </div>
+                </section>
+              </VariantCard>
+              ) : null}
+              {releaseVisibility.federation ? (
+              <VariantCard title="Federation listener unavailable" source={`${settings} > Transcoding > Federation`} classes={["transcode-federation-panel", "transcode-federation-heading", "transcode-federation-heading-main", "transcode-federation-section-chevron", "transcode-federation-toggle", "transcode-federation-listener-error", "alert"]} wide>
+                <section className="transcode-federation-panel">
+                  <div className="transcode-federation-heading"><div className="transcode-federation-heading-main"><button type="button" className="transcode-federation-section-chevron" aria-label="Collapse Federation" title="Collapse Federation" aria-expanded="true"><ChevronDown aria-hidden="true" className="nav-icon" /></button><label className="toggle-switch transcode-federation-toggle"><input type="checkbox" role="switch" defaultChecked aria-label="Enable direct federation for this installation" /><span className="toggle-switch-track" aria-hidden="true"><span className="toggle-switch-thumb" /></span></label><h3>Federation</h3></div></div>
+                  <div className="alert transcode-federation-listener-error" role="alert"><strong>Federation listener unavailable</strong><span>Federation listener is unavailable on port 8091: the port is already in use by another process. Remote sync and network tests remain unavailable until this listener is running.</span></div>
+                </section>
+              </VariantCard>
+              ) : null}
+              <VariantCard title="Standalone accelerators panel: collapsed by default" source={`${settings} > Transcoding > Accelerators`} status="The hardware test stays beside the heading and tooltip until their content needs a second row, including at phone widths." classes={["app-settings-section", "transcode-automation-section", "transcode-federation-panel", "transcode-federation-heading", "transcode-federation-heading-main", "transcode-federation-heading-actions", "transcode-federation-section-chevron", "compatibility-profile-panel", "transcode-automation-content", "transcode-automation-panel-body", "transcode-capability-section", "transcode-capability-content", "transcode-capability-list", "compatibility-profile-list", "panel-empty-state", "panel-empty-state-icon", "settings-panel-header-action"]}>
+                <section className="app-settings-section transcode-automation-section transcode-federation-panel">
+                  <div className="compatibility-profile-panel transcode-automation-content">
+                    <div className="transcode-federation-heading" data-settings-search-target="transcoding-accelerators">
+                      <div className="transcode-federation-heading-main">
+                        <button type="button" className="transcode-federation-section-chevron" aria-label="Expand Accelerators" title="Expand Accelerators" aria-expanded="false" aria-controls="catalog-accelerators-body"><ChevronRight aria-hidden="true" className="nav-icon" /></button>
+                        <h3>Accelerators</h3>
+                        <TooltipTrigger ariaLabel="Explain accelerators" tooltipClassName="transcode-automation-description-tooltip-portal" maxWidth={460} content={<div className="transcode-matrix-meta"><strong>FFmpeg: ffmpeg version test</strong><p>Hardware counts use representative codec pairs and repeated measurements.</p></div>}>?</TooltipTrigger>
+                      </div>
+                      <div className="transcode-federation-heading-actions"><button type="button" className="secondary small settings-panel-header-action transcode-matrix-test-button"><FlaskConical aria-hidden="true" size={16} />Test Hardware</button></div>
+                    </div>
+                    <div id="catalog-accelerators-body" className="transcode-automation-panel-body" hidden>
+                      <section className="transcode-automation-tab-content transcode-capability-section transcode-capability-content">
+                        <div className="compatibility-profile-list transcode-capability-list"><PanelEmptyState message="No capability matrix data yet. Run the hardware test to populate this matrix." /></div>
+                      </section>
+                    </div>
+                  </div>
+                </section>
+              </VariantCard>
+              <VariantCard title="Tested transcoding settings and compact accelerator matrix" source={`${settings} > Transcoding (after Test Hardware)`} status="The Test Hardware button keeps its size while live progress scales with codec checks and benchmark frame volume." classes={["panel-header", "panel-title-row", "async-panel-header-status", "settings-panel-header-action", "transcode-matrix-test-button", "transcode-matrix-test-progress", "settings-sidebar-stack", "app-settings-performance-grid", "field", "field-label-row", "app-settings-section", "transcode-automation-section", "transcode-federation-panel", "transcode-automation-content", "transcode-automation-panel-body", "transcode-federation-heading", "transcode-federation-heading-main", "transcode-federation-heading-actions", "transcode-federation-section-chevron", "transcode-automation-tab-content", "transcode-capability-section", "transcode-capability-content", "transcode-capability-list", "compatibility-profile-list", "compatibility-profile-list-item", "compatibility-profile-list-trigger", "transcode-automation-list-copy", "transcode-capability-device-copy", "transcode-capability-device-name", "transcode-capability-device-icon", "transcode-capability-device-icon-gpu", "transcode-capability-device-icon-cpu", "transcode-federation-member-pill", "transcode-federation-local-pill", "transcode-device-matrix", "transcode-matrix-table", "transcode-matrix-cell-trigger", "transcode-matrix-tooltip-preview", "transcode-matrix-tooltip-content", "transcode-matrix-tooltip-heading", "transcode-matrix-tooltip-status", "transcode-matrix-tooltip-row", "transcode-matrix-tooltip-path", "transcode-matrix-tooltip-path-arrow", "transcode-matrix-tooltip-benchmark", "transcode-matrix-tooltip-workload", "transcode-matrix-tooltip-summary", "transcode-matrix-tooltip-level", "transcode-matrix-tooltip-runs", "transcode-matrix-tooltip-level-result", "transcode-matrix-axis-label", "transcode-matrix-axis-label-horizontal", "transcode-matrix-axis-label-vertical", "transcode-replacement-warning"]} wide>
+                <div className="panel-header">
+                  <div className="panel-title-row">
+                    <h2>Transcoding</h2>
+                    <TooltipTrigger ariaLabel="Explain transcoding runtime settings" content="Choose the required execution path, output safety policy, resource limits, and inspect the real FFmpeg hardware probes.">
+                      ?
+                    </TooltipTrigger>
+                  </div>
+                  <div className="async-panel-header-status">
+                    <button type="button" className="secondary small settings-panel-header-action">
+                      <Network aria-hidden="true" size={16} />
+                      Test network
+                    </button>
+                  </div>
+                </div>
+                <div className="settings-sidebar-stack">
+                  <div className="app-settings-performance-grid">
+                    <div className="field"><div className="field-label-row"><label htmlFor="catalog-transcoding-execution">Execution mode</label><TooltipTrigger ariaLabel="Explain hardware-required execution" content="Hardware-required jobs fail clearly when the selected encoder or device is unavailable; they never fall back silently to CPU.">?</TooltipTrigger></div><select id="catalog-transcoding-execution" className="settings-choice-input" defaultValue="hardware_required"><option value="hardware_required">Hardware required</option><option value="cpu_only">CPU only</option></select></div>
+                    <div className="field"><div className="field-label-row"><label htmlFor="catalog-transcoding-output">Default output mode</label><TooltipTrigger ariaLabel="Explain default output mode" content="Separate output works with a read-only media mount; same-directory and replacement require a writable media directory.">?</TooltipTrigger></div><select id="catalog-transcoding-output" className="settings-choice-input" defaultValue="transcode_output"><option value="transcode_output">Central Output Folder</option><option value="same_directory">Next to source file</option><option value="replace_original">Replace original</option></select></div>
+                    <div className="field"><div className="field-label-row"><label htmlFor="catalog-transcoding-cpu">CPU budget (%)</label><TooltipTrigger ariaLabel="Explain CPU budget" content="Soft budget shared across active CPU transcode jobs; short bursts can exceed it.">?</TooltipTrigger></div><input id="catalog-transcoding-cpu" className="settings-choice-input" type="number" defaultValue="90" /></div>
+                    <div className="field"><label htmlFor="catalog-transcoding-remove-partial">Partial output</label><select id="catalog-transcoding-remove-partial" className="settings-choice-input" defaultValue="yes"><option value="yes">Remove</option><option value="no">Keep</option></select></div>
+                  </div>
+                  <section className="app-settings-section transcode-automation-section transcode-federation-panel">
+                    <div className="compatibility-profile-panel transcode-automation-content">
+                      <div className="transcode-federation-heading" data-settings-search-target="transcoding-accelerators">
+                        <div className="transcode-federation-heading-main">
+                          <button type="button" className="transcode-federation-section-chevron" aria-label="Collapse Accelerators" title="Collapse Accelerators" aria-expanded="true" aria-controls="catalog-tested-accelerators-body"><ChevronDown aria-hidden="true" className="nav-icon" /></button>
+                          <h3>Accelerators</h3>
+                          <TooltipTrigger ariaLabel="Explain accelerators" content="Inspect the real FFmpeg hardware probes.">?</TooltipTrigger>
+                        </div>
+                        <div className="transcode-federation-heading-actions">
+                          <button type="button" className="secondary small settings-panel-header-action"><FlaskConical aria-hidden="true" size={16} />Test Hardware</button>
+                          <button type="button" className="secondary small settings-panel-header-action transcode-matrix-test-button" aria-busy="true">
+                            <FlaskConical aria-hidden="true" size={16} />Testing 40%
+                            <span className="transcode-matrix-test-progress" role="progressbar" aria-label="Hardware test progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={40} style={{ "--matrix-test-progress": "40%" } as React.CSSProperties}><span /></span>
+                          </button>
+                        </div>
+                      </div>
+                      <div id="catalog-tested-accelerators-body" className="transcode-automation-panel-body">
+                    <section className="transcode-automation-tab-content transcode-capability-section transcode-capability-content">
+                      <div className="compatibility-profile-list transcode-capability-list">
+                      {releaseVisibility.federation ? (
+                      <details className="compatibility-profile-list-item transcode-device-matrix">
+                        <summary className="compatibility-profile-list-trigger"><span className="transcode-automation-list-copy transcode-capability-device-copy"><span className="transcode-capability-device-name"><Gpu aria-hidden="true" className="transcode-capability-device-icon transcode-capability-device-icon-gpu" size={16} /><strong>NVIDIA GeForce RTX 3080</strong><span className="badge transcode-federation-member-pill">Worker 02</span></span><small>cuda</small></span><ChevronDown aria-hidden="true" /></summary>
+                        <div className="transcode-matrix-scroll" tabIndex={0}>
+                          <table className="transcode-matrix-table"><thead><tr><th className="transcode-matrix-corner"><span className="transcode-matrix-axis-label transcode-matrix-axis-label-horizontal">Encode</span><span className="transcode-matrix-axis-label transcode-matrix-axis-label-vertical">Decode</span></th><th>H.264 / AVC</th><th>H.265 / HEVC</th><th>AV1</th></tr></thead><tbody><tr><th>H.264 / AVC</th><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 3×</td></tr><tr><th>H.265 / HEVC</th><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 3×</td></tr><tr><th>AV1</th><td className="transcode-matrix-software">Software</td><td className="transcode-matrix-software">Software</td><td className="transcode-matrix-unsupported">—</td></tr></tbody></table>
+                         </div>
+                         <div className="transcode-matrix-tooltip-preview">
+                           <span className="field-hint">Hover or focus a matrix cell:</span>
+                           <TooltipTrigger
+                             ariaLabel="Show repeated-run benchmark details"
+                             className="transcode-matrix-cell-trigger"
+                             tooltipClassName="transcode-matrix-tooltip-portal"
+                             maxWidth={420}
+                             placement="auto"
+                             content={(
+                               <div className="transcode-matrix-tooltip-content">
+                                 <div className="transcode-matrix-tooltip-heading"><strong>H.264 / AVC → H.265 / HEVC</strong><span className="transcode-matrix-tooltip-status is-hardware">Hardware path</span></div>
+                                 <div className="transcode-matrix-tooltip-row transcode-matrix-tooltip-path"><span>Decoder: cuda:h264</span><span className="transcode-matrix-tooltip-path-arrow" aria-hidden="true">→</span><span>Encoder: hevc_nvenc</span></div>
+                                 <div className="transcode-matrix-tooltip-benchmark"><div className="transcode-matrix-tooltip-workload">Workload: 256×256 · 30 fps · 240 frames</div><div className="transcode-matrix-tooltip-level"><div className="transcode-matrix-tooltip-level-head"><strong>4 sessions</strong><span>within limit</span></div><div className="transcode-matrix-tooltip-runs"><span>Run 1: 0.502 s</span><span>Run 2: 0.498 s</span><span>Run 3: 0.515 s</span></div><div className="transcode-matrix-tooltip-level-result"><span>Median: 0.502 s</span><span>+8.4 %</span></div></div></div>
+                               </div>
+                             )}
+                           >
+                             HW · 4×
+                           </TooltipTrigger>
+                         </div>
+                      </details>
+                      ) : null}
+                      <details className="compatibility-profile-list-item transcode-device-matrix" open>
+                        <summary className="compatibility-profile-list-trigger"><span className="transcode-automation-list-copy transcode-capability-device-copy"><span className="transcode-capability-device-name"><Cpu aria-hidden="true" className="transcode-capability-device-icon transcode-capability-device-icon-cpu" size={16} /><strong>Intel CPU iGPU · Quick Sync</strong>{releaseVisibility.federation ? <span className="badge transcode-federation-member-pill transcode-federation-local-pill">local</span> : null}</span><small>qsv + vaapi</small></span><ChevronDown aria-hidden="true" /></summary>
+                        <div className="transcode-matrix-scroll" tabIndex={0}>
+                          <table className="transcode-matrix-table"><thead><tr><th className="transcode-matrix-corner"><span className="transcode-matrix-axis-label transcode-matrix-axis-label-horizontal">Encode</span><span className="transcode-matrix-axis-label transcode-matrix-axis-label-vertical">Decode</span></th><th>H.264 / AVC</th><th>H.265 / HEVC</th><th>AV1</th></tr></thead><tbody><tr><th>H.264 / AVC</th><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-software">Software</td></tr><tr><th>H.265 / HEVC</th><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-software">Software</td></tr><tr><th>AV1</th><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-hardware">HW · 4×</td><td className="transcode-matrix-software">Software</td></tr></tbody></table>
+                         </div>
+                       </details>
+                      </div>
+                    </section>
+                    </div>
+                  </div>
+                  </section>
+                   <div className="transcode-replacement-warning"><div className="notice warning">Replacing the original writes in place without a byte-for-byte backup.</div><p className="field-hint">This feature is still being tested; errors are possible and it is not recommended for normal use.</p><label className="transcode-filename-option"><input type="checkbox" /><span>I understand and confirm replacing the original file</span></label></div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Transcoding presets submenu with profile-catalog formatting" source={`${settings} > Transcoding Presets`} status="The New preset action wraps above search with equal spacing above and below; default formatting presets use the same filled, borderless active action as stream defaults and profile favorites" classes={["panel-header", "panel-title-row", "settings-sidebar-stack", "transcode-presets-settings-panel", "app-settings-section", "compatibility-profile-panel", "compatibility-profile-list", "compatibility-profile-catalog-list", "settings-profile-toggle-row", "transcode-automation-toggle-row", "transcode-automation-tab-controls", "transcode-automation-tab-list", "transcode-automation-tab-button", "transcode-automation-tab-label", "settings-profile-toggle-actions", "transcode-automation-section", "transcode-automation-content", "compatibility-profile-search", "compatibility-profile-search-icon", "compatibility-profile-search-clear", "compatibility-profile-list-item", "compatibility-profile-list-row", "quality-profile-list-row", "compatibility-profile-list-trigger", "compatibility-profile-list-copy", "transcode-automation-list-copy", "compatibility-profile-quick-actions", "compatibility-profile-quick-action", "settings-panel-header-action"]} wide>
+                <div className="panel-header"><div className="panel-title-row"><h2>Transcoding Presets</h2><TooltipTrigger ariaLabel="Explain transcoding presets" content="Manage reusable stream, filename, and foldername presets.">?</TooltipTrigger></div></div>
+                <div className="settings-sidebar-stack transcode-presets-settings-panel">
+                  <section className="app-settings-section transcode-automation-section">
+                    <div className="compatibility-profile-panel transcode-automation-content">
+                      <div className="compatibility-profile-list compatibility-profile-catalog-list">
+                        <div className="settings-profile-toggle-row transcode-automation-toggle-row">
+                          <div className="transcode-automation-tab-controls"><div className="transcode-automation-tab-list" role="tablist" aria-label="Transcoding preset categories" aria-orientation="horizontal"><button type="button" role="tab" className="transcode-automation-tab-button active" aria-selected="true"><span className="transcode-automation-tab-label">Transcoding Presets</span></button><button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false"><span className="transcode-automation-tab-label">Filename Presets</span></button><button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false"><span className="transcode-automation-tab-label">Foldername Presets</span></button></div></div>
+                          <div className="settings-profile-toggle-actions"><button type="button" className="secondary small settings-panel-header-action"><Plus aria-hidden="true" size={16} />New preset</button></div>
+                        </div>
+                        <div className="compatibility-profile-search"><Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" /><input type="search" placeholder="Search presets" aria-label="Search presets" /></div>
+                        <article className="compatibility-profile-list-item"><div className="compatibility-profile-list-row quality-profile-list-row"><button type="button" className="compatibility-profile-list-trigger"><span className="transcode-automation-list-copy compatibility-profile-list-copy"><strong>My stream preset</strong></span><ChevronDown aria-hidden="true" /></button><div className="compatibility-profile-quick-actions transcode-automation-quick-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Edit My stream preset"><SquarePenIcon size={18} aria-hidden="true" /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Duplicate My stream preset"><CopyIcon size={18} aria-hidden="true" /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Delete My stream preset"><Trash2 size={18} aria-hidden="true" /></button></div></div></article>
+                        <article className="compatibility-profile-list-item"><div className="compatibility-profile-list-row quality-profile-list-row"><button type="button" className="compatibility-profile-list-trigger"><span className="transcode-automation-list-copy compatibility-profile-list-copy"><strong>My filename preset</strong><small>Default preset</small></span><ChevronDown aria-hidden="true" /></button><div className="compatibility-profile-quick-actions transcode-automation-quick-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action is-favorite" aria-label="Remove My filename preset as default" aria-pressed="true"><Star size={18} fill="currentColor" aria-hidden="true" /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Edit My filename preset"><SquarePenIcon size={18} aria-hidden="true" /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Delete My filename preset"><Trash2 size={18} aria-hidden="true" /></button></div></div></article>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Empty transcoding preset catalog" source={`${settings} > Transcoding Presets`} status="When no custom transcoding presets exist, show the shared animated empty state below the search field" classes={["panel-header", "panel-title-row", "settings-sidebar-stack", "transcode-presets-settings-panel", "app-settings-section", "transcode-automation-section", "compatibility-profile-panel", "transcode-automation-content", "compatibility-profile-list", "compatibility-profile-catalog-list", "settings-profile-toggle-row", "transcode-automation-toggle-row", "transcode-automation-tab-controls", "transcode-automation-tab-list", "transcode-automation-tab-button", "transcode-automation-tab-label", "settings-profile-toggle-actions", "compatibility-profile-search", "compatibility-profile-search-icon", "transcode-preset-placeholder-body", "panel-empty-state", "panel-empty-state-icon", "settings-panel-header-action"]} wide>
+                <div className="panel-header"><div className="panel-title-row"><h2>Transcoding Presets</h2><TooltipTrigger ariaLabel="Explain transcoding presets" content="Manage reusable stream, filename, and foldername presets.">?</TooltipTrigger></div></div>
+                <div className="settings-sidebar-stack transcode-presets-settings-panel">
+                  <section className="app-settings-section transcode-automation-section">
+                    <div className="compatibility-profile-panel transcode-automation-content">
+                      <div className="compatibility-profile-list compatibility-profile-catalog-list">
+                        <div className="settings-profile-toggle-row transcode-automation-toggle-row">
+                          <div className="transcode-automation-tab-controls">
+                            <div className="transcode-automation-tab-list" role="tablist" aria-label="Transcoding preset categories" aria-orientation="horizontal">
+                              <button type="button" role="tab" className="transcode-automation-tab-button active" aria-selected="true"><span className="transcode-automation-tab-label">Transcoding Presets</span></button>
+                              <button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false"><span className="transcode-automation-tab-label">Filename Presets</span></button>
+                              <button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false"><span className="transcode-automation-tab-label">Foldername Presets</span></button>
+                            </div>
+                          </div>
+                          <div className="settings-profile-toggle-actions"><button type="button" className="secondary small settings-panel-header-action"><Plus aria-hidden="true" size={16} />New preset</button></div>
+                        </div>
+                        <div className="compatibility-profile-search"><Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" /><input type="search" placeholder="Search presets" aria-label="Search presets" /></div>
+                        <div className="transcode-preset-placeholder-body"><PanelEmptyState message="No custom transcoding presets are configured yet." /></div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Compact empty formatting preset catalog" source={`${settings} > Transcoding Presets > Filename Presets`} status="Empty and populated preset tabs share the same heading offset; the empty state uses compact vertical spacing" classes={["panel-header", "panel-title-row", "settings-sidebar-stack", "transcode-presets-settings-panel", "app-settings-section", "transcode-automation-section", "compatibility-profile-panel", "transcode-automation-content", "compatibility-profile-list", "compatibility-profile-catalog-list", "settings-profile-toggle-row", "transcode-automation-toggle-row", "transcode-automation-tab-controls", "transcode-automation-tab-list", "transcode-automation-tab-button", "transcode-automation-tab-label", "settings-profile-toggle-actions", "compatibility-profile-search", "compatibility-profile-search-icon", "transcode-preset-placeholder-body", "panel-empty-state", "panel-empty-state-icon", "settings-panel-header-action"]} wide>
+                <div className="panel-header"><div className="panel-title-row"><h2>Transcoding Presets</h2><TooltipTrigger ariaLabel="Explain transcoding presets" content="Manage reusable stream, filename, and foldername presets.">?</TooltipTrigger></div></div>
+                <div className="settings-sidebar-stack transcode-presets-settings-panel">
+                  <section className="app-settings-section transcode-automation-section">
+                    <div className="compatibility-profile-panel transcode-automation-content">
+                      <div className="compatibility-profile-list compatibility-profile-catalog-list">
+                        <div className="settings-profile-toggle-row transcode-automation-toggle-row">
+                          <div className="transcode-automation-tab-controls"><div className="transcode-automation-tab-list" role="tablist" aria-label="Transcoding preset categories" aria-orientation="horizontal"><button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false"><span className="transcode-automation-tab-label">Transcoding Presets</span></button><button type="button" role="tab" className="transcode-automation-tab-button active" aria-selected="true"><span className="transcode-automation-tab-label">Filename Presets</span></button><button type="button" role="tab" className="transcode-automation-tab-button" aria-selected="false"><span className="transcode-automation-tab-label">Foldername Presets</span></button></div></div>
+                          <div className="settings-profile-toggle-actions"><button type="button" className="secondary small settings-panel-header-action"><Plus aria-hidden="true" size={16} />New preset</button></div>
+                        </div>
+                        <div className="compatibility-profile-search"><Search size={16} aria-hidden="true" className="compatibility-profile-search-icon" /><input type="search" placeholder="Search presets" aria-label="Search presets" /></div>
+                        <div className="transcode-preset-placeholder-body"><PanelEmptyState message="No filename presets are configured yet." /></div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Stream preset editor with language rules" source="Settings > Transcoding Presets > Transcoding Presets > Create" status="Each stream type has separate language rules and an all-remaining fallback. Container and filename format share a row; language rules use names without code suffixes and a stronger divider between rules; filename formatting lives in its own preset category." classes={["compatibility-profile-details", "transcode-automation-details", "transcode-automation-editor", "transcode-preset-editor", "transcode-preset-definition", "transcode-preset-container-row", "transcode-stream-catalog", "transcode-stream-tabs", "transcode-stream-tabpanel", "transcode-preset-stream-list", "transcode-preset-rule-group", "transcode-preset-rule-languages", "transcode-stream-details", "transcode-stream-encode-fields", "transcode-preset-language-controls", "transcode-preset-custom-language", "transcode-preset-language-chips", "transcode-preset-add-language-rule", "transcode-metadata-settings", "transcode-metadata-option-list", "transcode-automation-editor-actions"]} wide>
+                <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor transcode-preset-editor">
+                  <div className="compatibility-profile-form-grid"><label className="transcode-control-field"><span className="transcode-field-label">Preset name</span><input className="settings-choice-input transcode-control" defaultValue="My stream preset" /></label></div>
+                  <div className="settings-sidebar-stack transcode-preset-definition">
+                    <div className="transcode-configuration-grid transcode-preset-container-row"><label className="transcode-control-field"><span className="transcode-field-label">Target container</span><select className="settings-choice-input transcode-control" defaultValue="mkv"><option value="mkv">MKV</option></select></label></div>
+                    <section className="transcode-streams"><div className="compatibility-profile-list transcode-stream-catalog"><div className="transcode-automation-tab-controls transcode-stream-tabs"><div className="transcode-automation-tab-list" role="tablist" aria-label="Stream types"><button type="button" role="tab" className="transcode-automation-tab-button transcode-stream-tab" aria-selected="false"><span className="transcode-automation-tab-label">Video</span></button><button type="button" role="tab" className="transcode-automation-tab-button transcode-stream-tab active" aria-selected="true"><span className="transcode-automation-tab-label">Audio</span></button><button type="button" role="tab" className="transcode-automation-tab-button transcode-stream-tab" aria-selected="false"><span className="transcode-automation-tab-label">Subtitles</span></button></div></div><div className="transcode-stream-tabpanel" role="tabpanel"><div className="transcode-stream-list transcode-preset-stream-list"><div className="transcode-preset-rule-group"><article className="transcode-stream-list-item transcode-preset-stream-item"><div className="transcode-stream-list-row has-language-controls"><div className="transcode-preset-language-controls"><label className="transcode-control-field"><span className="transcode-field-label">Languages</span><select className="settings-choice-input transcode-control" defaultValue=""><option value="">Add language</option><option value="fr">French</option></select></label><div className="transcode-preset-custom-language"><input className="settings-choice-input transcode-control" aria-label="Custom language code" placeholder="en-US" /><button type="button" className="secondary small settings-panel-header-action">Add code</button></div></div><div className="transcode-stream-row-actions"><div className="transcode-action-field is-expanded" data-action="encode"><RefreshCw aria-hidden="true" className="transcode-stream-action-icon" size={14} /><select className="settings-choice-input transcode-control transcode-action-select" defaultValue="convert"><option value="convert">Encode</option><option value="copy">Copy</option><option value="remove">Remove</option></select></div></div></div><div className="transcode-preset-rule-languages"><div className="transcode-preset-language-chips"><button type="button" className="secondary small transcode-preset-language-chip">English<X size={13} aria-hidden="true" /></button><button type="button" className="secondary small transcode-preset-language-chip">German<X size={13} aria-hidden="true" /></button></div></div><div className="transcode-stream-details"><div className="transcode-stream-encode-fields"><label className="transcode-control-field transcode-codec-field"><span className="transcode-field-label">Target codec</span><select className="settings-choice-input transcode-control" defaultValue="aac"><option value="aac">AAC</option></select></label><label className="transcode-control-field transcode-range-field"><span className="transcode-field-label">Bitrate</span><select className="settings-choice-input transcode-control" defaultValue="192"><option value="192">192 kb/s</option></select></label></div></div></article><article className="transcode-stream-list-item transcode-preset-stream-item"><div className="transcode-stream-list-row"><div className="transcode-stream-row-copy"><span className="transcode-stream-format">All remaining languages</span></div><div className="transcode-stream-row-actions"><div className="transcode-action-field is-expanded" data-action="copy"><Copy aria-hidden="true" className="transcode-stream-action-icon" size={14} /><select className="settings-choice-input transcode-control transcode-action-select" defaultValue="copy"><option value="copy">Copy</option><option value="convert">Encode</option><option value="remove">Remove</option></select></div></div></div></article><button type="button" className="secondary small settings-panel-header-action transcode-preset-add-language-rule"><Plus size={14} aria-hidden="true" />Add language rule</button></div></div></div></div></section>
+                    <section className="media-card library-settings-card transcode-filename-section transcode-metadata-settings is-expanded"><header className="transcode-filename-header"><button type="button" className="transcode-filename-toggle" aria-expanded="true"><span className="transcode-filename-chevron" aria-hidden="true"><ChevronDown className="nav-icon" /></span><span className="transcode-filename-heading"><h3>Metadata settings</h3></span></button></header><div className="transcode-filename-body"><div className="transcode-global-options transcode-metadata-option-list" role="group" aria-label="Metadata settings"><label className="transcode-global-option"><input type="checkbox" defaultChecked /><span className="transcode-global-option-label">Keep chapters</span></label><label className="transcode-global-option"><input type="checkbox" defaultChecked /><span className="transcode-global-option-label">Keep metadata</span></label><LanguageCodeFormatField className="transcode-global-option transcode-metadata-language-option" container="source" ariaLabel="Language code format (Metadata settings)" value="container_default" onChange={() => {}} /></div></div></section>
+                  </div>
+                  <div className="compatibility-profile-card-actions transcode-automation-editor-actions"><button type="button" className="transcode-action-button"><Save size={16} aria-hidden="true" />Save</button><button type="button" className="secondary transcode-action-button">Cancel</button></div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Formatting preset editor with metadata menu and example output" source="Settings > Transcoding Presets > Filename Presets > Edit" status="The template, metadata button, option row, and example preview follow the File Detail Transcoding formatting section" classes={["compatibility-profile-list-item", "compatibility-profile-list-row", "quality-profile-list-row", "compatibility-profile-list-trigger", "transcode-automation-list-copy", "compatibility-profile-list-copy", "compatibility-profile-details", "transcode-automation-details", "transcode-automation-editor", "transcode-preset-editor", "compatibility-profile-form-grid", "transcode-control-field", "transcode-field-label", "transcode-control", "transcode-filename-body", "transcode-formatting-preset-body", "transcode-filename-template-input", "transcode-filename-template-editor", "transcode-filename-inline-token", "transcode-filename-metadata-tools", "transcode-filename-metadata-toggle", "transcode-filename-token-list", "transcode-filename-token-group", "transcode-filename-token-group-items", "transcode-filename-token-pill", "tooltip-trigger", "transcode-filename-token-tooltip-portal", "transcode-filename-token-tooltip", "transcode-filename-token-tooltip-heading", "transcode-filename-token-tooltip-example", "transcode-filename-options-row", "transcode-formatting-preset-options", "transcode-filename-divider-field", "transcode-filename-cleanup", "transcode-filename-cleanup-control", "transcode-language-code-field", "transcode-filename-preview", "compatibility-profile-card-actions", "transcode-automation-editor-actions", "transcode-action-button"]} wide>
+                <article className="compatibility-profile-list-item is-expanded">
+                  <div className="compatibility-profile-list-row quality-profile-list-row"><div className="compatibility-profile-list-trigger is-static"><span className="transcode-automation-list-copy compatibility-profile-list-copy"><strong>Arrival movie preset</strong></span></div></div>
+                  <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor transcode-preset-editor">
+                    <div className="compatibility-profile-form-grid"><label className="transcode-control-field"><span className="transcode-field-label">Preset name</span><input className="settings-choice-input transcode-control" value="Arrival movie preset" readOnly /></label></div>
+                    <div className="transcode-filename-body transcode-formatting-preset-body">
+                      <div className="transcode-control-field"><span className="transcode-field-label">Filename formatting</span><div className="settings-choice-input transcode-control transcode-filename-template-input transcode-filename-template-editor" contentEditable role="textbox" aria-label="Filename formatting" suppressContentEditableWarning><span className="transcode-filename-inline-token is-source-name" contentEditable={false} data-filename-token="sourceName">{"{sourceName}"}</span><span className="transcode-filename-inline-text"> [</span><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="resolution">{"{resolution}"}</span><span className="transcode-filename-inline-text">, </span><span className="transcode-filename-inline-token is-connector" contentEditable={false} data-filename-token="movieTitle">{"{movieTitle}"}</span><span className="transcode-filename-inline-text">]</span></div></div>
+                      <div className="transcode-filename-metadata-tools"><button type="button" className="secondary small settings-panel-header-action transcode-filename-metadata-toggle" aria-expanded="true" aria-controls="catalog-formatting-metadata"><ChevronDown aria-hidden="true" size={14} />Add metadata</button><div className="transcode-filename-token-list" id="catalog-formatting-metadata" role="group" aria-label="Metadata tokens"><div className="transcode-filename-token-group"><strong>MediaLyze</strong><div className="transcode-filename-token-group-items"><TooltipTrigger className="secondary small transcode-filename-token-pill" ariaLabel="Resolution" tooltipClassName="transcode-filename-token-tooltip-portal" content={<div className="transcode-filename-token-tooltip"><div className="transcode-filename-token-tooltip-heading"><code>{"{resolution}"}</code><strong>Resolution</strong></div><p>Click to insert this token into the template.</p></div>}>{"{resolution}"}</TooltipTrigger><TooltipTrigger className="secondary small transcode-filename-token-pill" ariaLabel="Dynamic range" tooltipClassName="transcode-filename-token-tooltip-portal" content={<div className="transcode-filename-token-tooltip"><div className="transcode-filename-token-tooltip-heading"><code>{"{dynRange}"}</code><strong>Dynamic range</strong></div><p>Click to insert this token into the template.</p></div>}>{"{dynRange}"}</TooltipTrigger><button type="button" className="secondary small transcode-filename-token-pill">{"{subtitleLanguages}"}</button></div></div></div></div>
+                      <div className="transcode-filename-options-row transcode-formatting-preset-options"><label className="transcode-filename-field transcode-filename-divider-field"><span className="transcode-field-label">Metadata divider</span><input className="settings-choice-input transcode-control" value=", " readOnly /></label><div className="transcode-filename-cleanup"><span className="transcode-field-label">Source cleanup</span><label className="transcode-filename-field transcode-filename-cleanup-control"><span className="sr-only">Cleanup preset</span><select className="settings-choice-input transcode-control" defaultValue="none"><option value="none">Keep original name</option></select></label></div><LanguageCodeFormatField className="transcode-filename-field transcode-language-code-field" kind="filename" ariaLabel="Language code format (filename formatting)" value="iso_639_1" onChange={() => {}} /></div>
+                      <div className="transcode-filename-preview is-prominent"><span>Example output</span><code>Arrival (2016) [1920x1080, HDR10, HEVC] [en, de].mkv</code></div>
+                    </div>
+                    <div className="compatibility-profile-card-actions transcode-automation-editor-actions"><button type="button" className="transcode-action-button"><Save size={16} aria-hidden="true" />Save</button><button type="button" className="secondary transcode-action-button">Cancel</button></div>
+                  </div>
+                </article>
+              </VariantCard>
+              <VariantCard title="Foldername preset editor with colored tokens" source="Settings > Transcoding Presets > Foldername Presets > Edit" status="Foldername presets use the same colored token editor and expose subtitle metadata and language-code format." classes={["transcode-preset-editor", "transcode-filename-body", "transcode-formatting-preset-body", "transcode-filename-template-editor", "transcode-filename-inline-token", "transcode-filename-metadata-tools", "transcode-filename-options-row", "transcode-language-code-field", "transcode-filename-preview"]} wide>
+                <div className="compatibility-profile-details transcode-automation-details transcode-automation-editor transcode-preset-editor">
+                  <div className="transcode-filename-body transcode-formatting-preset-body">
+                    <div className="transcode-control-field"><span className="transcode-field-label">Foldername formatting</span><div className="settings-choice-input transcode-control transcode-filename-template-input transcode-filename-template-editor" contentEditable role="textbox" aria-label="Foldername formatting" suppressContentEditableWarning><span className="transcode-filename-inline-token is-medialyze" contentEditable={false} data-filename-token="folderName">{"{folderName}"}</span><span className="transcode-filename-inline-text"> [</span><span className="transcode-filename-inline-token is-connector" contentEditable={false} data-filename-token="movieTitle">{"{movieTitle}"}</span><span className="transcode-filename-inline-text">]</span></div></div>
+                    <div className="transcode-filename-metadata-tools"><button type="button" className="secondary small settings-panel-header-action transcode-filename-metadata-toggle" aria-expanded="true" aria-controls="catalog-folder-preset-metadata"><ChevronDown aria-hidden="true" size={14} />Add metadata</button><div className="transcode-filename-token-list" id="catalog-folder-preset-metadata" role="group" aria-label="Foldername metadata tokens"><div className="transcode-filename-token-group"><strong>MediaLyze</strong><div className="transcode-filename-token-group-items"><button type="button" className="secondary small transcode-filename-token-pill">{"{folderName}"}</button><button type="button" className="secondary small transcode-filename-token-pill">{"{subtitleLanguages}"}</button></div></div></div></div>
+                    <div className="transcode-filename-options-row transcode-formatting-preset-options is-folder"><label className="transcode-filename-field transcode-filename-divider-field"><span className="transcode-field-label">Metadata divider</span><input className="settings-choice-input transcode-control" value=", " readOnly /></label><LanguageCodeFormatField className="transcode-filename-field transcode-language-code-field" kind="folder" ariaLabel="Language code format (folder formatting)" value="iso_639_2" onChange={() => {}} /></div>
+                    <div className="transcode-filename-preview is-prominent"><span>Example output</span><code>Movies [Arrival]</code></div>
+                  </div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Save current filename formatting dialog" source="TranscodingPanel" classes={["settings-create-library-dialog", "settings-create-library-dialog-header", "transcode-formatting-save-dialog", "settings-choice-input", "jellyfin-actions"]}>
+                <section className="settings-create-library-dialog transcode-formatting-save-dialog" role="dialog" aria-labelledby="catalog-formatting-save-title">
+                  <div className="settings-create-library-dialog-header"><div><h2 id="catalog-formatting-save-title">Save Filename Presets</h2></div><button type="button" className="secondary icon-only-button" aria-label="Close"><X aria-hidden="true" /></button></div>
+                  <form onSubmit={(event) => event.preventDefault()}><label><span>Preset name</span><input className="settings-choice-input" defaultValue="Movie name" /></label><div className="jellyfin-actions"><button type="submit"><Save size={16} aria-hidden="true" />Save</button><button type="button" className="secondary">Cancel</button></div></form>
+                </section>
+              </VariantCard>
+              {releaseVisibility.automationRules ? (
+              <VariantCard title="Standalone Automation Rules panel · expanded hit areas" source={`${settings} > Transcoding > Automation Rules`} status="New rule remains in the panel heading" classes={["app-settings-section", "transcode-automation-section", "transcode-federation-panel", "transcode-federation-heading", "transcode-federation-heading-main", "transcode-federation-heading-actions", "transcode-federation-section-chevron", "transcode-automation-tab-content", "transcode-automation-quick-actions", "transcode-automation-content", "compatibility-profile-list", "compatibility-profile-list-item", "compatibility-profile-list-row", "compatibility-profile-list-trigger", "compatibility-profile-quick-actions", "compatibility-profile-quick-action", "compatibility-profile-details", "compatibility-profile-card-actions", "compatibility-profile-form-grid", "compatibility-profile-field-wide", "compatibility-capability-sections", "compatibility-capability-section", "compatibility-capability-section-body", "transcode-automation-list-copy", "transcode-federation-member-list-copy", "transcode-capability-device-copy", "transcode-capability-device-name", "transcode-federation-member-pill", "transcode-device-matrix", "transcode-matrix-table", "transcode-matrix-scroll", "transcode-automation-summary-form-grid", "transcode-automation-rule-sections", "transcode-automation-section-summary", "transcode-preset-section-count", "transcode-preset-rule", "transcode-preset-rule-summary", "transcode-preset-rule-summary-grid", "transcode-preset-rule-field", "transcode-preset-rule-section", "transcode-automation-description-tooltip", "transcode-automation-description-tooltip-portal", "transcode-automation-details", "transcode-automation-editor", "transcode-automation-editor-actions", "transcode-condition-group", "transcode-condition-list", "transcode-condition-row", "transcode-actions", "settings-panel-header-action", "transcode-action-button", "badge"]} wide>
+                <section className="app-settings-section transcode-automation-section transcode-federation-panel">
+                  <div className="compatibility-profile-panel transcode-automation-content">
+                    <div className="transcode-federation-heading" data-settings-search-target="transcoding-automation-rules">
+                      <div className="transcode-federation-heading-main">
+                        <button type="button" className="transcode-federation-section-chevron" aria-label="Collapse Automation Rules" title="Collapse Automation Rules" aria-expanded="true" aria-controls="catalog-automation-rules-body"><ChevronDown aria-hidden="true" className="nav-icon" /></button>
+                        <h3>Automation Rules</h3>
+                        <TooltipTrigger ariaLabel="Explain automation rules" tooltipClassName="transcode-automation-description-tooltip-portal transcode-automation-description-tooltip-portal-compact" maxWidth={300} align="start" placement="center" content={<div className="transcode-automation-description-tooltip"><p>Rules select a preset when their conditions match.</p><p>Priority and safety limits remain enforced.</p></div>}>?</TooltipTrigger>
+                      </div>
+                      <div className="transcode-federation-heading-actions"><button type="button" className="secondary small settings-panel-header-action" disabled><Plus size={14} aria-hidden="true" />New rule</button></div>
+                    </div>
+                    <section id="catalog-automation-rules-body" className="transcode-automation-tab-content">
+                      <div className="compatibility-profile-list">
+                      <article className="compatibility-profile-list-item is-expanded">
+                        <div className="compatibility-profile-list-row">
+                          <button type="button" className="compatibility-profile-list-trigger" aria-expanded="true"><span className="transcode-automation-list-copy"><strong>My stream preset</strong></span><ChevronDown aria-hidden="true" /></button>
+                          <div className="compatibility-profile-quick-actions">
+                            <button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Edit My stream preset" title="Edit"><SquarePenIcon size={18} aria-hidden="true" className="nav-icon" /></button>
+                            <button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Delete My stream preset" title="Delete"><Trash2 size={18} aria-hidden="true" className="nav-icon" /></button>
+                          </div>
+                        </div>
+                          <div className="compatibility-profile-details transcode-automation-details">
+                           <div className="compatibility-profile-form-grid transcode-automation-summary-form-grid"><label><span>Container</span><select className="settings-choice-input" disabled value="mkv" onChange={() => undefined}><option value="mkv">MKV</option></select></label><label><span>Execution mode</span><select className="settings-choice-input" disabled value="inherit" onChange={() => undefined}><option value="inherit">Use global setting</option></select></label><label><span>Dynamic range</span><select className="settings-choice-input" disabled value="preserve" onChange={() => undefined}><option value="preserve">Preserve</option></select></label><label><span>Used by automatic rules</span><input className="settings-choice-input" readOnly value="2" /></label></div>
+                           <div className="compatibility-capability-sections transcode-automation-rule-sections"><details className="compatibility-capability-section"><summary className="transcode-automation-section-summary"><span>Video stream rules</span><strong className="transcode-preset-section-count">1</strong></summary><div className="compatibility-capability-section-body"><div className="transcode-preset-rule transcode-preset-rule-summary"><strong>Encode</strong><div className="transcode-preset-rule-summary-grid"><div><span>Codec match</span><strong>h264</strong></div><div><span>Stream action</span><strong>Encode</strong></div></div></div></div></details><details className="compatibility-capability-section"><summary className="transcode-automation-section-summary"><span>Audio stream rules</span><strong className="transcode-preset-section-count">0</strong></summary><div className="compatibility-capability-section-body"><p className="field-hint">—</p></div></details></div>
+                           <p className="field-hint">MKV / HEVC, copy compatible streams, encode unmatched video.</p>
+                         </div>
+                       </article>
+                     </div>
+                     </section>
+                   </div>
+                 </section>
+              </VariantCard>
+              ) : null}
+              {releaseVisibility.federation ? (
+              <VariantCard title="Federation members below reachable addresses" source={`${settings} > Transcoding > Federation`} classes={["transcode-automation-section", "transcode-federation-members", "transcode-automation-content", "transcode-automation-tab-content", "settings-profile-toggle-row", "transcode-automation-toggle-row", "transcode-automation-standalone-header", "transcode-automation-standalone-heading", "transcode-federation-discovered-refresh", "transcode-federation-member-row", "transcode-federation-member-trigger-shell", "transcode-federation-member-trigger", "transcode-federation-status-trigger", "transcode-federation-status-tooltip", "transcode-federation-status-tooltip-heading", "transcode-federation-status-tooltip-hint", "transcode-federation-status-tooltip-item", "transcode-federation-peer", "transcode-federation-peer-name", "transcode-federation-member-name", "transcode-federation-entry-marker", "transcode-federation-status-marker", "transcode-federation-add-icon", "transcode-federation-peer-connect-control", "transcode-federation-segment-input", "transcode-federation-peer-code-input", "transcode-federation-connect-button", "transcode-federation-action-icon", "transcode-federation-manual-item", "transcode-federation-manual-address-input", "transcode-federation-manual-code-input", "transcode-federation-manual-connect-control", "compatibility-profile-list", "compatibility-profile-list-item", "compatibility-profile-list-row", "compatibility-profile-list-trigger", "compatibility-profile-quick-actions", "transcode-automation-quick-actions", "compatibility-profile-quick-action", "compatibility-profile-details", "transcode-automation-list-copy", "transcode-federation-member-list-copy", "transcode-federation-member-tab-details", "transcode-federation-member-connections", "transcode-federation-member-detail-label", "transcode-federation-member-endpoint-list", "transcode-federation-member-endpoint", "transcode-federation-member-endpoint-main", "transcode-federation-member-endpoint-metrics", "transcode-federation-member-endpoint-actions", "transcode-federation-member-endpoint-action", "transcode-federation-endpoint-favorite", "transcode-federation-endpoint-status", "status-dot", "notice", "success"]} wide>
+                <section className="app-settings-section transcode-automation-section transcode-federation-members">
+                  <div className="compatibility-profile-panel transcode-automation-content">
+                    <div className="notice success" role="status">Worker 02 disconnected. It is now available under Discovered installations for pairing again.</div>
+                     <section className="transcode-automation-tab-content">
+                      <div className="compatibility-profile-list">
+                        <div className="settings-profile-toggle-row transcode-automation-toggle-row transcode-automation-standalone-header" data-settings-search-target="transcoding-federation-members">
+                          <div className="transcode-automation-standalone-heading"><strong>Federation members</strong><TooltipTrigger ariaLabel="Explain federation members" tooltipClassName="transcode-automation-description-tooltip-portal transcode-automation-description-tooltip-portal-compact" maxWidth={300} align="start" placement="center" content={<div className="transcode-automation-description-tooltip"><p>Review trusted federation installations and their reachability.</p></div>}>?</TooltipTrigger></div>
+                          <TooltipTrigger ariaLabel="Refresh discovery" content="Refresh discovery" className="secondary icon-only-button compatibility-profile-quick-action transcode-federation-discovered-refresh" pinOnClick={false}><RefreshCw aria-hidden="true" size={16} /></TooltipTrigger>
+                        </div>
+                        <article className="compatibility-profile-list-item is-expanded">
+                          <div className="compatibility-profile-list-row transcode-federation-member-row">
+                            <div className="transcode-federation-member-trigger-shell">
+                              <TooltipTrigger ariaLabel="Worker 02: Connection warning" className="transcode-federation-status-trigger" align="start" placement="auto" maxWidth={360} pinOnClick={false} content={<div className="transcode-federation-status-tooltip"><strong className="transcode-federation-status-tooltip-heading is-warning">Connection warning</strong><div className="transcode-federation-status-tooltip-item is-error"><span>Last error</span><p>timed out</p></div></div>}>
+                                <span className="transcode-federation-entry-marker transcode-federation-status-marker"><span className="status-dot is-warning" aria-hidden="true" /></span>
+                              </TooltipTrigger>
+                              <button type="button" className="compatibility-profile-list-trigger transcode-federation-member-trigger" aria-expanded="true"><span className="transcode-automation-list-copy transcode-federation-member-list-copy"><strong><span className="transcode-federation-member-name">Worker 02</span></strong><small>16 CPU · 420 GB free · 0 active jobs · v0.18.0</small></span><ChevronDown aria-hidden="true" /></button>
+                            </div>
+                            <div className="compatibility-profile-quick-actions transcode-automation-quick-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action" aria-label="Sync Worker 02" title="Sync"><RefreshCw size={18} aria-hidden="true" /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action danger" aria-label="Disconnect Worker 02" title="Disconnect"><Unplug size={18} aria-hidden="true" /></button></div>
+                          </div>
+                          <div className="compatibility-profile-details transcode-automation-details transcode-federation-member-tab-details">
+                            <div className="transcode-federation-member-connections">
+                              <span className="transcode-federation-member-detail-label">Available connections</span>
+                              <p className="field-hint">The favorite is used by default. It is skipped only while unreachable and another connection is reachable.</p>
+                              <ul className="transcode-federation-member-endpoint-list">
+                                <li className="transcode-federation-member-endpoint is-reachable is-favorite">
+                                  <div className="transcode-federation-member-endpoint-main"><span className="status-dot is-online" aria-hidden="true" /><code title="http://worker-02:8091">http://worker-02:8091</code><span className="badge transcode-federation-endpoint-favorite">Favorite</span></div>
+                                  <div className="transcode-federation-member-endpoint-metrics"><span title="Ping"><Clock3 aria-hidden="true" size={13} />Ping <strong>4.2 ms</strong></span><span title="Throughput"><Gauge aria-hidden="true" size={13} />Throughput <strong>812.5 Mbit/s</strong></span><span className="transcode-federation-endpoint-status is-reachable">Reachable</span><small>Tested 10.09.2026, 10:00</small></div>
+                                  <div className="transcode-federation-member-endpoint-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-federation-member-endpoint-action is-favorite" aria-label="Remove favorite connection: http://worker-02:8091" aria-pressed="true" title="Remove favorite connection"><Star aria-hidden="true" size={16} fill="currentColor" /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-federation-member-endpoint-action" aria-label="Block this connection: http://worker-02:8091" aria-pressed="false" title="Block this connection"><Ban aria-hidden="true" size={16} /></button></div>
+                                </li>
+                                <li className="transcode-federation-member-endpoint is-unreachable is-blocked">
+                                  <div className="transcode-federation-member-endpoint-main"><span className="status-dot is-offline" aria-hidden="true" /><code title="http://worker-02-backup:8091">http://worker-02-backup:8091</code></div>
+                                  <div className="transcode-federation-member-endpoint-metrics"><span title="Ping"><Clock3 aria-hidden="true" size={13} />Ping <strong>—</strong></span><span title="Throughput"><Gauge aria-hidden="true" size={13} />Throughput <strong>—</strong></span><span className="transcode-federation-endpoint-status is-blocked">Blocked</span><small>Tested 10.09.2026, 09:58</small></div>
+                                  <div className="transcode-federation-member-endpoint-actions"><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-federation-member-endpoint-action" aria-label="Use this connection as favorite: http://worker-02-backup:8091" aria-pressed="false" title="Use this connection as favorite" disabled><Star aria-hidden="true" size={16} /></button><button type="button" className="secondary icon-only-button compatibility-profile-quick-action transcode-federation-member-endpoint-action is-blocked" aria-label="Unblock this connection: http://worker-02-backup:8091" aria-pressed="true" title="Unblock this connection"><Ban aria-hidden="true" size={16} /></button></div>
+                                </li>
+                              </ul>
+                            </div>
+                          </div>
+                        </article>
+                        <article className="compatibility-profile-list-item transcode-federation-peer"><span><strong><Plus aria-hidden="true" className="transcode-federation-add-icon" size={16} /><span className="transcode-federation-peer-name">Worker 01</span></strong><small>http://worker-01:8091 · v0.18.0</small></span><div className="transcode-federation-peer-connect-control"><input className="settings-choice-input transcode-federation-segment-input transcode-federation-peer-code-input is-invalid" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" placeholder="Pairing code" aria-label="Pairing code" value="" readOnly onChange={() => undefined} /><button type="button" className="secondary small settings-panel-header-action transcode-federation-connect-button"><AnimatedConnectIcon className="transcode-federation-action-icon" size={16} aria-hidden="true" />Connect</button></div></article>
+                        <article className="compatibility-profile-list-item transcode-federation-manual-item"><Plus aria-hidden="true" className="transcode-federation-entry-marker transcode-federation-add-icon" size={16} /><div className="transcode-federation-peer-connect-control transcode-federation-manual-connect-control"><input className="settings-choice-input transcode-federation-segment-input transcode-federation-manual-address-input" type="url" placeholder="http://host:8091" aria-label="http://host:8091" value="" readOnly onChange={() => undefined} /><input className="settings-choice-input transcode-federation-segment-input transcode-federation-peer-code-input transcode-federation-manual-code-input" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" placeholder="Pairing code" aria-label="Pairing code" value="" readOnly onChange={() => undefined} /><button type="button" className="secondary small settings-panel-header-action transcode-federation-connect-button"><AnimatedConnectIcon className="transcode-federation-action-icon" size={16} aria-hidden="true" />Connect</button></div></article>
+                       </div>
+                       </section>
+                     </div>
+                   </section>
+               </VariantCard>
+              ) : null}
+              <VariantCard title="Preview with synchronized comparison" source="FileDetailPage > Preview > automatic linked-variant comparison" classes={["file-detail-preview-stack", "file-detail-preview-comparison-panel", "video-wipe-compare", "video-wipe-stage", "video-wipe-divider", "video-wipe-handle", "video-wipe-label", "video-wipe-controls", "video-wipe-audio-mix", "video-wipe-audio-mix-label", "video-wipe-audio-mix-value"]} wide>
+                <div className="file-detail-preview-stack">
+                  <div className="file-detail-preview-panel">
+                    <div className="file-detail-preview-player-shell">
+                      <video className="file-detail-preview-player" controls aria-label="Original preview" />
+                    </div>
+                  </div>
+                  <div className="file-detail-preview-panel file-detail-preview-comparison-panel">
+                    <h3>Synchronized preview comparison</h3>
+                    <div className="transcode-configuration-grid">
+                      <label className="transcode-control-field"><span>Left version</span><select defaultValue="original"><option value="original">Original</option><option>H.264 variant</option><option>HEVC variant</option></select></label>
+                      <label className="transcode-control-field"><span>Right version</span><select defaultValue="h264"><option value="h264">H.264 variant</option><option>HEVC variant</option></select></label>
+                    </div>
+                    <VideoWipeCompare first={{ src: "data:video/mp4;base64,", label: "Original" }} second={{ src: "data:video/mp4;base64,", label: "Variant" }} />
+                  </div>
+                </div>
+              </VariantCard>
+              <VariantCard title="Combined file and transcode history" source={`${fileDetail} > File history`} classes={["file-history-with-transcoding", "transcode-history-section", "transcode-history-list", "file-history-entry", "file-history-entry-head"]} wide>
+                <div className="file-history-with-transcoding">
+                  <div className="file-history-list">
+                    <div className="notice">Latest file snapshots and transcode results stay together on File history.</div>
+                  </div>
+                  <section className="transcode-history-section">
+                    <h3>File &amp; Transcode history</h3>
+                    <div className="transcode-history-list">
+                      <details className="file-history-entry" open>
+                        <summary className="file-history-entry-head">
+                          <span className="file-history-entry-chevron" aria-hidden="true"><ChevronRight className="nav-icon" /></span>
+                          <strong>Compatibility</strong>
+                          <span className="badge transcode-status-completed">Completed</span>
+                          <span>Movies/Arrival [1080p, H.264].mp4</span>
+                        </summary>
+                      </details>
+                    </div>
+                  </section>
+                </div>
+              </VariantCard>
               <VariantCard title="Path browser fixture" source={`${settings} > Create library`} classes={["path-browser", "path-entry", "path-browser-selected-item"]}>
                 <PathBrowserFixture />
               </VariantCard>
               <VariantCard title="Path browser missing folder recovery" source={`${settings} > Libraries > Change path`} classes={["path-browser", "alert", "path-browser-selected-item"]}>
                 <MissingPathBrowserFixture />
               </VariantCard>
+
             </VariantGroup>
           </CatalogSection>
 
           <CatalogSection definition={catalogSections[11]}>
             <VariantGroup title="Dialogs, popovers, tooltips">
-              <VariantCard title="Release notes dialog" source={releaseNotes} classes={["release-notes-dialog", "release-notes-header", "release-notes-version"]} wide>
+              <VariantCard title="Release notes dialog" source={releaseNotes} status="Minimal and full telemetry leave room for flat issue, support, and GitHub actions." classes={["release-notes-dialog", "release-notes-header", "release-notes-title-block", "page-heading-row", "page-heading-icon", "release-notes-icon-link", "release-notes-version"]} wide>
                 <div className="ui-elements-dialog-demo">
                   <ReleaseDialogFixture />
+                </div>
+              </VariantCard>
+              <VariantCard title="Release notes dialog · telemetry off" source={releaseNotes} status="The compact consent selector remains available when telemetry is off." classes={["release-notes-dialog", "release-notes-secondary-actions", "telemetry-mode-toggle", "release-notes-icon-link"]} wide>
+                <div className="ui-elements-dialog-demo">
+                  <ReleaseDialogFixture telemetryOff />
                 </div>
               </VariantCard>
               <VariantCard title="Create library dialog shell" source={`${settings} > Add library`} classes={["settings-create-library-backdrop", "settings-create-library-dialog", "settings-create-library-dialog-header"]}>
                 <div className="settings-create-library-backdrop ui-elements-static-backdrop">
                   <section className="settings-create-library-dialog">
                     <div className="settings-create-library-dialog-header">
-                      <h2>Create library</h2>
+                      <div className="settings-create-library-title-row"><h2>Create library</h2><TooltipTrigger ariaLabel="Path selection requirements" content="Path selection is restricted to directories below MEDIA_ROOT.">?</TooltipTrigger></div>
                       <button type="button" className="secondary icon-only-button settings-create-library-dialog-close" aria-label="Close">
                         <X className="nav-icon" />
                       </button>
                     </div>
-                    <div className="form-grid">
-                      <div className="field"><label>Name</label><input defaultValue="Movies" /></div>
+                    <div className="form-grid settings-create-library-form">
+                      <div className="field"><label>Name</label><input className="settings-choice-input" defaultValue="Movies" /></div>
+                      <div className="field"><label>Type</label><select className="settings-choice-input" defaultValue="movies"><option value="movies">Movies</option></select></div>
+                      <button type="button" className="history-retention-primary-button field-span-full" disabled>Create library</button>
                     </div>
                   </section>
                 </div>
@@ -2370,13 +3443,25 @@ export function UiElementsPage() {
                     <div className="form-grid">
                       <p className="field-hint field-span-full">Update the folders for this library. Existing analysis history is kept.</p>
                       <div className="path-browser-selected-list field-span-full">
-                        <span className="path-browser-selected-item badge">
-                          <span>/media/movies</span>
-                          <span className="path-browser-pill-divider" aria-hidden="true" />
-                          <button type="button" className="path-browser-pill-remove" aria-label="Remove">×</button>
-                        </span>
+                        <div className="path-browser-selected-item">
+                          <span className="path-browser-selected-path">/media/movies</span>
+                          <button type="button" className="secondary icon-only-button path-browser-selected-remove" aria-label="Remove" title="Remove"><X aria-hidden="true" /></button>
+                        </div>
                       </div>
                     </div>
+                  </section>
+                </div>
+              </VariantCard>
+              <VariantCard title="Set connector API key dialog" source={`${settings} > Connectors > Connection`} classes={["settings-create-library-backdrop", "settings-create-library-dialog", "connector-secret-dialog", "connector-secret-action-button"]} wide>
+                <div className="settings-create-library-backdrop ui-elements-static-backdrop">
+                  <section className="settings-create-library-dialog connector-secret-dialog" role="dialog" aria-modal="true" aria-labelledby="catalog-connector-secret-dialog-title">
+                    <div className="settings-create-library-dialog-header">
+                      <div><h2 id="catalog-connector-secret-dialog-title">Set API key</h2><p>An API key is already stored. Enter a new one to replace it.</p></div>
+                      <button type="button" className="secondary icon-only-button" aria-label="Close"><X aria-hidden="true" /></button>
+                    </div>
+                    <div className="notice">An API key is already configured and can be replaced.</div>
+                    <label><span>API key / secret</span><input className="settings-choice-input" type="password" autoFocus placeholder="Enter a new API key" /></label>
+                    <div className="jellyfin-actions"><button type="button"><KeyRound aria-hidden="true" />Save key</button><button type="button" className="secondary">Cancel</button></div>
                   </section>
                 </div>
               </VariantCard>
@@ -2406,7 +3491,7 @@ export function UiElementsPage() {
                     <p className="settings-delete-library-assets-note">Media files and assets in the library path are not deleted or modified.</p>
                     <div className="settings-delete-library-confirm-form">
                       <label>Type Movies to confirm.</label>
-                      <input defaultValue="Movies" />
+                      <input className="settings-choice-input" defaultValue="Movies" />
                       <div className="settings-delete-library-actions">
                         <button type="button" className="secondary">Cancel</button>
                         <button type="button" className="settings-delete-library-confirm-button">Delete library</button>
@@ -2449,6 +3534,30 @@ export function UiElementsPage() {
                     <button type="button" className="search-filter-picker-item">Video codec</button>
                   </div>
                   <QualityPickerFixture open />
+                </div>
+              </VariantCard>
+              <VariantCard title="Transcoding settings stack order" source="TranscodingSettingsPanel" classes={["settings-sidebar-stack", "app-settings-section", "transcode-automation-section", "transcode-federation-panel", "transcode-automation-content", "compatibility-profile-panel", "transcode-automation-panel-body", "transcode-federation-heading", "transcode-federation-heading-main", "transcode-federation-heading-actions", "transcode-federation-section-chevron", "settings-panel-header-action", "transcode-federation-members"]} wide>
+                <div className="settings-sidebar-stack">
+                  <section className="app-settings-section transcode-automation-section transcode-federation-panel">
+                    <div className="compatibility-profile-panel transcode-automation-content">
+                      <div className="transcode-federation-heading"><div className="transcode-federation-heading-main"><button type="button" className="transcode-federation-section-chevron" aria-label="Expand Accelerators" title="Expand Accelerators" aria-expanded="false" aria-controls="catalog-stack-accelerators"><ChevronRight aria-hidden="true" className="nav-icon" /></button><h3>Accelerators</h3><TooltipTrigger ariaLabel="Explain accelerators" content="Inspect the real FFmpeg hardware probes.">?</TooltipTrigger></div><div className="transcode-federation-heading-actions"><button type="button" className="secondary small settings-panel-header-action"><FlaskConical aria-hidden="true" size={16} />Test Hardware</button></div></div>
+                      <div id="catalog-stack-accelerators" className="transcode-automation-panel-body" hidden><PanelEmptyState message="No capability matrix data yet. Run the hardware test to populate this matrix." /></div>
+                    </div>
+                  </section>
+                  {releaseVisibility.automationRules ? (
+                  <section className="app-settings-section transcode-automation-section transcode-federation-panel">
+                    <div className="compatibility-profile-panel transcode-automation-content">
+                      <div className="transcode-federation-heading"><div className="transcode-federation-heading-main"><button type="button" className="transcode-federation-section-chevron" aria-label="Expand Automation Rules" title="Expand Automation Rules" aria-expanded="false" aria-controls="catalog-stack-rules"><ChevronRight aria-hidden="true" className="nav-icon" /></button><h3>Automation Rules</h3><TooltipTrigger ariaLabel="Explain automation rules" content="Rules select a preset when their conditions match.">?</TooltipTrigger></div><div className="transcode-federation-heading-actions"><button type="button" className="secondary small settings-panel-header-action" disabled><Plus aria-hidden="true" size={14} />New rule</button></div></div>
+                      <div id="catalog-stack-rules" className="transcode-automation-panel-body" hidden><p className="compatibility-profile-search-empty">No presets or rules are configured.</p></div>
+                    </div>
+                  </section>
+                  ) : null}
+                  {releaseVisibility.federation ? (
+                  <section className="transcode-federation-panel">
+                    <div className="transcode-federation-heading"><div className="transcode-federation-heading-main"><button type="button" className="transcode-federation-section-chevron" aria-label="Collapse Federation" title="Collapse Federation" aria-expanded="true"><ChevronDown aria-hidden="true" className="nav-icon" /></button><label className="toggle-switch transcode-federation-toggle"><input type="checkbox" role="switch" defaultChecked aria-label="Enable direct federation for this installation" /><span className="toggle-switch-track" aria-hidden="true"><span className="toggle-switch-thumb" /></span></label><h3>Federation</h3></div></div>
+                    <div className="transcode-federation-content"><div className="transcode-federation-addresses"><div className="transcode-federation-subheading"><strong>Reachable network addresses</strong></div><div className="transcode-federation-address-list"><div className="transcode-federation-address-item"><code>http://medialyze-nas.local:8091</code></div></div></div></div>
+                  </section>
+                  ) : null}
                 </div>
               </VariantCard>
               <VariantCard title="Tooltip trigger variants" source={`${fileDetail} / ${libraryDetail} / ${scanLogs}`} classes={["tooltip-trigger", "file-detail-badge-tooltip-trigger", "duplicate-group-badge-tooltip-trigger"]}>

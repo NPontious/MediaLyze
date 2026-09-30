@@ -4,20 +4,22 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings, get_settings
-from backend.app.models.entities import AppSetting, Library, QualityProfileDefinition
+from backend.app.models.entities import AppSetting, Library, MediaFile, QualityProfileDefinition
 from backend.app.schemas.app_settings import (
     AppSettingsRead,
     AppSettingsUpdate,
+    DuplicateMatchingSettings,
     FeatureFlagsRead,
     HistoryRetentionBucketRead,
     HistoryRetentionRead,
     PatternRecognitionSettings,
     ResolutionCategory,
     ScanPerformanceRead,
+    TranscodingSettingsRead,
     UiPreferencesRead,
 )
 from backend.app.services.pattern_recognition import (
@@ -87,6 +89,10 @@ def _default_scan_performance(settings: Settings) -> ScanPerformanceRead:
     )
 
 
+def _default_transcoding_settings() -> TranscodingSettingsRead:
+    return TranscodingSettingsRead()
+
+
 def _default_history_retention() -> HistoryRetentionRead:
     return HistoryRetentionRead()
 
@@ -103,6 +109,8 @@ def _deserialize_pattern_recognition(payload: Any) -> PatternRecognitionSettings
     show_payload = show_candidate if isinstance(show_candidate, dict) else {}
     bonus_candidate = candidate.get("bonus_content")
     bonus_payload = bonus_candidate if isinstance(bonus_candidate, dict) else {}
+    duplicate_candidate = candidate.get("duplicate_matching")
+    duplicate_payload = duplicate_candidate if isinstance(duplicate_candidate, dict) else {}
 
     user_folder_patterns = normalize_pattern_list(bonus_payload.get("user_folder_patterns"))
     default_folder_patterns = normalize_pattern_list(
@@ -110,8 +118,32 @@ def _deserialize_pattern_recognition(payload: Any) -> PatternRecognitionSettings
         if isinstance(bonus_payload.get("default_folder_patterns"), list)
         else defaults.bonus_content.default_folder_patterns
     )
+    user_filename_suffix_regexes = normalize_pattern_list(duplicate_payload.get("user_filename_suffix_regexes"))
+    default_filename_suffix_regexes = normalize_pattern_list(
+        duplicate_payload.get("default_filename_suffix_regexes")
+        if isinstance(duplicate_payload.get("default_filename_suffix_regexes"), list)
+        else defaults.duplicate_matching.default_filename_suffix_regexes
+    )
+    try:
+        duration_tolerance_seconds = int(
+            duplicate_payload.get(
+                "duration_tolerance_seconds",
+                defaults.duplicate_matching.duration_tolerance_seconds,
+            )
+        )
+    except (TypeError, ValueError):
+        duration_tolerance_seconds = defaults.duplicate_matching.duration_tolerance_seconds
     result = PatternRecognitionSettings(
         analyze_bonus_content=True,
+        duplicate_matching=DuplicateMatchingSettings(
+            duration_tolerance_seconds=duration_tolerance_seconds,
+            user_filename_suffix_regexes=user_filename_suffix_regexes,
+            default_filename_suffix_regexes=default_filename_suffix_regexes,
+            effective_filename_suffix_regexes=merge_pattern_lists(
+                user_filename_suffix_regexes,
+                default_filename_suffix_regexes,
+            ),
+        ),
         show_season_patterns={
             "recognition_mode": show_payload.get("recognition_mode")
             if isinstance(show_payload.get("recognition_mode"), str)
@@ -196,6 +228,30 @@ def _deserialize_scan_performance(payload: Any, settings: Settings) -> ScanPerfo
     )
 
 
+def _deserialize_transcoding_settings(payload: Any) -> TranscodingSettingsRead:
+    candidate = payload if isinstance(payload, dict) else {}
+    defaults = _default_transcoding_settings()
+    raw_cpu_jobs = candidate.get("cpu_parallel_jobs", defaults.cpu_parallel_jobs)
+    if raw_cpu_jobs != "auto":
+        try:
+            raw_cpu_jobs = int(raw_cpu_jobs)
+        except (TypeError, ValueError):
+            raw_cpu_jobs = defaults.cpu_parallel_jobs
+    return TranscodingSettingsRead(
+        execution_mode=candidate.get("execution_mode", defaults.execution_mode),
+        cpu_budget_percent=int(candidate.get("cpu_budget_percent", defaults.cpu_budget_percent)),
+        cpu_parallel_jobs=raw_cpu_jobs,
+        gpu_parallel_jobs_per_device=int(
+            candidate.get("gpu_parallel_jobs_per_device", defaults.gpu_parallel_jobs_per_device)
+        ),
+        default_output_mode=candidate.get("default_output_mode", defaults.default_output_mode),
+        on_error=candidate.get("on_error", defaults.on_error),
+        retry_count=int(candidate.get("retry_count", defaults.retry_count)),
+        existing_output=candidate.get("existing_output", defaults.existing_output),
+        remove_partial_output=bool(candidate.get("remove_partial_output", defaults.remove_partial_output)),
+    )
+
+
 def _deserialize_history_retention_bucket(
     payload: Any,
     defaults: HistoryRetentionBucketRead,
@@ -214,6 +270,9 @@ def _deserialize_history_retention(payload: Any) -> HistoryRetentionRead:
         file_history=_deserialize_history_retention_bucket(candidate.get("file_history"), defaults.file_history),
         library_history=_deserialize_history_retention_bucket(candidate.get("library_history"), defaults.library_history),
         scan_history=_deserialize_history_retention_bucket(candidate.get("scan_history"), defaults.scan_history),
+        transcode_history=_deserialize_history_retention_bucket(
+            candidate.get("transcode_history"), defaults.transcode_history
+        ),
     )
 
 
@@ -248,6 +307,7 @@ def _deserialize_app_settings(value: Any, settings: Settings) -> AppSettingsRead
         normalized_default = _seeded_default_ignore_patterns(settings)
     feature_flags = _deserialize_feature_flags(payload.get("feature_flags"), settings)
     scan_performance = _deserialize_scan_performance(payload.get("scan_performance"), settings)
+    transcoding = _deserialize_transcoding_settings(payload.get("transcoding"))
     ui_preferences = _deserialize_ui_preferences(payload.get("ui_preferences"))
     history_retention = _deserialize_history_retention(payload.get("history_retention"))
     pattern_recognition = _deserialize_pattern_recognition(payload.get("pattern_recognition"))
@@ -264,6 +324,7 @@ def _deserialize_app_settings(value: Any, settings: Settings) -> AppSettingsRead
         resolution_categories=normalized_resolution_categories,
         feature_flags=feature_flags,
         scan_performance=scan_performance,
+        transcoding=transcoding,
         ui_preferences=ui_preferences,
         history_retention=history_retention,
     )
@@ -281,6 +342,7 @@ def get_app_settings(db: Session, settings: Settings | None = None) -> AppSettin
             resolution_categories=default_resolution_categories(),
             feature_flags=_default_feature_flags(resolved_settings),
             scan_performance=_default_scan_performance(resolved_settings),
+            transcoding=_default_transcoding_settings(),
             ui_preferences=_default_ui_preferences(),
             history_retention=_default_history_retention(),
         )
@@ -385,12 +447,29 @@ def update_app_settings(
     next_scan_performance = current.scan_performance.model_copy(
         update=payload.scan_performance.model_dump(exclude_none=True) if payload.scan_performance is not None else {}
     )
+    next_transcoding = current.transcoding.model_copy(
+        update=payload.transcoding.model_dump(exclude_none=True) if payload.transcoding is not None else {}
+    )
     next_ui_preferences = current.ui_preferences.model_copy(
         update=payload.ui_preferences.model_dump(exclude_none=True) if payload.ui_preferences is not None else {}
     )
     next_pattern_recognition = current.pattern_recognition.model_copy(deep=True)
     if payload.pattern_recognition is not None:
         pattern_payload = payload.pattern_recognition
+        if pattern_payload.duplicate_matching is not None:
+            duplicate_updates = pattern_payload.duplicate_matching.model_dump(exclude_none=True)
+            next_duplicate_matching = next_pattern_recognition.duplicate_matching.model_copy(update=duplicate_updates)
+            next_duplicate_matching.user_filename_suffix_regexes = normalize_pattern_list(
+                next_duplicate_matching.user_filename_suffix_regexes
+            )
+            next_duplicate_matching.default_filename_suffix_regexes = normalize_pattern_list(
+                next_duplicate_matching.default_filename_suffix_regexes
+            )
+            next_duplicate_matching.effective_filename_suffix_regexes = merge_pattern_lists(
+                next_duplicate_matching.user_filename_suffix_regexes,
+                next_duplicate_matching.default_filename_suffix_regexes,
+            )
+            next_pattern_recognition.duplicate_matching = next_duplicate_matching
         if pattern_payload.show_season_patterns is not None:
             show_updates = pattern_payload.show_season_patterns.model_dump(exclude_none=True)
             next_pattern_recognition.show_season_patterns = (
@@ -420,9 +499,13 @@ def update_app_settings(
         next_pattern_recognition.show_season_patterns.episode_file_regexes
     )
     validate_pattern_recognition_settings(next_pattern_recognition)
+    duplicate_matching_patterns_changed = (
+        current.pattern_recognition.duplicate_matching.effective_filename_suffix_regexes
+        != next_pattern_recognition.duplicate_matching.effective_filename_suffix_regexes
+    )
     history_retention_updates = {}
     if payload.history_retention is not None:
-        for key in ("file_history", "library_history", "scan_history"):
+        for key in ("file_history", "library_history", "scan_history", "transcode_history"):
             bucket_update = getattr(payload.history_retention, key)
             if bucket_update is None:
                 continue
@@ -451,12 +534,24 @@ def update_app_settings(
         "resolution_categories": [item.model_dump(mode="json") for item in next_resolution_categories],
         "feature_flags": next_feature_flags.model_dump(mode="json"),
         "scan_performance": next_scan_performance.model_dump(mode="json"),
+        "transcoding": next_transcoding.model_dump(mode="json"),
         "ui_preferences": next_ui_preferences.model_dump(mode="json"),
         "history_retention": next_history_retention.model_dump(mode="json"),
     }
     if payload.pattern_recognition is not None or "pattern_recognition" in existing_value:
         next_value["pattern_recognition"] = next_pattern_recognition.model_dump(mode="json")
     setting.value = next_value
+    if duplicate_matching_patterns_changed:
+        db.execute(
+            update(MediaFile)
+            .where(
+                or_(
+                    MediaFile.filename_signature.is_not(None),
+                    MediaFile.filename_pattern_signature.is_not(None),
+                )
+            )
+            .values(filename_signature=None, filename_pattern_signature=None)
+        )
     db.commit()
     db.refresh(setting)
     result = _deserialize_app_settings(setting.value, settings or get_settings())

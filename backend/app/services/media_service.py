@@ -80,6 +80,7 @@ from backend.app.services.resolution_categories import classify_resolution_categ
 from backend.app.services.spatial_audio import format_spatial_audio_profile
 from backend.app.services.stats_cache import stats_cache
 from backend.app.services.video_queries import primary_video_streams_subquery
+from backend.app.utils.processes import get_hidden_subprocess_kwargs
 
 FileSortKey = Literal[
     "file",
@@ -643,6 +644,7 @@ def _load_compact_table_rows(
             defer(MediaFile.quality_score_breakdown),
             defer(MediaFile.recognition_details),
             defer(MediaFile.filename_signature),
+            defer(MediaFile.filename_pattern_signature),
             defer(MediaFile.content_hash),
             defer(MediaFile.content_hash_algorithm),
             defer(MediaFile.audio_metadata_search),
@@ -1067,7 +1069,7 @@ def _build_library_file_id_query(
     base_query = (
         select(MediaFile.id)
         .select_from(MediaFile)
-        .where(MediaFile.library_id == library_id)
+        .where(MediaFile.library_id == library_id, MediaFile.is_transcode_variant.is_(False))
     )
     use_fts = media_file_search_index_available(db)
     filtered_query = apply_legacy_search(
@@ -1497,6 +1499,7 @@ def generate_media_cover_png(
             check=True,
             capture_output=True,
             timeout=timeout_seconds,
+            **get_hidden_subprocess_kwargs(),
         )
     except FileNotFoundError as exc:
         raise RuntimeError("ffmpeg is not available") from exc
@@ -1637,6 +1640,7 @@ def search_media_files(
     statement = (
         select(MediaFile)
         .join(Library, Library.id == MediaFile.library_id)
+        .where(MediaFile.is_transcode_variant.is_(False))
         .options(
             selectinload(MediaFile.library),
             selectinload(MediaFile.library_root),
@@ -1704,7 +1708,7 @@ def search_media_files(
 def _series_summary_from_model(db: Session, series: MediaSeries, resolution_categories=None) -> MediaSeriesSummaryRead:
     files = db.scalars(
         select(MediaFile)
-        .where(MediaFile.series_id == series.id)
+        .where(MediaFile.series_id == series.id, MediaFile.is_transcode_variant.is_(False))
         .options(
             selectinload(MediaFile.media_format),
             selectinload(MediaFile.video_streams),
@@ -1973,7 +1977,7 @@ def get_library_series_detail(db: Session, library_id: int, series_id: int) -> M
     for season in seasons:
         files = db.scalars(
             select(MediaFile)
-            .where(MediaFile.season_id == season.id)
+            .where(MediaFile.season_id == season.id, MediaFile.is_transcode_variant.is_(False))
             .options(
                 selectinload(MediaFile.media_format),
                 selectinload(MediaFile.video_streams),

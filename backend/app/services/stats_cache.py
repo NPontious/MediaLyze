@@ -442,5 +442,19 @@ class StatsCache:
                     lambda key: key[0] == cache_key and key[1] == library_id,
                 )
 
+    def clear(self) -> None:
+        with self._lock:
+            self._epochs.clear()
+            self._dashboard.clear()
+            self._dashboard_history.clear()
+            self._dashboard_comparisons.clear()
+            self._libraries.clear()
+            self._library_summaries.clear()
+            self._library_history.clear()
+            self._library_statistics.clear()
+            self._library_comparisons.clear()
+            self._library_file_counts.clear()
+            self._storage_maps.clear()
+
 
 stats_cache = StatsCache()

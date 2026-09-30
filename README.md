@@ -41,6 +41,7 @@ Bring your own auth (for now).
 ## Features
 
 - Technical media analysis powered by `ffprobe`
+- Safe FFmpeg transcoding into linked video variants with hardware-required execution by default; original files remain untouched unless explicit replacement is confirmed
 - Full and incremental scans using `path + size + mtime`
 - historical analysis
 - many different charts for all metrics
@@ -93,6 +94,23 @@ can be extended by .env using:
 [docker-compose-ENV.yaml](docker/docker-compose-ENV.yaml)
 and 
 [env.example](docker/env.example)
+
+For automatic local GPU wiring, use `docker/start-medialyze.sh` on Linux/macOS
+or `docker/start-medialyze.ps1` on Windows. The launcher starts the CPU-safe
+Compose file and creates a temporary override for NVIDIA (`gpus: all`) and
+Linux `/dev/dri` plus the host device-group IDs only when the corresponding
+host capability is present. It does not install drivers. MediaLyze then probes
+the visible encoders and selects a passing AMD, Intel, or NVIDIA path without
+requiring a vendor-specific setting. The media mount remains read-only;
+transcoded output is written to `./Transcode_Output` by default and can be
+moved with `TRANSCODE_OUTPUT_HOST_DIR`.
+
+This includes integrated media engines: Intel CPU/iGPU Quick Sync and AMD APU/iGPU VCN
+on Linux through `/dev/dri`, plus native Windows QSV/AMF and macOS VideoToolbox in the
+desktop app. On native Windows hybrid systems, the desktop sidecar enumerates the
+physical D3D11 adapters so an AMD/Intel integrated engine and a discrete NVIDIA GPU
+are probed and selected independently. A CPU software encoder is used only in the
+explicit `cpu_only` mode.
 
 
 Open `http://localhost:8080`, or set `HOST_PORT` to expose the container on a different host port.
@@ -156,7 +174,7 @@ npm install
 npm run dev
 ```
 
-The Vite dev server proxies `/api` to `http://127.0.0.1:8080`.
+The Vite dev server proxies `/api` to the backend on port 8080 by default. The combined scripts also pass a custom `BACKEND_HOST` and `BACKEND_PORT` to Vite.
 
 ### Combined startup scripts
 
@@ -179,6 +197,8 @@ Both scripts expect:
 - a valid `MEDIA_ROOT` directory, defaulting to your Desktop if not overridden
 
 They start the backend with reload enabled, wait for `/api/health`, then launch the Vite dev server in the foreground.
+Both services listen on all IPv4 interfaces by default. Once both are ready, the scripts print app URLs for the machine's IP addresses and hostnames. Open a LAN address or resolvable hostname from another device on the same network. Terminal support determines whether the printed URLs are clickable. Set `BACKEND_HOST` or `FRONTEND_HOST` to `127.0.0.1` to restrict either service to the local machine; `BACKEND_PORT` and `FRONTEND_PORT` override the default ports. The machine's firewall must allow incoming connections to the chosen ports.
+The launchers track both service processes, stop their child processes when the launcher exits, and clean up matching leftovers on the next start. If another application owns a configured port, startup reports it and leaves that process running.
 
 ### Desktop
 
@@ -201,7 +221,11 @@ For packaged `.app`, `.dmg`, `.exe`, and `AppImage` builds, see [docs/build_desk
 
 ## Docker configuration
 
-Relevant environment variables:
+The complete environment-variable reference, including application settings,
+Docker Compose interpolation, entrypoint permissions, defaults,
+and security notes is in [docs/environment.md](docs/environment.md).
+
+The most commonly used variables are:
 
 - `MEDIALYZE_RUNTIME`: runtime mode, `server` or `desktop`, default `server`
 - `CONFIG_PATH`: writable config/data directory, default `/config` in server mode and the OS user-data directory in desktop mode
@@ -212,6 +236,10 @@ Relevant environment variables:
 - `TZ`: process/container timezone, default `UTC`
 - `DISABLE_DEFAULT_IGNORE_PATTERNS`: optional; when set to `true`, built-in default ignore patterns are not preloaded
 - `FFPROBE_PATH`: optional override for the `ffprobe` binary path
+- `FFMPEG_PATH`: optional override for the `ffmpeg` binary used for preview generation and transcoding
+- `MEDIALYZE_TRANSCODE_OUTPUT_ROOT`: optional writable path inside the runtime for separate transcoded output; Compose maps this to `/transcode-output`
+- `MEDIALYZE_HW_RENDER_NODE`: optional Linux DRM render node override for Intel/AMD VAAPI/QSV, for example `/dev/dri/renderD128`; when omitted MediaLyze probes every visible render node and selects a passing device automatically
+- `TRANSCODE_OUTPUT_HOST_DIR`: Compose host directory for `/transcode-output`, default `./Transcode_Output`
 - `JELLYFIN_API_KEY_FILE`: optional path to a Jellyfin API-key secret file; see [Jellyfin integration](docs/jellyfin.md)
 - `PUID` / `PGID`: optional runtime user/group ids for shared-folder permission setups; set both or leave both unset to keep the default root runtime user
 
@@ -224,6 +252,15 @@ In the desktop app, mounted network shares and UNC paths can be selected directl
 
 Scan parallelism is configured in the UI under `Settings -> App settings -> Scan performance`.
 MediaLyze exposes separate limits for per-scan analysis workers and parallel library scans so you can tune throughput without editing compose or env files.
+
+Transcoding is configured under `Settings -> Transcoding`. Hardware-required is
+the default and never falls back silently to CPU. The page shows the real
+FFmpeg capability probe, including NVIDIA driver/API failures, and lets you
+choose the CPU budget, GPU slots, output policy, retry behavior, and partial
+output cleanup. Same-directory variants are excluded from primary counts and
+future scans; replacing an original is an explicit, no-backup operation.
+Desktop FFmpeg artifacts and Docker's architecture-specific FFmpeg package are
+pinned and checksummed in [docs/ffmpeg-manifest.json](docs/ffmpeg-manifest.json).
 
 Ignore rules use glob patterns matched against the normalized relative path inside each library. MediaLyze ships editable built-in defaults for common system and temporary paths such as `*/.DS_Store`, `*/@eaDir/*`, `*/.deletedByTMM/*`, and `*.part`. Set `DISABLE_DEFAULT_IGNORE_PATTERNS=true` if you do not want those defaults preloaded on first start.
 See [docs/patterns.md](docs/patterns.md) for folder discovery, series recognition, bonus-content rules, and ignore-pattern examples.

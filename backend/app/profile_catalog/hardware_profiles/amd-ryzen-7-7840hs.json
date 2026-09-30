@@ -3,18 +3,18 @@
   "profile_version": 1,
   "id": "amd-ryzen-7-7840hs",
   "name": "AMD Ryzen 7 7840HS (Radeon 780M)",
-  "category": "pc",
+  "category": "computer",
   "manufacturer": "AMD",
   "year": 2023,
   "status": "official",
   "verified_by": "manufacturer documentation",
   "added": "2026-07-06",
-  "last_modified": "2026-07-06",
+  "last_modified": "2026-08-24",
   "video": {
     "h264": {
       "hardware_decode": true,
       "max_resolution": "8K",
-      "max_fps": 120,
+      "max_fps": 75,
       "bit_depth": [
         8
       ]
@@ -22,7 +22,7 @@
     "hevc": {
       "hardware_decode": true,
       "max_resolution": "8K",
-      "max_fps": 120,
+      "max_fps": 49,
       "bit_depth": [
         8,
         10
@@ -30,14 +30,13 @@
       "hdr": [
         "HDR10",
         "HDR10+",
-        "HLG",
-        "Dolby Vision"
+        "HLG"
       ]
     },
     "av1": {
       "hardware_decode": true,
       "max_resolution": "8K",
-      "max_fps": 120,
+      "max_fps": 60,
       "bit_depth": [
         8,
         10
@@ -45,14 +44,13 @@
       "hdr": [
         "HDR10",
         "HDR10+",
-        "HLG",
-        "Dolby Vision"
+        "HLG"
       ]
     },
     "vp9": {
       "hardware_decode": true,
       "max_resolution": "8K",
-      "max_fps": 120,
+      "max_fps": 49,
       "bit_depth": [
         8,
         10
@@ -60,6 +58,14 @@
       "hdr": [
         "HDR10",
         "HLG"
+      ]
+    },
+    "mpeg2video": {
+      "hardware_decode": true,
+      "max_resolution": "1080p",
+      "max_fps": 60,
+      "bit_depth": [
+        8
       ]
     }
   },
@@ -102,7 +108,7 @@
     "dvd_subtitle": true,
     "mov_text": true
   },
-  "notes": "AMD Ryzen 7 7840HS with Radeon 780M (RDNA 3 / VCN 4.0) supports full hardware acceleration for AV1, HEVC, VP9, and H.264 up to 8K resolution.",
+  "notes": "AMD Ryzen 7 7840HS with Radeon 780M (RDNA 3 / VCN 4.0) decodes H.264, HEVC, VP9, and AV1 in hardware up to 8K using AMD's published maximum decode bandwidths (H.264 4320p75, HEVC and VP9 4320p49, AV1 4320p60). AMD products are not licensed for Dolby Vision, so Dolby Vision streams fall back to their HDR10 base layer in players.",
   "sources": [
     {
       "label": "AMD Ryzen 7 7840HS Specifications",

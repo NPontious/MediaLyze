@@ -14,7 +14,7 @@ import traceback
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, defer, selectinload
 
 from backend.app.core.config import Settings, get_allowed_media_extensions
 from backend.app.db.session import SessionLocal
@@ -34,6 +34,8 @@ from backend.app.models.entities import (
     ScanStatus,
     ScanTriggerSource,
     SubtitleStream,
+    TranscodeVariant,
+    TranscodeVariantGroup,
     VideoStream,
 )
 from backend.app.services.duplicates import (
@@ -388,6 +390,7 @@ def _stream_media_files(
     ignore_patterns: tuple[str, ...] = (),
     relative_root: Path | None = None,
     pattern_recognition_settings=None,
+    skip_relative_paths: set[str] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ):
     suffixes = {extension.lower() for extension in allowed_extensions}
@@ -449,6 +452,8 @@ def _stream_media_files(
                 _record_pattern_hits(relative_path, bonus_matches, discovery.bonus_pattern_hits)
                 continue
             if file_path.suffix.lower() in suffixes:
+                if relative_path in (skip_relative_paths or set()):
+                    continue
                 discovery.file_count += 1
                 if discovery.collect_files:
                     discovery.files.append(file_path)
@@ -478,6 +483,7 @@ def _replace_analysis(media_file: MediaFile, normalized, external_subtitles: lis
             bit_rate=stream.bit_rate,
             bit_depth=stream.bit_depth,
             hdr_type=stream.hdr_type,
+            language=stream.language,
         )
         for stream in normalized.video_streams
     ]
@@ -982,7 +988,12 @@ def queue_scan_job(
         )
         .order_by(ScanJob.id.desc())
     )
-    if existing_job is not None:
+    # A completed transcode must be discovered after publication. Coalescing it
+    # into a scan that is already running could miss the newly created output,
+    # so persist a follow-up job for the runtime's per-library queue instead.
+    if existing_job is not None and not (
+        trigger_source == ScanTriggerSource.transcode and existing_job.status == JobStatus.running
+    ):
         existing_job.trigger_details = _append_coalesced_trigger(existing_job.trigger_details, trigger_source, trigger_details)
         db.commit()
         db.refresh(existing_job)
@@ -1184,7 +1195,24 @@ def run_scan(
         for media_file in db.scalars(
             select(MediaFile)
             .where(MediaFile.library_id == library_id)
-            .options(selectinload(MediaFile.external_subtitles), selectinload(MediaFile.library_root))
+            .options(
+                defer(MediaFile.raw_ffprobe_json),
+                defer(MediaFile.quality_score_breakdown),
+                defer(MediaFile.analysis_failure_detail),
+                selectinload(MediaFile.external_subtitles),
+                selectinload(MediaFile.library_root),
+            )
+        ).all()
+    }
+    same_directory_variant_paths = {
+        (variant.library_root_id, variant.output_relative_path)
+        for variant in db.scalars(
+            select(TranscodeVariant)
+            .join(TranscodeVariantGroup, TranscodeVariant.group_id == TranscodeVariantGroup.id)
+            .where(
+                TranscodeVariantGroup.library_id == library_id,
+                TranscodeVariant.output_mode == "same_directory",
+            )
         ).all()
     }
     incomplete_analysis_ids = _incomplete_analysis_file_ids(db, library_id)
@@ -1192,7 +1220,11 @@ def run_scan(
     ensure_default_quality_profiles(db, app_settings.resolution_categories)
     ignore_patterns = tuple(app_settings.ignore_patterns)
     pattern_recognition_settings = app_settings.pattern_recognition
-    duplicate_strategy = get_duplicate_detection_strategy(library.duplicate_detection_mode)
+    duplicate_matching_settings = pattern_recognition_settings.duplicate_matching
+    duplicate_strategy = get_duplicate_detection_strategy(
+        library.duplicate_detection_mode,
+        duplicate_matching_settings,
+    )
     new_files = SampledPathList()
     modified_files = SampledPathList()
     deleted_files = SampledPathList()
@@ -1214,6 +1246,7 @@ def run_scan(
             for candidate_key, candidate in existing_by_path.items()
             if candidate_key[0] == library_root_id
             and candidate_key not in seen_relative_paths
+            and not candidate.is_transcode_variant
             and not (relative_root / candidate.relative_path).exists()
         ]
 
@@ -1336,7 +1369,12 @@ def run_scan(
         duplicate_groups = 0
         duplicate_files = 0
         if include_duplicate_counts:
-            duplicate_groups, duplicate_files = get_duplicate_group_counts(db, library.id, library.duplicate_detection_mode)
+            duplicate_groups, duplicate_files = get_duplicate_group_counts(
+                db,
+                library.id,
+                library.duplicate_detection_mode,
+                duplicate_matching_settings,
+            )
         return {
             "ignore_patterns": list(ignore_patterns),
             "discovery": {
@@ -1546,6 +1584,9 @@ def run_scan(
                                     library,
                                     app_settings.resolution_categories,
                                 )
+                                # History serialization requires IDs on newly
+                                # replaced streams and subtitle sidecars.
+                                db.flush()
                                 create_media_file_history_entry_if_changed(
                                     db,
                                     work.media_file,
@@ -1593,6 +1634,15 @@ def run_scan(
                             )
 
                     db.flush()
+                    # existing_by_path retains files until discovery finishes. Release
+                    # persisted analysis data so a full scan does not retain every
+                    # raw payload and stream graph with expire_on_commit=False.
+                    if work.needs_analysis:
+                        db.expire(work.media_file, [
+                            "raw_ffprobe_json", "quality_score_breakdown", "analysis_failure_detail",
+                            "media_format", "video_streams", "audio_streams", "subtitle_streams",
+                            "external_subtitles", "chapters",
+                        ])
                     job.files_scanned += 1
                     processing_progress_counter += 1
                     processed_count += 1
@@ -1622,6 +1672,11 @@ def run_scan(
                     ignore_patterns=ignore_patterns,
                     relative_root=scan_root.relative_root,
                     pattern_recognition_settings=pattern_recognition_settings,
+                    skip_relative_paths={
+                        relative_path
+                        for root_id, relative_path in same_directory_variant_paths
+                        if root_id == scan_root.library_root_id
+                    },
                     should_cancel=_should_cancel,
                 ):
                     file_path = discovered_media_file.path
@@ -1751,9 +1806,10 @@ def run_scan(
                 media_file.id
                 for relative_key, media_file in existing_by_path.items()
                 if relative_key not in seen_relative_paths
+                and not media_file.is_transcode_variant
             ]
             for relative_key, media_file in existing_by_path.items():
-                if relative_key not in seen_relative_paths:
+                if relative_key not in seen_relative_paths and not media_file.is_transcode_variant:
                     deleted_files.add(media_file.relative_path)
             if stale_ids:
                 db.execute(delete(MediaFile).where(MediaFile.id.in_(stale_ids)))
@@ -1841,6 +1897,7 @@ def run_quality_recompute(
             MediaFile.last_analyzed_at.is_not(None),
             MediaFile.raw_ffprobe_json.is_not(None),
             MediaFile.scan_status == ScanStatus.ready,
+            MediaFile.is_transcode_variant.is_(False),
         )
         .options(
             selectinload(MediaFile.media_format),

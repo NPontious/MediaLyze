@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Activity, Bug, ChevronDown, ChevronRight, Download, Files, GitCompare, History, House, LibraryBig, Map, RefreshCw, Settings, UserRoundCheck, X } from "lucide-react";
+import { Activity, Bug, ChevronDown, ChevronRight, Download, Files, GitCompare, History, House, Library, LibraryBig, Map, RefreshCw, Rss, Settings, UserRoundCheck, X } from "lucide-react";
 import { FilePlusCorner, FileXCorner, File, FileDiff, FileExclamationPoint, FileSearchCorner, FileCheckCorner } from "lucide-react";
 import { AnimatePresence, motion, useAnimation, type Transition } from "motion/react";
 
@@ -11,6 +11,7 @@ import { ConnectorProviderIcon } from "./ConnectorProviderIcon";
 import { FolderInputIcon } from "./FolderInputIcon";
 import { FolderOutputIcon } from "./FolderOutputIcon";
 import { GithubIcon } from "./GithubIcon";
+import { HandCoinsIcon } from "./HandCoinsIcon";
 import { api, type ConnectorConnection, type ConnectorSyncJob, type ScanJob, type UpdateStatus } from "../lib/api";
 import { APP_VERSION } from "../lib/app-version";
 import { useAppData } from "../lib/app-data";
@@ -32,6 +33,7 @@ import { useScanJobs } from "../lib/scan-jobs";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/NPontious/MediaLyze/";
 const GITHUB_ISSUE_URL = "https://github.com/NPontious/MediaLyze/issues/new/choose";
+const GITHUB_SPONSORS_URL = "https://github.com/sponsors/frederikemmer";
 const UI_ELEMENTS_CLICK_WINDOW_MS = 1500;
 const UI_ELEMENTS_CLICK_COUNT = 3;
 const RELEASE_NOTE_LINK_PATTERN = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -370,6 +372,7 @@ function ConnectorSyncJobCard({
 export function AppShell() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { activeJobs, hasActiveJobs, stopLibrary } = useScanJobs();
   const { appSettings, appSettingsLoaded, libraries, librariesLoaded, loadDashboard, loadLibraries, setAppSettings } = useAppData();
   const [localReleaseNotes] = useState<ReleaseNotes[]>(() => getAllReleaseNotes());
@@ -387,6 +390,8 @@ export function AppShell() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState<InstallerDownloadState>("idle");
   const [releaseActionsMenuOpen, setReleaseActionsMenuOpen] = useState(false);
+  const [librariesMenuOpen, setLibrariesMenuOpen] = useState(false);
+  const librariesMenuRef = useRef<HTMLDivElement>(null);
   const hadActiveJobsRef = useRef(hasActiveJobs);
   const automaticUpdateReminderHandledRef = useRef(false);
   const automaticUpdateReminderOpenRef = useRef(false);
@@ -416,7 +421,32 @@ export function AppShell() {
       : mergedReleaseNotes;
   }, [latestAvailableVersion, localReleaseNotes, updateAvailable, updateStatus?.release_notes]);
   const showFullWidthAppShell = appSettings.feature_flags.show_full_width_app_shell;
+  const [transcodeAttention, setTranscodeAttention] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const highlight = () => {
+      setTranscodeAttention(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setTranscodeAttention(false), 4800);
+    };
+    window.addEventListener("medialyze:transcode-started", highlight);
+    return () => { clearTimeout(timer); window.removeEventListener("medialyze:transcode-started", highlight); };
+  }, []);
   const showFirstLibraryAttention = librariesLoaded && libraries.length === 0;
+  const libraryRouteActive = /^\/libraries\/[^/]+/.test(location.pathname);
+
+  useEffect(() => {
+    setLibrariesMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!librariesMenuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!librariesMenuRef.current?.contains(event.target as Node)) setLibrariesMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [librariesMenuOpen]);
 
   function dismissReleaseNotes() {
     markReleaseNotesSeen(APP_VERSION, releaseNotes);
@@ -604,7 +634,7 @@ export function AppShell() {
         <div className="app-header media-header">
           <div className="app-title-block">
             <NavLink to="/" end className="app-title-link" aria-label={`${t("app.title")} ${t("nav.homeAria")}`}>
-              <h1>{t("app.title")}</h1>
+              <h1><span className="app-title-text">{t("app.title")}</span><img className="app-title-icon" src="/favicon.svg" alt="" /></h1>
             </NavLink>
             <button
               type="button"
@@ -625,6 +655,7 @@ export function AppShell() {
                 to="/"
                 end
                 aria-label={t("nav.homeAria")}
+                data-tooltip={t("nav.dashboard")}
                 className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
               >
                 {({ isActive }) => (
@@ -642,10 +673,59 @@ export function AppShell() {
                   </>
                 )}
               </NavLink>
+              <div
+                ref={librariesMenuRef}
+                className="media-nav-library-menu"
+                onMouseEnter={() => setLibrariesMenuOpen(true)}
+                onMouseLeave={() => setLibrariesMenuOpen(false)}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setLibrariesMenuOpen(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setLibrariesMenuOpen(false);
+                    librariesMenuRef.current?.querySelector("button")?.focus();
+                  }
+                }}
+              >
+                <button
+                  type="button"
+                  className={`icon-nav-button${libraryRouteActive ? " active" : ""}`}
+                  aria-label={t("nav.libraryMenuAria")}
+                  data-tooltip={t("nav.libraryMenuAria")}
+                  aria-expanded={librariesMenuOpen}
+                  aria-controls={librariesMenuOpen ? "header-library-list" : undefined}
+                  onClick={(event) => {
+                    if ((event.nativeEvent as PointerEvent).pointerType === "mouse") {
+                      setLibrariesMenuOpen(true);
+                    } else {
+                      setLibrariesMenuOpen((open) => !open);
+                    }
+                  }}
+                >
+                  {libraryRouteActive ? <span className="nav-active-pill" /> : null}
+                  <span className="nav-link-content"><Library aria-hidden="true" className="nav-icon" /></span>
+                </button>
+                {librariesMenuOpen ? (
+                  <div id="header-library-list" className="media-nav-library-list">
+                    {libraries.length > 0 ? libraries.map((library) => (
+                      <NavLink
+                        key={library.id}
+                        to={`/libraries/${library.id}`}
+                        className={({ isActive }) => `library-nav-link${isActive ? " active" : ""}`}
+                        onClick={() => setLibrariesMenuOpen(false)}
+                      >
+                        {library.name}
+                      </NavLink>
+                    )) : <span className="media-nav-library-empty">{t("nav.noLibraries")}</span>}
+                  </div>
+                ) : null}
+              </div>
               <NavLink
                 to="/files/compare"
                 end
                 aria-label={t("nav.compareAria")}
+                data-tooltip={t("nav.compareAria")}
                 className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
               >
                 {({ isActive }) => (
@@ -664,9 +744,54 @@ export function AppShell() {
                 )}
               </NavLink>
               <NavLink
+                to="/storage-map"
+                end
+                aria-label={t("nav.storageMapAria")}
+                data-tooltip={t("nav.storageMapAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <Map aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
+              <NavLink
+                to="/transcoding"
+                end
+                aria-label={t("nav.transcodingAria")}
+                data-tooltip={t("nav.transcodingAria")}
+                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}${transcodeAttention ? " is-first-library-attention" : ""}`.trim()}
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="primary-nav-pill"
+                        className="nav-active-pill"
+                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
+                      />
+                    ) : null}
+                    <span className="nav-link-content">
+                      <Activity aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
+              </NavLink>
+              <NavLink
                 to="/settings"
                 end
                 aria-label={t("nav.settingsAria")}
+                data-tooltip={t("nav.settingsAria")}
                 className={({ isActive }) =>
                   `icon-nav-button ${isActive ? "active" : ""}${showFirstLibraryAttention ? " is-first-library-attention" : ""}`.trim()
                 }
@@ -686,49 +811,6 @@ export function AppShell() {
                   </>
                 )}
               </NavLink>
-              <NavLink
-                to="/storage-map"
-                end
-                aria-label={t("nav.storageMapAria")}
-                className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive ? (
-                      <motion.span
-                        layoutId="primary-nav-pill"
-                        className="nav-active-pill"
-                        transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
-                      />
-                    ) : null}
-                    <span className="nav-link-content">
-                      <Map aria-hidden="true" className="nav-icon" />
-                    </span>
-                  </>
-                )}
-              </NavLink>
-            </div>
-            <div className="media-nav-libraries">
-              {libraries.map((library) => (
-                <NavLink
-                  key={library.id}
-                  to={`/libraries/${library.id}`}
-                  className={({ isActive }) => `library-nav-link ${isActive ? "active" : ""}`.trim()}
-                >
-                  {({ isActive }) => (
-                    <>
-                      {isActive ? (
-                        <motion.span
-                          layoutId="library-nav-pill"
-                          className="nav-active-pill"
-                          transition={{ type: "spring", stiffness: 500, damping: 38, mass: 0.7 }}
-                        />
-                      ) : null}
-                      <span className="nav-link-content">{library.name}</span>
-                    </>
-                  )}
-                </NavLink>
-              ))}
             </div>
           </nav>
         </div>
@@ -801,7 +883,8 @@ export function AppShell() {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className={`release-notes-header${releaseActionsMenuOpen ? " release-notes-header-menu-open" : ""}`}>
-              <div className="release-notes-title-block">
+              <div className="release-notes-title-block page-heading-row">
+                <Rss aria-hidden="true" className="page-heading-icon" />
                 <h2 id="release-notes-title">{t("releaseNotes.title")}</h2>
               </div>
               <div className="release-notes-actions">
@@ -836,6 +919,7 @@ export function AppShell() {
                       </span>
                     </button>
                   ) : null}
+
                   <a
                     className="release-notes-icon-link"
                     href={GITHUB_ISSUE_URL}
@@ -845,6 +929,16 @@ export function AppShell() {
                     data-tooltip={t("releaseNotes.reportIssueAria")}
                   >
                     <Bug aria-hidden="true" className="nav-icon" />
+                  </a>
+                  <a
+                    className="release-notes-icon-link"
+                    href={GITHUB_SPONSORS_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={t("releaseNotes.donateAria")}
+                    data-tooltip={t("releaseNotes.donateAria")}
+                  >
+                    <HandCoinsIcon aria-hidden="true" className="release-notes-hand-coins-icon" size={18} />
                   </a>
                   <a
                     className="release-notes-icon-link"

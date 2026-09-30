@@ -10,6 +10,7 @@ import {
   type AppSettings,
   type CompatibilityEvaluation,
   type CompatibilityProfile,
+  type FileTranscode,
   type HardwareProfile,
   type JellyfinFileOverlay,
   type MediaFileDetail,
@@ -140,7 +141,7 @@ function createFileDetail(): MediaFileDetail {
         subtitle_type: "text",
       },
     ],
-    external_subtitles: [{ path: "Shows/Season01/file.en.srt", language: "en", format: "srt" }],
+    external_subtitles: [{ id: 1, path: "Shows/Season01/file.en.srt", language: "en", format: "srt" }],
     chapters: [
       {
         chapter_index: 0,
@@ -404,7 +405,7 @@ function createFileHistoryWithUnchangedGap(): MediaFileHistory {
   };
 }
 
-function renderPage(fileId: number) {
+function renderPage(fileId: number, path = `/files/${fileId}`) {
   if (!vi.isMockFunction(api.fileHistory)) {
     vi.spyOn(api, "fileHistory").mockResolvedValue({
       file_id: fileId,
@@ -413,6 +414,9 @@ function renderPage(fileId: number) {
       total: 0,
       items: [],
     });
+  }
+  if (!vi.isMockFunction(api.fileTranscode)) {
+    vi.spyOn(api, "fileTranscode").mockResolvedValue({ variants: [], jobs: [] } as unknown as FileTranscode);
   }
   if (!vi.isMockFunction(api.fileCompatibility)) {
     vi.spyOn(api, "fileCompatibility").mockResolvedValue([]);
@@ -440,9 +444,10 @@ function renderPage(fileId: number) {
   }
 
   return render(
-    <MemoryRouter initialEntries={[`/files/${fileId}`]}>
+    <MemoryRouter initialEntries={[path]}>
       <AppDataProvider>
         <Routes>
+          <Route path="/files/:fileId/preview" element={<FileDetailPage />} />
           <Route path="/files/:fileId" element={<FileDetailPage />} />
         </Routes>
       </AppDataProvider>
@@ -471,7 +476,7 @@ afterEach(() => {
 });
 
 describe("FileDetailPage", () => {
-  it("places matched Jellyfin metadata in overview, streaming, and cover while hiding it without a match", async () => {
+  it("places matched Jellyfin metadata in overview badges, streaming, and cover while hiding it without a match", async () => {
     const file = createFileDetail();
     const overlay: JellyfinFileOverlay = {
       match: {
@@ -542,16 +547,23 @@ describe("FileDetailPage", () => {
 
     const { container } = renderPage(file.id);
 
-    expect(await screen.findByText("Jellyfin overview text.")).toBeInTheDocument();
-    expect(screen.getByText("Production year")).toBeInTheDocument();
+    expect(await screen.findByText(file.filename)).toBeInTheDocument();
+    expect(screen.queryByText("Jellyfin overview text.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Production year")).not.toBeInTheDocument();
     const topBadges = container.querySelector(".file-detail-overview-badges");
     expect(topBadges).not.toBeNull();
     expect(within(topBadges as HTMLElement).getByText("Jellyfin")).toBeInTheDocument();
     expect(within(topBadges as HTMLElement).getByText("Movie")).toBeInTheDocument();
-    expect(container.querySelector(".file-detail-jellyfin-overview .badge")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Jellyfin metadata" })).not.toBeInTheDocument();
+    expect(container.querySelector(".file-detail-jellyfin-overview")).not.toBeInTheDocument();
 
     await selectFileDetailPanel("Streaming");
+    const metadataDisclosure = screen.getByText("Jellyfin metadata").closest("details");
+    expect(metadataDisclosure).not.toBeNull();
+    expect(metadataDisclosure).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Jellyfin metadata"));
+    expect(metadataDisclosure).toHaveAttribute("open");
+    expect(within(metadataDisclosure as HTMLElement).getByText("Production year")).toBeInTheDocument();
+    expect(within(metadataDisclosure as HTMLElement).getByText("Jellyfin overview text.")).toBeInTheDocument();
     expect(screen.getAllByText("Frederik")).not.toHaveLength(0);
     expect(screen.getByRole("group", { name: "History range" })).toBeInTheDocument();
     const playbackTable = screen.getByRole("table");
@@ -794,7 +806,7 @@ describe("FileDetailPage", () => {
     expect(within(sections[0] as HTMLElement).getByText("Other Device")).toBeInTheDocument();
     const visibleHardwareNames = Array.from(
       (sections[0] as HTMLElement).querySelectorAll(
-        ".compatibility-favorite-profile-summary > span:first-child, .compatibility-favorite-profile-row > span:first-child",
+        ".compatibility-favorite-profile-summary > .compatibility-favorite-profile-name, .compatibility-favorite-profile-row > span:first-child",
       ),
     ).map((node) => node.textContent);
     expect(visibleHardwareNames).toEqual(["Test Device", "Other Device"]);
@@ -856,6 +868,22 @@ describe("FileDetailPage", () => {
     const { container } = renderPage(file.id);
 
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    const navigationLabels = Array.from(
+      container.querySelectorAll(".settings-navigation-list > .settings-navigation-item"),
+    ).map((item) => item.getAttribute("aria-label"));
+    expect(navigationLabels.slice(0, 6)).toEqual([
+      "Overview",
+      "Video streams",
+      "Audio streams",
+      "Subtitles",
+      "Chapters",
+      "Transcode",
+    ]);
+    const compatibilityIndex = navigationLabels.indexOf("Compatibility");
+    if (compatibilityIndex >= 0) {
+      expect(compatibilityIndex).toBeGreaterThan(navigationLabels.indexOf("Transcode"));
+    }
+    expect(screen.getByRole("button", { name: "Transcode" })).toBeInTheDocument();
     expect(screen.getByText("UHD")).toBeInTheDocument();
     expect(screen.getByText("10.0 GB")).toBeInTheDocument();
     expect(screen.getAllByText("56m").length).toBeGreaterThan(0);
@@ -985,13 +1013,17 @@ describe("FileDetailPage", () => {
     await selectFileDetailPanel("Chapters");
     expect(await screen.findByText("Opening")).toBeInTheDocument();
     expect(screen.getByText("Chapter 2")).toBeInTheDocument();
+    expect(screen.getByText("00:00–01:30")).toBeInTheDocument();
+    expect(screen.getByText("01:30–03:00")).toBeInTheDocument();
     expect(screen.getAllByText("1m").length).toBeGreaterThan(0);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search chapters" }), { target: { value: "opening" } });
     expect(screen.getByText("Opening")).toBeInTheDocument();
     expect(screen.queryByText("Chapter 2")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Export chapters" }));
+    const exportButton = screen.getByRole("button", { name: "Export chapters" });
+    expect(exportButton.closest(".file-detail-chapter-summary")).not.toBeNull();
+    fireEvent.click(exportButton);
     await waitFor(() => expect(downloadChapters).toHaveBeenCalledWith(file.id));
     expect(createObjectUrl).toHaveBeenCalled();
     expect(anchorClick).toHaveBeenCalled();
@@ -1050,7 +1082,7 @@ describe("FileDetailPage", () => {
     expect(anchorClick).toHaveBeenCalled();
   });
 
-  it("renders a preview panel for video files with playback and download warnings", async () => {
+  it("renders a preview panel for video files with compact help in the tooltip", async () => {
     const file = createFileDetail();
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
@@ -1058,31 +1090,85 @@ describe("FileDetailPage", () => {
 
     const { container } = renderPage(file.id);
 
-    await selectFileDetailPanel("Preview (Beta)");
-    expect(await screen.findByRole("heading", { name: "Preview (Beta)" })).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Browser playback currently works best with MP4/WebM video and MP3, M4A, WAV, OGG, or FLAC audio. Codec support may vary by browser.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "If a media file does not play correctly, please report it or upload a sample so the preview feature can be improved.",
-      ),
-    ).toBeInTheDocument();
-    const reportLink = screen.getByRole("link", { name: "Report file" });
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Transcode" })).toBeInTheDocument();
+    await selectFileDetailPanel("Preview");
+    expect(await screen.findByRole("heading", { name: "Preview" })).toBeInTheDocument();
+    expect(screen.queryByText("Best browser support: MP4/WebM video and MP3, M4A, WAV, OGG, or FLAC audio; codecs vary by browser.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Report file" })).not.toBeInTheDocument();
+    fireEvent.focus(screen.getByRole("button", { name: "Show playback warning" }));
+    const helpTooltip = await screen.findByRole("tooltip");
+    expect(helpTooltip).toHaveTextContent("Preview playback is best effort and may start slowly or stutter.");
+    expect(helpTooltip).toHaveTextContent("Best browser support: MP4/WebM video and MP3, M4A, WAV, OGG, or FLAC audio; codecs vary by browser.");
+    expect(helpTooltip).toHaveTextContent("Playback issue? Report the file or upload a sample.");
+    const reportLink = within(helpTooltip).getByRole("link", { name: "Report file" });
     expect(reportLink).toHaveAttribute("href", "https://github.com/NPontious/MediaLyze/issues/new/choose");
     expect(reportLink).toHaveAttribute("target", "_blank");
-    expect(reportLink).toHaveClass("file-detail-cover-button");
-    expect(screen.queryByText("Playback is not optimized yet and may take a while to start or may not run smoothly.")).not.toBeInTheDocument();
-    fireEvent.focus(screen.getByRole("button", { name: "Show playback warning" }));
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Playback is not optimized yet and may take a while to start or may not run smoothly.",
-    );
+    expect(reportLink).not.toHaveClass("file-detail-cover-button");
     expect(screen.queryByRole("link", { name: "Download media" })).not.toBeInTheDocument();
     const player = container.querySelector(".file-detail-preview-player") as HTMLVideoElement | null;
     expect(player?.tagName).toBe("VIDEO");
     expect(player).toHaveAttribute("src", `/api/files/${file.id}/media`);
+  });
+
+  it("opens the direct synchronized preview route for a linked variant", async () => {
+    const file = createFileDetail();
+    const variant: MediaFileDetail = {
+      ...file,
+      id: 88,
+      filename: "Variant.mp4",
+      relative_path: "Shows/Season01/Variant.mp4",
+      extension: "mp4",
+      container: "mp4",
+      resolution: "1920x802",
+      hdr_type: "SDR",
+      video_codec: "h264",
+      video_streams: [{ ...file.video_streams[0], codec: "h264", width: 1920, height: 802, hdr_type: "SDR" }],
+    };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    const fileRequest = vi.spyOn(api, "file").mockImplementation((id) => Promise.resolve(Number(id) === file.id ? file : variant));
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+
+    const { container } = renderPage(file.id, `/files/${file.id}/preview?compare=${variant.id}`);
+
+    expect(await screen.findByRole("heading", { name: "Synchronized preview comparison" })).toBeInTheDocument();
+    expect(container.querySelector(".file-detail-preview-player")).toHaveAttribute("src", `/api/files/${file.id}/media`);
+    expect(container.querySelectorAll(".video-wipe-stage video")).toHaveLength(2);
+    expect(container.querySelector(".video-wipe-label-first")).toHaveTextContent(file.filename);
+    expect(container.querySelector(".video-wipe-label-second")).toHaveTextContent(variant.filename);
+    expect(fileRequest).toHaveBeenCalledWith(variant.id, { includeRawFfprobe: false });
+  });
+
+  it("shows the newest linked transcoded variant automatically in the preview", async () => {
+    const file = createFileDetail();
+    const variant: MediaFileDetail = {
+      ...file,
+      id: 88,
+      filename: "Variant.mp4",
+      relative_path: "Shows/Season01/Variant.mp4",
+      extension: "mp4",
+      container: "mp4",
+      resolution: "1920x802",
+      hdr_type: "SDR",
+      video_codec: "h264",
+      video_streams: [{ ...file.video_streams[0], codec: "h264", width: 1920, height: 802, hdr_type: "SDR" }],
+    };
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    const fileRequest = vi.spyOn(api, "file").mockImplementation((id) => Promise.resolve(Number(id) === file.id ? file : variant));
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    const transcodeRequest = vi.spyOn(api, "fileTranscode").mockResolvedValue({
+      variants: [{ output_file_id: variant.id }],
+      jobs: [],
+    } as unknown as FileTranscode);
+
+    const { container } = renderPage(file.id);
+
+    await selectFileDetailPanel("Preview");
+    expect(await screen.findByRole("heading", { name: "Synchronized preview comparison" })).toBeInTheDocument();
+    expect(transcodeRequest).toHaveBeenCalledWith(file.id, expect.any(AbortSignal));
+    expect(fileRequest).toHaveBeenCalledWith(variant.id, { includeRawFfprobe: false });
+    expect(container.querySelectorAll(".video-wipe-stage video")).toHaveLength(2);
+    expect(container.querySelector(".video-wipe-label-second")).toHaveTextContent(variant.filename);
   });
 
   it("renders an audio preview panel for audio-only files", async () => {
@@ -1113,8 +1199,10 @@ describe("FileDetailPage", () => {
 
     const { container } = renderPage(file.id);
 
-    await selectFileDetailPanel("Preview (Beta)");
-    expect(await screen.findByRole("heading", { name: "Preview (Beta)" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Transcode" })).not.toBeInTheDocument();
+    await selectFileDetailPanel("Preview");
+    expect(await screen.findByRole("heading", { name: "Preview" })).toBeInTheDocument();
     const player = container.querySelector(".file-detail-preview-player") as HTMLAudioElement | null;
     expect(player?.tagName).toBe("AUDIO");
     expect(player).toHaveAttribute("src", `/api/files/${file.id}/media`);
@@ -1210,6 +1298,15 @@ describe("FileDetailPage", () => {
 
   it("shows quality score categories as expandable stream-style detail entries", async () => {
     const file = createFileDetail();
+    let qualityCsvBlob: Blob | undefined;
+    const createObjectUrl = vi.fn((blob: Blob) => {
+      qualityCsvBlob = blob;
+      return "blob:quality";
+    });
+    const revokeObjectUrl = vi.fn();
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    Object.defineProperty(window.URL, "createObjectURL", { value: createObjectUrl, configurable: true });
+    Object.defineProperty(window.URL, "revokeObjectURL", { value: revokeObjectUrl, configurable: true });
     vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
     vi.spyOn(api, "file").mockResolvedValue(file);
     vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
@@ -1218,6 +1315,15 @@ describe("FileDetailPage", () => {
 
     await selectFileDetailPanel("Quality breakdown");
     expect(await screen.findByRole("heading", { name: "Quality breakdown" })).toBeInTheDocument();
+    const qualityExportButton = screen.getByRole("button", { name: "Export quality report (CSV)" });
+    fireEvent.click(qualityExportButton);
+    await waitFor(() => expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob)));
+    const qualityCsv = await qualityCsvBlob?.text();
+    expect(qualityCsv).toBeDefined();
+    expect(qualityCsv).toContain("category_key");
+    expect(qualityCsv).toContain("visual_density");
+    expect(anchorClick).toHaveBeenCalled();
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:quality");
     const entries = Array.from(container.querySelectorAll("details.quality-detail-entry"));
     expect(entries).toHaveLength(4);
     expect(entries[0]).toHaveAttribute("open");
@@ -1394,7 +1500,7 @@ describe("FileDetailPage", () => {
     const activePanel = container.querySelector(".file-detail-active-panel") as HTMLElement;
     const firstHeader = activePanel.querySelector(".stream-detail-entry-head") as HTMLElement;
     expect(firstHeader.querySelector(".stream-tooltip-inline strong")).toHaveTextContent("Dolby Digital Plus");
-    expect(firstHeader.querySelector(":scope > span")).toHaveTextContent("en");
+    expect(firstHeader.querySelector(":scope > .stream-detail-entry-summary-value")).toHaveTextContent("en");
     expect(within(activePanel).getByRole("button", { name: "Show quality first" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -1536,4 +1642,26 @@ describe("FileDetailPage", () => {
     expect(copiedText).toBe(JSON.stringify(file.raw_ffprobe_json, null, 2));
     expect(screen.getByRole("button", { name: "Copied raw ffprobe JSON" })).toBeInTheDocument();
   });
+  it("compares external output variants and switches both versions independently", async () => {
+    const file = createFileDetail();
+    vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
+    vi.spyOn(api, "file").mockResolvedValue(file);
+    vi.spyOn(api, "fileQualityScore").mockResolvedValue(createQualityDetail());
+    vi.spyOn(api, "fileTranscode").mockResolvedValue({
+      original: { id: file.id }, jobs: [], variants: [
+        { id: 41, output_file_id: null, analysis_status: "external", output_filename: "H264.mp4" },
+        { id: 42, output_file_id: null, analysis_status: "awaiting_analysis", output_filename: "HEVC.mp4" },
+      ],
+    } as unknown as FileTranscode);
+    const { container } = renderPage(file.id);
+    await selectFileDetailPanel("Preview");
+    const left = await screen.findByRole("combobox", { name: "Left version" });
+    const right = screen.getByRole("combobox", { name: "Right version" });
+    fireEvent.change(left, { target: { value: "variant:42" } });
+    fireEvent.change(right, { target: { value: "variant:41" } });
+    expect(container.querySelectorAll(".video-wipe-stage video")[0]).toHaveAttribute("src", "/api/transcode-variants/42/media");
+    expect(container.querySelectorAll(".video-wipe-stage video")[1]).toHaveAttribute("src", "/api/transcode-variants/41/media");
+    expect(container.querySelector(".file-detail-preview-player")).toHaveAttribute("src", `/api/files/${file.id}/media`);
+  });
+
 });

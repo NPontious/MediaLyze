@@ -5,6 +5,7 @@
 - `backend/app/main.py` boots FastAPI, initializes SQLite, and serves the built frontend.
 - `backend/app/models/entities.py` contains the normalized schema required for library, format, stream, and scan-job tracking.
 - `backend/app/services/scanner.py` performs deterministic discovery and parallel `ffprobe` execution.
+- `backend/app/services/transcoding.py` validates versioned structured plans, discovers and smoke-tests FFmpeg encoders/devices, builds shell-free argument lists, publishes according to the explicit output policy, and reconciles analyzed files with persistent variant groups.
 - `backend/app/services/connector_contract.py` defines the provider-neutral adapter boundary and DTOs.
 - `backend/app/services/connector_sync.py` owns connection-scoped staging, atomic promotion, cancellation, and recovery.
 - `backend/app/services/connector_mapping.py` infers conservative connection-scoped mapping rules, while `connector_pathing.py` and `connector_matching.py` resolve them to stable root-relative file identities.
@@ -21,6 +22,29 @@
 2. A scan job traverses the filesystem and updates `media_files`.
 3. New or changed files are analyzed with `ffprobe`.
 4. Normalized rows are stored and aggregated for dashboard/detail endpoints.
+
+## Transcoding data flow
+
+1. A regular video file receives an editable profile-derived, structured plan.
+2. Server-side validation resolves the source and target below the library root, verifies stream/container/encoder compatibility, and persists the exact normalized plan and command.
+3. `ScanRuntimeManager` runs the job on a dedicated transcode executor with CPU-budget and per-device GPU slots; scan workers remain available for discovery and analysis.
+4. FFmpeg writes to a hidden temporary file beside the target. Cancellation, failure, or a changed source removes that temporary output.
+5. Successful output is published without replacing an existing path, except for the explicit confirmed replacement mode; then an incremental scan with trigger `transcode` analyzes same-directory output.
+6. Reconciliation attaches the resulting `MediaFile` to the durable `TranscodeVariantGroup`, while same-directory variants are excluded from primary queries and later scans. Pruning job history never deletes output media or variant relationships.
+
+The complete contract, safety invariants, profiles, and API are documented in [Transcoding](transcoding.md).
+
+Transcoding federation extends that flow without changing ownership of local
+media. The origin installation owns the user-facing `TranscodeJob`, source
+snapshot, output publication, variant relationship, and follow-up analysis.
+It selects a directly paired worker from the worker's persisted capabilities,
+resource state, and measured network estimate, then sends a versioned,
+authenticated/encrypted assignment and resumable chunks. The worker stores
+only a connection-scoped remote attempt and isolated temporary files, leases a
+local CPU/GPU slot, validates the structured plan against its own FFmpeg
+probe, and returns a hash-verified result. Heartbeat expiry and persisted
+attempt/transfer/chunk state make interruption resumable while keeping scans,
+normal library rows, and local transcode slots independent.
 
 ## Connector data flow
 

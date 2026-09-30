@@ -11,6 +11,7 @@ import {
   Film,
   Funnel,
   Gauge,
+  GitCompare,
   Info,
   Layers,
   Library,
@@ -33,6 +34,7 @@ import { ChevronsRightLeftIcon } from "../components/ChevronsRightLeftIcon";
 import { DeleteIcon } from "../components/DeleteIcon";
 import { LoaderPinwheelIcon } from "../components/LoaderPinwheelIcon";
 import { SlidingTogglePill } from "../components/SlidingTogglePill";
+import { VideoWipeCompare } from "../components/VideoWipeCompare";
 import {
   api,
   type LibrarySummary,
@@ -1028,9 +1030,9 @@ export function FileComparePage() {
     <div className="file-compare-page">
       <section className="panel file-compare-panel">
         <div className="panel-title-row panel-title-row-with-actions">
-          <div className="file-compare-title-block">
+          <div className="page-heading-row">
+            <GitCompare aria-hidden="true" className="page-heading-icon" />
             <h2>{t("fileCompare.title")}</h2>
-            <p className="subtitle">{t("fileCompare.subtitle")}</p>
           </div>
           <div className="file-compare-title-actions">
             <ColumnCountPicker value={columnCount} onChange={setColumnCount} />
@@ -1122,6 +1124,21 @@ export function FileComparePage() {
             {!loading && !error && canCompare ? (
               visibleSections.length > 0 ? (
                 <div className="file-compare-sections">
+                  {selectedVisibleFiles.length === 2 && selectedVisibleFiles.every((entry) => entry.detail?.video_streams.length) ? (
+                    <section className="panel file-compare-section file-compare-wipe-section">
+                      <h3>{t("transcoding.wipeComparison")}</h3>
+                      <VideoWipeCompare
+                        first={{
+                          src: api.fileMediaUrl(selectedVisibleFiles[0].detail!.id),
+                          label: selectedVisibleFiles[0].detail!.filename,
+                        }}
+                        second={{
+                          src: api.fileMediaUrl(selectedVisibleFiles[1].detail!.id),
+                          label: selectedVisibleFiles[1].detail!.filename,
+                        }}
+                      />
+                    </section>
+                  ) : null}
                   {visibleSections.map((section) => (
                     <CompareSectionView
                       key={section.id}

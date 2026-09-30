@@ -167,6 +167,27 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "job_type": "ALTER TABLE connector_sync_jobs ADD COLUMN job_type VARCHAR(24) NOT NULL DEFAULT 'sync'",
         "sync_run_id": "ALTER TABLE connector_sync_jobs ADD COLUMN sync_run_id VARCHAR(64)",
     },
+    "transcode_federation_members": {
+        "application_version": "ALTER TABLE transcode_federation_members ADD COLUMN application_version VARCHAR(64)",
+        "preferred_endpoint_url": (
+            "ALTER TABLE transcode_federation_members ADD COLUMN preferred_endpoint_url VARCHAR(2048)"
+        ),
+        "favorite_endpoint_url": (
+            "ALTER TABLE transcode_federation_members ADD COLUMN favorite_endpoint_url VARCHAR(2048)"
+        ),
+        "endpoint_metrics": (
+            "ALTER TABLE transcode_federation_members ADD COLUMN endpoint_metrics JSON NOT NULL DEFAULT '{}'"
+        ),
+        "network_latency_ms": (
+            "ALTER TABLE transcode_federation_members ADD COLUMN network_latency_ms FLOAT"
+        ),
+        "network_probe_at": (
+            "ALTER TABLE transcode_federation_members ADD COLUMN network_probe_at DATETIME"
+        ),
+    },
+    "transcode_remote_attempts": {
+        "source_snapshot": "ALTER TABLE transcode_remote_attempts ADD COLUMN source_snapshot JSON NOT NULL DEFAULT '{}'",
+    },
     "media_files": {
         "library_root_id": "ALTER TABLE media_files ADD COLUMN library_root_id INTEGER",
         "last_seen_at": "ALTER TABLE media_files ADD COLUMN last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -177,6 +198,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "quality_score_breakdown": "ALTER TABLE media_files ADD COLUMN quality_score_breakdown JSON",
         "raw_ffprobe_json": "ALTER TABLE media_files ADD COLUMN raw_ffprobe_json JSON",
         "filename_signature": "ALTER TABLE media_files ADD COLUMN filename_signature VARCHAR(512)",
+        "filename_pattern_signature": "ALTER TABLE media_files ADD COLUMN filename_pattern_signature VARCHAR(512)",
         "content_hash": "ALTER TABLE media_files ADD COLUMN content_hash VARCHAR(128)",
         "content_hash_algorithm": "ALTER TABLE media_files ADD COLUMN content_hash_algorithm VARCHAR(32)",
         "duration_seconds": "ALTER TABLE media_files ADD COLUMN duration_seconds FLOAT",
@@ -244,6 +266,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "episode_number_end": "ALTER TABLE media_files ADD COLUMN episode_number_end INTEGER",
         "episode_title": "ALTER TABLE media_files ADD COLUMN episode_title VARCHAR(512)",
         "recognition_details": "ALTER TABLE media_files ADD COLUMN recognition_details JSON",
+        "is_transcode_variant": "ALTER TABLE media_files ADD COLUMN is_transcode_variant BOOLEAN NOT NULL DEFAULT 0",
     },
     "media_formats": {
         "bit_rate": "ALTER TABLE media_formats ADD COLUMN bit_rate INTEGER",
@@ -259,6 +282,7 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "bit_rate": "ALTER TABLE video_streams ADD COLUMN bit_rate INTEGER",
         "bit_depth": "ALTER TABLE video_streams ADD COLUMN bit_depth INTEGER",
         "hdr_type": "ALTER TABLE video_streams ADD COLUMN hdr_type VARCHAR(64)",
+        "language": "ALTER TABLE video_streams ADD COLUMN language VARCHAR(64)",
     },
     "audio_streams": {
         "codec": "ALTER TABLE audio_streams ADD COLUMN codec VARCHAR(64)",
@@ -310,6 +334,48 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "trigger_source": "ALTER TABLE scan_jobs ADD COLUMN trigger_source VARCHAR(16) NOT NULL DEFAULT 'manual'",
         "trigger_details": "ALTER TABLE scan_jobs ADD COLUMN trigger_details JSON NOT NULL DEFAULT '{}'",
         "scan_summary": "ALTER TABLE scan_jobs ADD COLUMN scan_summary JSON NOT NULL DEFAULT '{}'",
+    },
+    "transcode_jobs": {
+        "profile_id": "ALTER TABLE transcode_jobs ADD COLUMN profile_id INTEGER REFERENCES transcode_profiles(id) ON DELETE SET NULL",
+        "profile_version": "ALTER TABLE transcode_jobs ADD COLUMN profile_version INTEGER",
+        "rule_id": "ALTER TABLE transcode_jobs ADD COLUMN rule_id INTEGER REFERENCES transcode_rules(id) ON DELETE SET NULL",
+        "rule_version": "ALTER TABLE transcode_jobs ADD COLUMN rule_version INTEGER",
+        "rule_snapshot": "ALTER TABLE transcode_jobs ADD COLUMN rule_snapshot JSON",
+        "automation_run_id": "ALTER TABLE transcode_jobs ADD COLUMN automation_run_id INTEGER REFERENCES transcode_automation_runs(id) ON DELETE SET NULL",
+        "automation_trigger": "ALTER TABLE transcode_jobs ADD COLUMN automation_trigger VARCHAR(32)",
+        "output_mode": "ALTER TABLE transcode_jobs ADD COLUMN output_mode VARCHAR(32) NOT NULL DEFAULT 'same_directory'",
+        "output_storage_root": "ALTER TABLE transcode_jobs ADD COLUMN output_storage_root VARCHAR(4096)",
+        "retry_count": "ALTER TABLE transcode_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+        "attempt": "ALTER TABLE transcode_jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0",
+        "cpu_budget_percent": "ALTER TABLE transcode_jobs ADD COLUMN cpu_budget_percent INTEGER",
+        "cpu_thread_budget": "ALTER TABLE transcode_jobs ADD COLUMN cpu_thread_budget INTEGER",
+        "device_id": "ALTER TABLE transcode_jobs ADD COLUMN device_id VARCHAR(128)",
+        "hardware_backend": "ALTER TABLE transcode_jobs ADD COLUMN hardware_backend VARCHAR(32)",
+        "ffmpeg_version": "ALTER TABLE transcode_jobs ADD COLUMN ffmpeg_version VARCHAR(512)",
+        "remove_partial_output": "ALTER TABLE transcode_jobs ADD COLUMN remove_partial_output BOOLEAN NOT NULL DEFAULT 1",
+        "on_error": "ALTER TABLE transcode_jobs ADD COLUMN on_error VARCHAR(16) NOT NULL DEFAULT 'continue'",
+        "global_job_id": "ALTER TABLE transcode_jobs ADD COLUMN global_job_id VARCHAR(96)",
+        "origin_installation_id": "ALTER TABLE transcode_jobs ADD COLUMN origin_installation_id VARCHAR(128)",
+        "target_installation_id": "ALTER TABLE transcode_jobs ADD COLUMN target_installation_id VARCHAR(128)",
+        "target_member_id": "ALTER TABLE transcode_jobs ADD COLUMN target_member_id VARCHAR(128)",
+        "assignment_mode": "ALTER TABLE transcode_jobs ADD COLUMN assignment_mode VARCHAR(16) NOT NULL DEFAULT 'local'",
+        "processing_phase": "ALTER TABLE transcode_jobs ADD COLUMN processing_phase VARCHAR(48) NOT NULL DEFAULT 'queued'",
+        "phase_detail": "ALTER TABLE transcode_jobs ADD COLUMN phase_detail VARCHAR(2048)",
+        "execution_attempt": "ALTER TABLE transcode_jobs ADD COLUMN execution_attempt INTEGER NOT NULL DEFAULT 0",
+        "remote_attempt_id": "ALTER TABLE transcode_jobs ADD COLUMN remote_attempt_id VARCHAR(96)",
+        "lease_token": "ALTER TABLE transcode_jobs ADD COLUMN lease_token VARCHAR(128)",
+        "source_sha256": "ALTER TABLE transcode_jobs ADD COLUMN source_sha256 VARCHAR(64)",
+        "source_transfer_id": "ALTER TABLE transcode_jobs ADD COLUMN source_transfer_id VARCHAR(96)",
+        "result_transfer_id": "ALTER TABLE transcode_jobs ADD COLUMN result_transfer_id VARCHAR(96)",
+        "source_transfer_bytes": "ALTER TABLE transcode_jobs ADD COLUMN source_transfer_bytes INTEGER NOT NULL DEFAULT 0",
+        "source_transfer_total_bytes": "ALTER TABLE transcode_jobs ADD COLUMN source_transfer_total_bytes INTEGER NOT NULL DEFAULT 0",
+        "result_transfer_bytes": "ALTER TABLE transcode_jobs ADD COLUMN result_transfer_bytes INTEGER NOT NULL DEFAULT 0",
+        "result_transfer_total_bytes": "ALTER TABLE transcode_jobs ADD COLUMN result_transfer_total_bytes INTEGER NOT NULL DEFAULT 0",
+        "transfer_speed_bytes_per_second": "ALTER TABLE transcode_jobs ADD COLUMN transfer_speed_bytes_per_second FLOAT",
+        "transfer_eta_seconds": "ALTER TABLE transcode_jobs ADD COLUMN transfer_eta_seconds FLOAT",
+    },
+    "transcode_variants": {
+        "output_mode": "ALTER TABLE transcode_variants ADD COLUMN output_mode VARCHAR(32) NOT NULL DEFAULT 'same_directory'",
     },
 }
 
@@ -370,9 +436,14 @@ SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_content_category ON media_files (library_id, content_category)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_series_id ON media_files (series_id)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_season_id ON media_files (season_id)",
+    "CREATE INDEX IF NOT EXISTS ix_media_files_library_transcode_variant ON media_files (library_id, is_transcode_variant)",
     "CREATE INDEX IF NOT EXISTS ix_media_series_library_normalized_title ON media_series (library_id, normalized_title)",
     "CREATE INDEX IF NOT EXISTS ix_media_seasons_series_number ON media_seasons (series_id, season_number)",
     "CREATE INDEX IF NOT EXISTS ix_media_files_library_filename_signature ON media_files (library_id, filename_signature)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_media_files_library_filename_pattern_signature "
+        "ON media_files (library_id, filename_pattern_signature)"
+    ),
     (
         "CREATE INDEX IF NOT EXISTS ix_media_files_library_content_hash "
         "ON media_files (library_id, content_hash_algorithm, content_hash)"
@@ -1568,8 +1639,10 @@ def _apply_sqlite_additive_migrations(engine: Engine) -> None:
 def init_db(engine: Engine | None = None) -> None:
     from backend.app.db.base import Base
     from backend.app.models import entities  # noqa: F401
+    from backend.app.services.duplicates import backfill_filename_pattern_signatures
     from backend.app.services.app_settings import get_app_settings
     from backend.app.services.quality_profiles import migrate_legacy_library_quality_profiles
+    from backend.app.services.transcode_automation import remove_unreferenced_builtin_transcode_presets
 
     active_engine = engine or ENGINE
     Base.metadata.create_all(active_engine)
@@ -1577,7 +1650,9 @@ def init_db(engine: Engine | None = None) -> None:
     session_factory = sessionmaker(bind=active_engine, autoflush=False, autocommit=False, expire_on_commit=False)
     with session_factory() as db:
         app_settings = get_app_settings(db)
+        backfill_filename_pattern_signatures(db, app_settings.pattern_recognition.duplicate_matching)
         migrate_legacy_library_quality_profiles(db, app_settings.resolution_categories)
+        remove_unreferenced_builtin_transcode_presets(db)
         db.commit()
     with active_engine.begin() as connection:
         connection.execute(text("PRAGMA optimize;"))

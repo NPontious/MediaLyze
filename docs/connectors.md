@@ -87,6 +87,8 @@ To keep the boundary real, normalize provider-specific media types, identifiers,
 
 ## Credentials
 
+Jellyfin requests send the API key using `Authorization: MediaBrowser Token="..."`. This works with Jellyfin 12's legacy authentication disabled; existing server URLs and API keys do not need to change.
+
 Each connection may own exactly one opaque secret payload in `connector_credentials`. API serializers expose only `has_secret`; they never return the payload. Secret-like configuration keys are rejected in favor of the dedicated credential field. Adapter payloads are scrubbed before persistence, normal catalog/file responses omit raw item payloads, and the explicit provider-payload diagnostic route recursively removes secret-like fields. Exceptions are sanitized before persistence, API responses, or logging.
 
 Secrets currently remain local to MediaLyze's SQLite database and therefore inherit the protection of `CONFIG_PATH`. Restrict that directory to the service account. `JELLYFIN_API_KEY_FILE` remains a compatibility-only override for the migrated standard Jellyfin connection named `Jellyfin`; it does not supply credentials to additional connections.
@@ -205,4 +207,6 @@ Catalog promotion, inferred or manual binding replacement, connection deletion, 
 
 ## Required test matrix
 
-Every connector change should cover a new database and an upgraded Jellyfin database; single- and multi-root libraries; multiple locations and connections; conservative inference thresholds and conflicting candidates; automatic/manual mode changes; atomic binding/link batches; sync cancellation/recovery; connection deletion isolation; secret redaction; preferred metadata; legacy Jellyfin read compatibility; and focused frontend tests. Large catalog changes must also run `benchmark_jellyfin_bulk_promote.py`, `benchmark_connector_bulk_promote.py`, and `benchmark_connector_matching.py` with 100,000 items and compare three representative runs.
+Every connector change should cover a new database and an upgraded Jellyfin database; single- and multi-root libraries; multiple locations and connections; conservative inference thresholds and conflicting candidates; automatic/manual mode changes; atomic binding/link batches; sync cancellation/recovery; connection deletion isolation; secret redaction; preferred metadata; legacy Jellyfin read compatibility; and focused frontend tests.
+
+For large catalogs, also run the Jellyfin staging/promotion, provider-neutral staging/promotion, and path-matching benchmarks with 100,000 items. Compare three runs on the same machine. See the [performance benchmark guide](benchmarks.md) for commands and limitations.
