@@ -114,5 +114,4 @@ test("published SHA-256 digests reject damaged installer content", async () => {
   const damaged = createInstallerIntegrityVerifier({ size_bytes: payload.length, sha256: "0".repeat(64) });
   await pipeline(Readable.from([payload]), damaged.stream, new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
   assert.throws(() => damaged.verify(), { status: "integrity_error" });
->>>>>>> upstream/main
 });
