@@ -122,7 +122,13 @@ describe("App routing", () => {
     expect(screen.getByText("Duplicate group cards")).toBeInTheDocument();
     expect(screen.getByText("File detail navigation and badges")).toBeInTheDocument();
     expect(screen.getByText("Release notes dialog")).toBeInTheDocument();
-    expect(container.querySelector("button.icon-nav-button, button.library-nav-link")).toBeNull();
+    const navigationButtons = container.querySelectorAll("button.icon-nav-button, button.library-nav-link");
+    expect(navigationButtons.length).toBeGreaterThan(0);
+    navigationButtons.forEach((button) => {
+      expect(button.closest(".media-nav-library-menu")).not.toBeNull();
+      expect(button).toHaveAttribute("aria-label", "Libraries");
+      expect(["true", "false"]).toContain(button.getAttribute("aria-expanded"));
+    });
     expect(container.querySelectorAll("a.icon-nav-button, a.library-nav-link").length).toBeGreaterThanOrEqual(4);
   }, 30_000);
 

@@ -325,7 +325,7 @@ describe("global theme styles", () => {
     );
   });
 
-  it("keeps stream counts pill-shaped and stream action controls evenly inset with a neutral filled default toggle", () => {
+  it("keeps stream counts pill-shaped and stream action controls evenly inset with transparent favorite toggles", () => {
     const countBadge = componentStyles.match(/\.transcode-stream-tab-count\s*\{[^}]*\}/s)?.[0] ?? "";
     const actionRow = componentStyles.match(/\.transcode-stream-row-actions\s*\{[^}]*\}/s)?.[0] ?? "";
     const actionField = componentStyles.match(/\.transcode-action-field\s*\{[^}]*\}/s)?.[0] ?? "";
@@ -355,8 +355,9 @@ describe("global theme styles", () => {
     expect(actionField).toMatch(/margin:\s*0/);
     expect(defaultButton).toMatch(/width:\s*28px/);
     expect(defaultButton).toMatch(/border:\s*0/);
-    expect(favoriteButton).toMatch(/background:\s*var\(--panel-strong\)/);
-    expect(favoriteButton).toMatch(/border:\s*0/);
+    expect(defaultButton).toMatch(/background:\s*transparent/);
+    expect(favoriteButton).toMatch(/color:\s*var\(--ink\)/);
+    expect(favoriteButton).not.toMatch(/background\s*:|border\s*:/);
     expect(favoriteButton).not.toMatch(/var\(--accent\)/);
     expect(formattingHeader).toMatch(/gap:\s*8px/);
     expect(formattingChevron).toMatch(/width:\s*26px/);

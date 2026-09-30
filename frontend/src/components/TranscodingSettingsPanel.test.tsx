@@ -399,7 +399,10 @@ describe("TranscodingSettingsPanel", () => {
     const emptyState = await screen.findByText("No capability matrix data yet. Run the hardware test to populate this matrix.");
     expect(emptyState.closest(".panel-empty-state")).not.toBeNull();
     expect(emptyState.closest(".compatibility-profile-list")).not.toBeNull();
-    expect(emptyState.closest(".compatibility-profile-panel")?.querySelector(".transcode-automation-standalone-header")).not.toBeNull();
+    const acceleratorsPanel = emptyState.closest("section.transcode-automation-section");
+    expect(acceleratorsPanel).not.toBeNull();
+    expect(within(acceleratorsPanel as HTMLElement).getByRole("heading", { name: "Accelerators" })).toBeInTheDocument();
+    expect(within(acceleratorsPanel as HTMLElement).getByRole("button", { name: "Collapse Accelerators" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("tablist", { name: "Transcoding presets and rules" })).not.toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
@@ -436,7 +439,7 @@ describe("TranscodingSettingsPanel", () => {
     expect(await screen.findByRole("heading", { name: "Federation" })).toBeInTheDocument();
     expect(screen.queryByText("Pair trusted MediaLyze installations directly and let compatible workers execute structured transcode plans without exposing library paths.")).not.toBeInTheDocument();
     const automationSections = Array.from(document.querySelectorAll(".settings-sidebar-stack > section.transcode-automation-section"));
-    const federationPanel = document.querySelector("section.transcode-federation-panel");
+    const federationPanel = screen.getByRole("heading", { name: "Federation" }).closest("section.transcode-federation-panel");
     expect(automationSections).toHaveLength(2);
     expect(federationPanel).not.toBeNull();
     expect(automationSections[0]).toHaveTextContent("Accelerators");
